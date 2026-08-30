@@ -141,11 +141,19 @@ impl<R: CleanupRuntime> ReconciliationEngine<R> {
     }
 
     pub fn run_cycle_at(&mut self, now_unix_millis: u64) -> Result<CycleReport, EngineError> {
+        self.run_cycle_at_until(now_unix_millis, || false)
+    }
+
+    pub fn run_cycle_at_until(
+        &mut self,
+        now_unix_millis: u64,
+        mut should_stop: impl FnMut() -> bool,
+    ) -> Result<CycleReport, EngineError> {
         self.control.update_status(|status| {
             status.scan_in_progress = true;
             status.last_error = None;
         })?;
-        let result = self.run_cycle_inner(now_unix_millis);
+        let result = self.run_cycle_inner(now_unix_millis, &mut should_stop);
         match &result {
             Ok(_) => {
                 self.control.update_status(|status| {
@@ -169,7 +177,11 @@ impl<R: CleanupRuntime> ReconciliationEngine<R> {
         result
     }
 
-    fn run_cycle_inner(&mut self, now_unix_millis: u64) -> Result<CycleReport, EngineError> {
+    fn run_cycle_inner(
+        &mut self,
+        now_unix_millis: u64,
+        should_stop: &mut impl FnMut() -> bool,
+    ) -> Result<CycleReport, EngineError> {
         let first_snapshot = self.runtime.snapshot()?;
         let analyzer = self.analyzer_for(&first_snapshot)?;
         let first_reports = analyzer.observe(&first_snapshot)?;
@@ -234,11 +246,14 @@ impl<R: CleanupRuntime> ReconciliationEngine<R> {
             .paused_until_unix_millis
             .is_some_and(|deadline| deadline > now_unix_millis);
         let mut cleanup_receipts = Vec::new();
-        if status.mode == DaemonMode::Enforce && !paused {
+        if status.mode == DaemonMode::Enforce && !paused && !should_stop() {
             for report in incidents
                 .iter()
                 .filter(|report| report.state == IncidentState::Confirmed)
             {
+                if should_stop() {
+                    break;
+                }
                 let plan = CleanupPlan::from_confirmed(report)?;
                 let started = CleanupReceipt {
                     incident_id: report.incident_id.clone(),

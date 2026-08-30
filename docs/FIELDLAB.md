@@ -35,6 +35,16 @@ A subsequent repeatable harness run used the same CfT version with a fast timing
 
 These are isolated supported-family runs, not ambient activation, multi-day dogfood, a version-range claim, or zero-false-positive acceptance. Raw captures, local paths, temporary databases, and private continuity remain outside Git.
 
+## First ambient activation evidence
+
+On 2026-08-30 the owner approved installation and early dogfood on the current Mac. A release build was installed as a private per-user LaunchAgent in report-only mode. launchd PID and IPC PID matched, all managed paths passed the 0700/0600 permission contract, the first scan completed, and the same daemon PID crossed subsequent 60-second sweeps with zero confirmed or ambiguous incidents. Successful-operation stderr remained empty.
+
+An early sequential IPC check exposed intermittent three-second client timeouts while the background LaunchAgent used a nonblocking `accept` plus a 20 ms polling sleep. A process sample showed the IPC thread coalesced in that sleep. The listener was changed to blocking `accept`, with the exact owned socket used to wake shutdown. A transactional report-only reinstall then replaced the running candidate through graceful bootout/bootstrap. Two separate 40-request bursts at concurrency 8 completed without error, and history remained readable and empty.
+
+Activation then exercised report-only → enforce → report-only → enforce. Every transition produced a distinct launchd-owned PID, exact launchd/IPC agreement, private permissions, and a completed first reconciliation scan; prior PIDs were gone. The report-only transition proved an operational mode rollback before enforce was restored as the final dogfood state. The ordinary Google Chrome root and a simultaneously active dedicated Chrome-for-Testing root retained the same PIDs, launch times, and executables throughout. No incident or cleanup receipt was created.
+
+The final enforce process remained healthy across another full sweep, with no confirmed or ambiguous incident, an empty service log, no IP socket, and an idle point sample of 0.0% CPU and 720 KiB RSS. These are point and short-duration measurements, not the sustained overhead or multi-day safety acceptance required by the specification. Ambient enforcement has not yet encountered a real eligible incident, so zero-touch ambient cleanup remains unproven even though the isolated exact-signal path has already passed.
+
 ## Repeatable CfT harness
 
 The live harness is compiled but ignored by ordinary `cargo test --workspace`. An explicit run must provide a Chrome-for-Testing app bundle:
@@ -50,6 +60,6 @@ The harness refuses ordinary Google Chrome, launches one unique ephemeral profil
 
 ## Open exit evidence
 
-The original seven-session/seventy-process-class real incident remains unavailable and therefore unverified. Parent/host exit variants beyond the first clean host-exit observation, controller hang, `setsid` escape, partial exit, supervisor revival, daemon restart, wake during cooling, broader simultaneous ordinary-browser cases, persistence corruption, chaos races, and overhead benchmarks remain open.
+The original seven-session/seventy-process-class real incident remains unavailable and therefore unverified. Parent/host exit variants beyond the first clean host-exit observation, controller hang, `setsid` escape, partial exit, supervisor revival, daemon restart during cooling, wake during cooling, broader simultaneous ordinary-browser cases, persistence corruption, chaos races, sustained overhead, and multi-day dogfood remain open.
 
 Headless Guard, reap, and representative hook/script solutions remain comparative subjects. No comparative result is claimed. Future runs must use the same cases and measure precision, counterexample protection, time to detection, complete-tree cleanup, revival and artifact behavior, idle overhead, and required user actions.

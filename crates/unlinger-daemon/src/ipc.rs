@@ -425,7 +425,6 @@ impl IpcServer {
         let listener = bind_local_socket(&path)?;
         fs::set_permissions(&path, fs::Permissions::from_mode(0o600))?;
         let metadata = fs::metadata(&path)?;
-        listener.set_nonblocking(true)?;
 
         let shutdown = Arc::new(AtomicBool::new(false));
         let thread_shutdown = Arc::clone(&shutdown);
@@ -435,10 +434,12 @@ impl IpcServer {
                 while !thread_shutdown.load(Ordering::Acquire) {
                     match listener.accept() {
                         Ok((mut stream, _)) => {
-                            if stream.set_nonblocking(false).is_err()
-                                || stream
-                                    .set_read_timeout(Some(Duration::from_secs(3)))
-                                    .is_err()
+                            if thread_shutdown.load(Ordering::Acquire) {
+                                break;
+                            }
+                            if stream
+                                .set_read_timeout(Some(Duration::from_secs(3)))
+                                .is_err()
                                 || stream
                                     .set_write_timeout(Some(Duration::from_secs(3)))
                                     .is_err()
@@ -447,9 +448,7 @@ impl IpcServer {
                             }
                             let _ = serve_connection(&mut stream, &control);
                         }
-                        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                            thread::sleep(Duration::from_millis(20));
-                        }
+                        Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
                         Err(_) => break,
                     }
                 }

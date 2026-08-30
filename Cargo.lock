@@ -641,6 +641,7 @@ name = "unlinger-cli"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "libc",
  "serde",
  "serde_json",
  "unlinger-core",
@@ -661,6 +662,7 @@ name = "unlinger-daemon"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "libc",
  "rusqlite",
  "serde",
  "serde_json",

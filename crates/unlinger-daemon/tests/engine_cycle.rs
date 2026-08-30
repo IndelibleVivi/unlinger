@@ -271,6 +271,22 @@ fn pause_keeps_observation_live_but_suppresses_enforcement() {
 }
 
 #[test]
+fn shutdown_requested_during_a_cycle_does_not_start_new_cleanup() {
+    let runtime =
+        FakeRuntime::with_snapshots(vec![abandoned_snapshot(1_000), abandoned_snapshot(1_015)]);
+    let (mut engine, control, _database) = engine(DaemonMode::Enforce, runtime);
+
+    let cycle = engine
+        .run_cycle_at_until(2_000, || true)
+        .expect("finish observation without starting cleanup");
+
+    assert_eq!(cycle.incidents[0].state, IncidentState::Confirmed);
+    assert!(cycle.cleanup_receipts.is_empty());
+    assert!(engine.runtime().signals.is_empty());
+    assert_eq!(control.status().expect("status").confirmed_incidents, 1);
+}
+
+#[test]
 fn post_signal_runtime_failure_is_persisted_before_cycle_error() {
     let runtime = FakeRuntime::with_snapshots(vec![
         abandoned_snapshot(1_000),

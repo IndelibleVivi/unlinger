@@ -9,9 +9,11 @@
 
 ## Current hard boundary
 
-The repository contains an enforcement engine, but the ordinary daemon default is report-only. Source and synthetic verification do not authorize ambient activation.
+The ordinary daemon source default is report-only. The project owner explicitly authorized the first current-user LaunchAgent and ambient enforcement dogfood on 2026-08-30; the installed dogfood service is expected to remain loaded in enforce mode unless the owner changes that boundary.
 
-- Do not run `unlingerd --enforce` against ordinary machine state, install/load a LaunchAgent, delete runtime artifacts, or claim automatic cleanup is live without an explicit owner-approved field boundary.
+- Do not treat this one-host authorization as permission to activate another host, widen eligibility, delete runtime artifacts, or claim multi-day/release acceptance.
+- Inspect `unlinger service status` before replacing or reloading the active service. Use the transactional service CLI rather than manual binary/plist copying or ad hoc `launchctl` mutation unless diagnosing that lifecycle itself.
+- Future uninstall, pause of dogfood, or mode changes still require an applicable owner request. Preserve the active service while doing source-only work.
 - Tests may signal only a process they create and retain exact ownership of; the macOS integration test uses an isolated `/bin/sleep` child.
 - `crates/unlinger-daemon/tests/cft_fieldlab.rs` is an ignored, explicit owner-approved live path. It requires a Chrome-for-Testing app bundle, refuses ordinary Chrome, scopes every signal to exact identities admitted from its unique profile tree, and retains its profile for inspection. Its fast timing profile proves mechanics only; set `UNLINGER_FIELDLAB_FULL_TIMING=1` for the production 90/15/60 timing contract.
 - No current source path deletes browser profiles or runtime directories.
@@ -22,8 +24,8 @@ The repository contains an enforcement engine, but the ordinary daemon default i
 - `crates/unlinger-core`: platform-independent identity, graph, incident states, frozen cleanup plans, and cleanup executor.
 - `crates/unlinger-rules`: embedded signature packs, sessionization, protection rules, deterministic classification, and pre-signal/revival revalidation.
 - `crates/unlinger-macos`: macOS `libproc`/`sysctl` snapshots and exact-identity signal adapter. `/bin/ps`, process-name kills, and broad PGID kills are not production paths.
-- `crates/unlinger-daemon`: durable cooling grace, scheduler, SQLite history, retention, local IPC, control state, and reconciliation engine.
-- `crates/unlinger-cli`: status, history, explain, doctor, pause/resume, dry-run scan, and redacted diagnostic export.
+- `crates/unlinger-daemon`: durable cooling grace, scheduler, SQLite history, retention, blocking local IPC, control state, reconciliation engine, graceful shutdown, and canonical per-user paths.
+- `crates/unlinger-cli`: status, history, explain, doctor, pause/resume, dry-run scan, redacted diagnostic export, and transactional LaunchAgent install/status/set-mode/uninstall.
 - `rules/*.toml`: canonical source for embedded signature packs. Every eligibility expansion requires a positive fixture and the nearest normal/manual counterexample.
 - `fixtures/macos`: synthetic or deliberately redacted topology only. Never add page contents, credentials, real usernames, repository paths, private profile identifiers, or raw private command lines.
 
@@ -49,9 +51,9 @@ cargo run -p unlinger-cli -- doctor --json
 cargo run -p unlinger-cli -- scan --dry-run --json
 ```
 
-Daemon/IPC smoke tests must use an explicit temporary database and socket and must remain report-only. Do not write the default Library paths merely to prove source behavior.
+Daemon/IPC tests must use an explicit temporary database and socket and must remain report-only except for exact owned-child signal tests. The default Library paths now belong to the active dogfood service; do not reuse or delete them for source smoke tests.
 
-Do not treat a clean build, synthetic fixture suite, owned-child signal test, or report-only smoke as evidence that ambient auto-clean is installed, activated, field-safe, dogfood-proven, signed, or released.
+Do not treat a clean build, synthetic fixture suite, owned-child signal test, or short activation receipt as evidence that ambient auto-clean is multi-day field-safe, broadly dogfood-proven, signed, or released.
 
 The live CfT harness is excluded from ordinary workspace tests. Run it only inside an explicit owner-approved field boundary:
 

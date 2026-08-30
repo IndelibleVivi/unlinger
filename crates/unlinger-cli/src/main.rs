@@ -1,4 +1,6 @@
-use clap::{Args, Parser, Subcommand};
+mod service;
+
+use clap::{Args, Parser, Subcommand, ValueEnum};
 use serde::Serialize;
 use std::collections::BTreeSet;
 use std::error::Error;
@@ -26,7 +28,7 @@ const MAX_PAUSE_MILLIS: u64 = 30 * 24 * 60 * 60 * 1_000;
     about = "Zero-touch runtime hygiene for abandoned local automation"
 )]
 struct Cli {
-    /// Override the daemon Unix-domain socket.
+    /// Override the daemon Unix-domain socket for IPC commands.
     #[arg(long, global = true)]
     socket: Option<PathBuf>,
     #[command(subcommand)]
@@ -51,6 +53,63 @@ enum Commands {
     Scan(ScanArgs),
     /// Export one redacted incident timeline and daemon status.
     ExportDiagnostics(ExportDiagnosticsArgs),
+    /// Install, inspect, change, or remove the per-user LaunchAgent.
+    Service(ServiceArgs),
+}
+
+#[derive(Clone, Debug, Args)]
+struct ServiceArgs {
+    #[command(subcommand)]
+    command: ServiceCommand,
+}
+
+#[derive(Clone, Debug, Subcommand)]
+enum ServiceCommand {
+    /// Transactionally install both binaries and load the per-user LaunchAgent.
+    Install(ServiceInstallArgs),
+    /// Inspect installed files, launchd ownership, IPC identity, mode, and permissions.
+    Status(OutputArgs),
+    /// Transactionally reload the LaunchAgent in report-only or enforce mode.
+    SetMode(ServiceSetModeArgs),
+    /// Unload the LaunchAgent and remove service binaries while preserving history and logs.
+    Uninstall(OutputArgs),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+enum ServiceModeArgument {
+    ReportOnly,
+    Enforce,
+}
+
+impl From<ServiceModeArgument> for unlinger_daemon::DaemonMode {
+    fn from(value: ServiceModeArgument) -> Self {
+        match value {
+            ServiceModeArgument::ReportOnly => Self::ReportOnly,
+            ServiceModeArgument::Enforce => Self::Enforce,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Args)]
+struct ServiceInstallArgs {
+    /// Initial daemon mode. Report-only is the safe default.
+    #[arg(long, value_enum, default_value_t = ServiceModeArgument::ReportOnly)]
+    mode: ServiceModeArgument,
+    /// Candidate unlingerd binary. Defaults to the sibling of this unlinger executable.
+    #[arg(long)]
+    daemon: Option<PathBuf>,
+    /// Emit machine-readable JSON after verified activation.
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Clone, Debug, Args)]
+struct ServiceSetModeArgs {
+    #[arg(value_enum)]
+    mode: ServiceModeArgument,
+    /// Emit machine-readable JSON after verified reload.
+    #[arg(long)]
+    json: bool,
 }
 
 #[derive(Clone, Debug, Args)]
@@ -159,7 +218,11 @@ fn main() -> ExitCode {
 }
 
 fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
-    let socket = cli.socket.unwrap_or(LocalPaths::discover()?.socket);
+    let paths = LocalPaths::discover()?;
+    if matches!(&cli.command, Commands::Service(_)) && cli.socket.is_some() {
+        return Err("--socket does not apply to service lifecycle commands".into());
+    }
+    let socket = cli.socket.unwrap_or_else(|| paths.socket.clone());
     match cli.command {
         Commands::Status(output) => status(&socket, output.json),
         Commands::History(arguments) => history(&socket, arguments),
@@ -169,7 +232,86 @@ fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
         Commands::Resume(output) => resume(&socket, output.json),
         Commands::Scan(arguments) => scan(arguments),
         Commands::ExportDiagnostics(arguments) => export_diagnostics(&socket, arguments),
+        Commands::Service(arguments) => service_command(&paths, arguments),
     }
+}
+
+fn service_command(paths: &LocalPaths, arguments: ServiceArgs) -> Result<(), Box<dyn Error>> {
+    match arguments.command {
+        ServiceCommand::Install(arguments) => {
+            let source_cli = std::env::current_exe()?;
+            let source_daemon = arguments.daemon.unwrap_or_else(|| {
+                source_cli
+                    .parent()
+                    .unwrap_or_else(|| std::path::Path::new("."))
+                    .join("unlingerd")
+            });
+            let report =
+                service::install(paths, &source_cli, &source_daemon, arguments.mode.into())?;
+            print_service_status(&report, arguments.json)?;
+        }
+        ServiceCommand::Status(output) => {
+            let report = service::status(paths)?;
+            print_service_status(&report, output.json)?;
+        }
+        ServiceCommand::SetMode(arguments) => {
+            let report = service::set_mode(paths, arguments.mode.into())?;
+            print_service_status(&report, arguments.json)?;
+        }
+        ServiceCommand::Uninstall(output) => {
+            let report = service::uninstall(paths)?;
+            if output.json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                println!("Unlinger LaunchAgent and service binaries removed.");
+                println!("Local history and logs were preserved.");
+                println!("launchd loaded: {}", report.loaded);
+            }
+        }
+    }
+    Ok(())
+}
+
+fn print_service_status(
+    report: &service::ServiceStatusReport,
+    json: bool,
+) -> Result<(), Box<dyn Error>> {
+    if json {
+        println!("{}", serde_json::to_string_pretty(report)?);
+        return Ok(());
+    }
+    println!("Unlinger LaunchAgent");
+    println!("installed: {}", report.installed);
+    println!("loaded: {}", report.loaded);
+    println!("healthy: {}", report.healthy);
+    println!("mode: {:?}", report.expected_mode);
+    println!("launchd pid: {:?}", report.launchd_pid);
+    println!(
+        "pid identity: {}",
+        if report.pid_matches {
+            "matched"
+        } else {
+            "not matched"
+        }
+    );
+    println!(
+        "permissions: {}",
+        if report.permissions_ok {
+            "private"
+        } else {
+            "unsafe"
+        }
+    );
+    println!("daemon: {}", report.daemon_path.display());
+    println!("control CLI: {}", report.cli_path.display());
+    println!(
+        "history: {} (preserved on uninstall)",
+        report.database_path.display()
+    );
+    for error in &report.errors {
+        println!("error: {error}");
+    }
+    Ok(())
 }
 
 fn status(socket: &std::path::Path, json: bool) -> Result<(), Box<dyn Error>> {
@@ -629,5 +771,14 @@ mod tests {
         assert_eq!(parse_history_limit("50"), Ok(50));
         assert!(parse_history_limit("0").is_err());
         assert!(parse_history_limit("1001").is_err());
+    }
+
+    #[test]
+    fn socket_override_remains_accepted_after_an_ipc_subcommand() {
+        let cli = Cli::try_parse_from(["unlinger", "status", "--socket", "/tmp/unlinger.sock"])
+            .expect("parse legacy global socket position");
+
+        assert_eq!(cli.socket, Some(PathBuf::from("/tmp/unlinger.sock")));
+        assert!(matches!(cli.command, Commands::Status(_)));
     }
 }
