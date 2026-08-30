@@ -752,11 +752,7 @@ fn matches_controller(process: &ProcessRecord, pack: &SignaturePack) -> bool {
 }
 
 fn is_browser_root(process: &ProcessRecord, pack: &SignaturePack) -> bool {
-    let executable = process
-        .executable_path
-        .as_deref()
-        .unwrap_or(&process.name)
-        .to_ascii_lowercase();
+    let executable = process.executable_basename().to_ascii_lowercase();
     contains_any(&executable, &pack.browser_executable_markers)
         && !process.arguments.as_ref().is_some_and(|arguments| {
             arguments
@@ -976,6 +972,41 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["agent-browser", "playwright", "puppeteer"]
         );
+    }
+
+    #[test]
+    fn detached_crashpad_handler_is_not_a_browser_root_candidate() {
+        let executable = concat!(
+            "/Users/example/Library/Caches/ms-playwright/chromium-1234/",
+            "chrome-mac-arm64/Google Chrome for Testing.app/Contents/Frameworks/",
+            "Google Chrome for Testing Framework.framework/Versions/Current/Helpers/",
+            "chrome_crashpad_handler"
+        )
+        .to_owned();
+        let process = FixtureProcess {
+            pid: 410,
+            ppid: 1,
+            pgid: 410,
+            start: 10,
+            name: "chrome_crashpad_handler".to_owned(),
+            exe: executable.clone(),
+            args: vec![
+                executable,
+                "--monitor-self-annotation=ptype=crashpad-handler".to_owned(),
+                "--database=/private/tmp/playwright_chromiumdev_profile-case/Crashpad".to_owned(),
+            ],
+            uid: 501,
+        };
+        let analyzer = Analyzer::new(
+            RuleSet::embedded().expect("rules"),
+            AnalyzerContext::default(),
+        );
+
+        let reports = analyzer
+            .observe(&snapshot(&[process], 1_000))
+            .expect("observe detached crashpad handler");
+
+        assert!(reports.is_empty(), "crashpad helper became {reports:?}");
     }
 
     #[test]

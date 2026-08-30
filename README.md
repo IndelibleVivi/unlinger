@@ -16,11 +16,11 @@ The repository now contains a macOS source candidate spanning the observation, d
 - hard protection gates, two-observation stability, and a durable 90-second abandonment grace;
 - frozen cleanup plans with fresh whole-incident revalidation before each exact signal stage;
 - controller/root TERM, member TERM, exact-survivor KILL, post-action scans, and bounded 15/60-second revival checks;
-- redacted SQLite timelines with 14-day/10,000-event retention;
+- redacted SQLite timelines with terminal cleanup events stamped at completion and 14-day/10,000-event retention;
 - a 0600 local Unix-domain socket for status, history, explain, pause/resume, and diagnostic export;
 - a periodic daemon whose default mode is report-only.
 
-This is **source-complete for the implemented paths, not an activated product release**. No LaunchAgent is installed or loaded, ambient automatic cleanup has not been enabled on this Mac, and no live dogfood or public-alpha safety claim exists. Wake/memory-pressure/exit events, low-risk runtime-artifact cleanup, packaging, universal release, signing/notarization, comparative Field Lab evidence, and public distribution remain open.
+This is **source-complete for the implemented paths, not an activated product release**. One owner-approved isolated Chrome-for-Testing enforcement run has exercised the full cooling and cleanup path. No LaunchAgent is installed or loaded, ambient automatic cleanup has not been enabled on this Mac, and no multi-day dogfood or public-alpha safety claim exists. Wake/memory-pressure/exit events, low-risk runtime-artifact cleanup, packaging, universal release, signing/notarization, comparative Field Lab evidence, and public distribution remain open.
 
 ## Build and inspect
 
@@ -49,7 +49,7 @@ cargo run -p unlinger-cli -- resume
 cargo run -p unlinger-cli -- export-diagnostics <incident-id>
 ```
 
-`scan` always requires `--dry-run` and never sends signals. `unlingerd --enforce` exists for isolated integration and later field acceptance, but it is not the default, has not been installed as a service, and must not be described as dogfood-ready from source/tests alone.
+`scan` always requires `--dry-run` and never sends signals. `unlingerd --enforce` exists for isolated integration and field acceptance, but it is not the default, has not been installed as a service, and one isolated success must not be described as ambient or multi-day dogfood readiness.
 
 Full command lines, executable paths, and profile paths exist only in transient classification memory. SQLite, IPC, CLI output, and diagnostic exports use redacted typed records that omit signal targets and session identifiers.
 

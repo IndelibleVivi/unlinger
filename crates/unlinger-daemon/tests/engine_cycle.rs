@@ -44,12 +44,14 @@ struct FakeRuntime {
     snapshots: VecDeque<Snapshot>,
     signals: Vec<(u32, CleanupSignal)>,
     waits: Vec<Duration>,
+    now_unix_millis: u64,
 }
 
 impl FakeRuntime {
     fn with_snapshots(snapshots: Vec<Snapshot>) -> Self {
         Self {
             snapshots: snapshots.into(),
+            now_unix_millis: 3_000,
             ..Self::default()
         }
     }
@@ -60,6 +62,10 @@ impl CleanupRuntime for FakeRuntime {
         self.snapshots
             .pop_front()
             .ok_or_else(|| RuntimeFailure::new("fake snapshot queue exhausted"))
+    }
+
+    fn now_unix_millis(&self) -> Result<u64, RuntimeFailure> {
+        Ok(self.now_unix_millis)
     }
 
     fn signal_exact(
@@ -213,7 +219,31 @@ fn enforce_runs_the_frozen_cleanup_and_records_terminal_receipt() {
     assert_eq!(cycle.cleanup_receipts[0].state, IncidentState::Cleared);
     assert_eq!(engine.runtime().signals, vec![(700, CleanupSignal::Term)]);
     let status = control.status().expect("status");
+    let incident = control
+        .store()
+        .explain(&cycle.cleanup_receipts[0].incident_id)
+        .expect("read cleanup history")
+        .expect("cleanup history");
+    let cleanup_events = incident
+        .events
+        .iter()
+        .filter(|event| matches!(event.payload, EventPayload::Cleanup { .. }))
+        .collect::<Vec<_>>();
+    assert_eq!(cleanup_events.len(), 2);
+    assert_eq!(cleanup_events[0].occurred_at_unix_millis, 2_000);
+    assert!(
+        cleanup_events[1].occurred_at_unix_millis > cleanup_events[0].occurred_at_unix_millis,
+        "terminal cleanup event reused the cycle-start timestamp"
+    );
     assert_eq!(status.confirmed_incidents, 0);
+    assert_eq!(
+        status
+            .most_recent_reclaim
+            .as_ref()
+            .expect("recent reclaim")
+            .occurred_at_unix_millis,
+        cleanup_events[1].occurred_at_unix_millis
+    );
     assert_eq!(
         status.most_recent_reclaim.expect("recent reclaim").state,
         IncidentState::Cleared
@@ -257,13 +287,19 @@ fn post_signal_runtime_failure_is_persisted_before_cycle_error() {
         .store()
         .history(10)
         .expect("history remains readable");
-    let failed = history.iter().find_map(|event| match &event.payload {
-        EventPayload::Cleanup { receipt } if receipt.state == IncidentState::Failed => {
-            Some(receipt)
-        }
-        _ => None,
-    });
-    let failed = failed.expect("terminal failed receipt was persisted");
+    let failed_event = history
+        .iter()
+        .find(|event| {
+            matches!(
+                &event.payload,
+                EventPayload::Cleanup { receipt } if receipt.state == IncidentState::Failed
+            )
+        })
+        .expect("terminal failed receipt was persisted");
+    assert_eq!(failed_event.occurred_at_unix_millis, 3_000);
+    let EventPayload::Cleanup { receipt: failed } = &failed_event.payload else {
+        unreachable!("failed event payload is cleanup")
+    };
     assert_eq!(failed.actions.len(), 1);
     assert_eq!(failed.actions[0].pid, 700);
     assert!(!control.status().expect("status").healthy);

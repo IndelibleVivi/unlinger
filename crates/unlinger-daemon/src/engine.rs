@@ -262,24 +262,26 @@ impl<R: CleanupRuntime> ReconciliationEngine<R> {
                 let receipt = match execution {
                     Ok(receipt) => receipt,
                     Err(error) => {
+                        let completed_at = terminal_timestamp(&self.runtime, now_unix_millis);
                         self.control
                             .store()
-                            .record_cleanup(now_unix_millis, error.receipt())?;
+                            .record_cleanup(completed_at, error.receipt())?;
                         self.control
                             .update_status(|status| status.cleanup_in_progress = false)?;
                         return Err(EngineError::Cleanup(error));
                     }
                 };
+                let completed_at = terminal_timestamp(&self.runtime, now_unix_millis);
                 self.control
                     .store()
-                    .record_cleanup(now_unix_millis, &receipt)?;
+                    .record_cleanup(completed_at, &receipt)?;
                 self.control
                     .update_status(|status| status.cleanup_in_progress = false)?;
                 if receipt.state == IncidentState::Cleared {
                     self.control.update_status(|status| {
                         status.most_recent_reclaim = Some(RecentReclaim {
                             incident_id: receipt.incident_id.clone(),
-                            occurred_at_unix_millis: now_unix_millis,
+                            occurred_at_unix_millis: completed_at,
                             state: receipt.state,
                         });
                     })?;
@@ -339,4 +341,11 @@ impl<R: CleanupRuntime> ReconciliationEngine<R> {
 fn duration_millis(duration: Duration) -> Result<u64, EngineError> {
     u64::try_from(duration.as_millis())
         .map_err(|_| EngineError::Config("duration overflowed u64 milliseconds".to_owned()))
+}
+
+fn terminal_timestamp<R: CleanupRuntime>(runtime: &R, started_at_unix_millis: u64) -> u64 {
+    runtime
+        .now_unix_millis()
+        .unwrap_or(started_at_unix_millis)
+        .max(started_at_unix_millis)
 }

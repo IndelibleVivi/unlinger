@@ -21,6 +21,10 @@ impl CleanupRuntime for FakeRuntime {
             .ok_or_else(|| RuntimeFailure::new("test snapshot script exhausted"))
     }
 
+    fn now_unix_millis(&self) -> Result<u64, RuntimeFailure> {
+        Ok(1)
+    }
+
     fn signal_exact(
         &mut self,
         identity: &ProcessIdentity,
@@ -103,6 +107,10 @@ impl CleanupRuntime for RescanFailureRuntime {
         self.first
             .take()
             .ok_or_else(|| RuntimeFailure::new("synthetic post-TERM rescan failure"))
+    }
+
+    fn now_unix_millis(&self) -> Result<u64, RuntimeFailure> {
+        Ok(1)
     }
 
     fn signal_exact(

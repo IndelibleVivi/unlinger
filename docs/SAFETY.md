@@ -34,6 +34,6 @@ Revival checks occur at 15 and 60 seconds. A matching session becomes REVIVED an
 
 ## Activation boundary
 
-These paths exist and have synthetic/owned-child verification, but ambient enforcement has not been installed or dogfood-accepted. The daemon default is report-only. `--enforce` is an explicit source/field-lab mode, not evidence of activation readiness.
+These paths have synthetic/owned-child verification and one owner-approved isolated Chrome-for-Testing enforcement result. Ambient enforcement has not been installed, activated, or accepted through multi-day dogfood. The daemon default is report-only. `--enforce` remains an explicit source/field-lab mode, not evidence of activation readiness.
 
-No source path currently deletes profiles or runtime artifacts. launchd activation, exit/wake/pressure event integration, real supported-family cleanup, chaos completion, and field false-positive evidence remain separate gates.
+No source path currently deletes profiles or runtime artifacts. launchd activation, exit/wake/pressure event integration, the broader supported-family matrix, chaos completion, and sustained field false-positive evidence remain separate gates.

@@ -211,6 +211,7 @@ impl Error for RuntimeFailure {}
 
 pub trait CleanupRuntime {
     fn snapshot(&mut self) -> Result<Snapshot, RuntimeFailure>;
+    fn now_unix_millis(&self) -> Result<u64, RuntimeFailure>;
     fn signal_exact(
         &mut self,
         identity: &ProcessIdentity,

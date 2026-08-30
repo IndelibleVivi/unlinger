@@ -83,14 +83,7 @@ mod platform {
             }
             processes.sort_by_key(ProcessRecord::pid);
 
-            let observed_at_unix_millis = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map_err(|error| SnapshotError::Clock(error.to_string()))?
-                .as_millis()
-                .try_into()
-                .map_err(|_| {
-                    SnapshotError::Clock("wall-clock milliseconds overflowed u64".to_owned())
-                })?;
+            let observed_at_unix_millis = current_unix_millis()?;
 
             Ok(Snapshot {
                 observed_at_unix_millis,
@@ -133,6 +126,10 @@ mod platform {
                 .map_err(|error| RuntimeFailure::new(error.to_string()))
         }
 
+        fn now_unix_millis(&self) -> Result<u64, RuntimeFailure> {
+            current_unix_millis().map_err(|error| RuntimeFailure::new(error.to_string()))
+        }
+
         fn signal_exact(
             &mut self,
             identity: &ProcessIdentity,
@@ -173,6 +170,15 @@ mod platform {
         fn wait(&mut self, duration: std::time::Duration) {
             std::thread::sleep(duration);
         }
+    }
+
+    fn current_unix_millis() -> Result<u64, SnapshotError> {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|error| SnapshotError::Clock(error.to_string()))?
+            .as_millis()
+            .try_into()
+            .map_err(|_| SnapshotError::Clock("wall-clock milliseconds overflowed u64".to_owned()))
     }
 
     fn read_process(pid: u32, argmax: usize) -> Result<ProcessRecord, ()> {
