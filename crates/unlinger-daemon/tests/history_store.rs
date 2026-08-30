@@ -1,5 +1,6 @@
 use std::fs;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 use unlinger_core::{
     CleanupAction, CleanupReceipt, CleanupSignal, CleanupStage, GateLedger, IncidentReport,
@@ -10,6 +11,8 @@ use unlinger_daemon::{EventKind, HistoryStore, RetentionPolicy};
 
 struct TempDatabase(PathBuf);
 
+static NEXT_DATABASE_ID: AtomicU64 = AtomicU64::new(1);
+
 impl TempDatabase {
     fn new() -> Self {
         let nonce = SystemTime::now()
@@ -17,8 +20,9 @@ impl TempDatabase {
             .expect("clock after epoch")
             .as_nanos();
         Self(std::env::temp_dir().join(format!(
-            "unlinger-history-test-{}-{nonce}.sqlite3",
-            std::process::id()
+            "unlinger-history-test-{}-{nonce}-{}.sqlite3",
+            std::process::id(),
+            NEXT_DATABASE_ID.fetch_add(1, Ordering::Relaxed)
         )))
     }
 }

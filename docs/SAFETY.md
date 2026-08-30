@@ -34,6 +34,6 @@ Revival checks occur at 15 and 60 seconds. A matching session becomes REVIVED an
 
 ## Activation boundary
 
-These paths have synthetic/owned-child verification and one owner-approved isolated Chrome-for-Testing enforcement result. Ambient enforcement has not been installed, activated, or accepted through multi-day dogfood. The daemon default is report-only. `--enforce` remains an explicit source/field-lab mode, not evidence of activation readiness.
+These paths have synthetic/owned-child verification, one owner-approved full-timing Chrome-for-Testing enforcement result, and one opt-in fast Field Lab harness result. The harness admits exact identities only from its unique test profile tree and rejects every out-of-scope signal before the macOS adapter. Ambient enforcement has not been installed, activated, or accepted through multi-day dogfood. The daemon default is report-only. `--enforce` remains an explicit source/field-lab mode, not evidence of activation readiness.
 
 No source path currently deletes profiles or runtime artifacts. launchd activation, exit/wake/pressure event integration, the broader supported-family matrix, chaos completion, and sustained field false-positive evidence remain separate gates.

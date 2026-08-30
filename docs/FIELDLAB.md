@@ -31,7 +31,22 @@ The isolated daemon used a temporary SQLite database and Unix socket. The same P
 
 The first dry-run also exposed two detached `chrome_crashpad_handler` helpers as standalone PROTECTED noise because their enclosing app paths contained browser/framework markers. Browser-root matching was narrowed to the executable basename. A regression test failed before the change and passed afterward; a second real dry-run then produced exactly one main COOLING incident and no standalone crashpad incidents.
 
-This is one isolated supported-family cleanup, not ambient activation, multi-day dogfood, a version-range claim, or zero-false-positive acceptance. Raw captures, local paths, the temporary database, and private continuity remain outside Git.
+A subsequent repeatable harness run used the same CfT version with a fast timing profile. It crossed durable cooling in separate cycles, delivered only root TERM, ended CLEARED with zero survivors and two revival checks, and preserved one simultaneous ordinary Chrome root by exact identity. The run took 14.41 seconds. Its SQLite timeline recorded RECLAIMING and CLEARED 4.194 seconds apart, providing host evidence that terminal events now use completion time rather than cycle-start time.
+
+These are isolated supported-family runs, not ambient activation, multi-day dogfood, a version-range claim, or zero-false-positive acceptance. Raw captures, local paths, temporary databases, and private continuity remain outside Git.
+
+## Repeatable CfT harness
+
+The live harness is compiled but ignored by ordinary `cargo test --workspace`. An explicit run must provide a Chrome-for-Testing app bundle:
+
+```bash
+UNLINGER_FIELDLAB_CFT_APP="/path/to/Google Chrome for Testing.app" \
+  cargo test -p unlinger-daemon --test cft_fieldlab -- --ignored --nocapture --test-threads=1
+```
+
+The default fast profile shortens observation, grace, and revival windows to exercise the real snapshot/classifier/exact-signal path quickly. It does not prove production latency. Add `UNLINGER_FIELDLAB_FULL_TIMING=1` to retain the production 90-second abandonment grace, 15-second observations, 60-second sweep spacing, and 15/60-second revival checks.
+
+The harness refuses ordinary Google Chrome, launches one unique ephemeral profile through LaunchServices, preflights for unrelated COOLING incidents, and wraps the native runtime with an exact owned-identity signal scope. Any out-of-profile signal is rejected and fails the run. When ordinary Chrome roots are present, their PID/birth/executable identities must remain exact after cleanup; a run with none present does not prove that simultaneous counterexample. The harness never deletes its profile or SQLite evidence and prints the retained path for deliberate inspection and recoverable cleanup.
 
 ## Open exit evidence
 

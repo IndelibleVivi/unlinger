@@ -20,7 +20,7 @@ The repository now contains a macOS source candidate spanning the observation, d
 - a 0600 local Unix-domain socket for status, history, explain, pause/resume, and diagnostic export;
 - a periodic daemon whose default mode is report-only.
 
-This is **source-complete for the implemented paths, not an activated product release**. One owner-approved isolated Chrome-for-Testing enforcement run has exercised the full cooling and cleanup path. No LaunchAgent is installed or loaded, ambient automatic cleanup has not been enabled on this Mac, and no multi-day dogfood or public-alpha safety claim exists. Wake/memory-pressure/exit events, low-risk runtime-artifact cleanup, packaging, universal release, signing/notarization, comparative Field Lab evidence, and public distribution remain open.
+This is **source-complete for the implemented paths, not an activated product release**. Owner-approved isolated Chrome-for-Testing runs have exercised both the full production-timing path and the repeatable scoped Field Lab harness. No LaunchAgent is installed or loaded, ambient automatic cleanup has not been enabled on this Mac, and no multi-day dogfood or public-alpha safety claim exists. Wake/memory-pressure/exit events, low-risk runtime-artifact cleanup, packaging, universal release, signing/notarization, comparative Field Lab evidence, and public distribution remain open.
 
 ## Build and inspect
 

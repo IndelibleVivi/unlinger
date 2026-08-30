@@ -13,6 +13,7 @@ The repository contains an enforcement engine, but the ordinary daemon default i
 
 - Do not run `unlingerd --enforce` against ordinary machine state, install/load a LaunchAgent, delete runtime artifacts, or claim automatic cleanup is live without an explicit owner-approved field boundary.
 - Tests may signal only a process they create and retain exact ownership of; the macOS integration test uses an isolated `/bin/sleep` child.
+- `crates/unlinger-daemon/tests/cft_fieldlab.rs` is an ignored, explicit owner-approved live path. It requires a Chrome-for-Testing app bundle, refuses ordinary Chrome, scopes every signal to exact identities admitted from its unique profile tree, and retains its profile for inspection. Its fast timing profile proves mechanics only; set `UNLINGER_FIELDLAB_FULL_TIMING=1` for the production 90/15/60 timing contract.
 - No current source path deletes browser profiles or runtime directories.
 - A future activation must retain all deterministic gates, durable abandonment grace, frozen-plan revalidation, exact identity signals, terminal receipts, and bounded revival behavior.
 
@@ -51,6 +52,13 @@ cargo run -p unlinger-cli -- scan --dry-run --json
 Daemon/IPC smoke tests must use an explicit temporary database and socket and must remain report-only. Do not write the default Library paths merely to prove source behavior.
 
 Do not treat a clean build, synthetic fixture suite, owned-child signal test, or report-only smoke as evidence that ambient auto-clean is installed, activated, field-safe, dogfood-proven, signed, or released.
+
+The live CfT harness is excluded from ordinary workspace tests. Run it only inside an explicit owner-approved field boundary:
+
+```bash
+UNLINGER_FIELDLAB_CFT_APP="/path/to/Google Chrome for Testing.app" \
+  cargo test -p unlinger-daemon --test cft_fieldlab -- --ignored --nocapture --test-threads=1
+```
 
 ## Documentation and publication triggers
 
