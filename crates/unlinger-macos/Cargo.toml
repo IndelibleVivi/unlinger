@@ -1,0 +1,10 @@
+[package]
+name = "unlinger-macos"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+libc.workspace = true
+libproc.workspace = true
+unlinger-core = { path = "../unlinger-core" }

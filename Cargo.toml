@@ -1,0 +1,23 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/unlinger-core",
+    "crates/unlinger-rules",
+    "crates/unlinger-macos",
+    "crates/unlinger-daemon",
+    "crates/unlinger-cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.98"
+
+[workspace.dependencies]
+clap = { version = "4.6.6", features = ["derive"] }
+libc = "0.2.189"
+libproc = "0.14.11"
+rusqlite = { version = "0.40.2", features = ["bundled"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+toml = "1.1.4"

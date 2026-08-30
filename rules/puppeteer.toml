@@ -1,0 +1,8 @@
+schema_version = 1
+id = "puppeteer"
+version = "0.1.0"
+supported_versions = "observational Chromium signatures; exact version range not yet field-proven"
+controller_markers = ["puppeteer", "@puppeteer/browsers"]
+framework_markers = ["puppeteer", "@puppeteer/browsers", "chrome-headless-shell"]
+ephemeral_profile_markers = ["puppeteer_dev_chrome_profile", "puppeteer"]
+browser_executable_markers = ["chrome-headless-shell", "chrome for testing", "chromium", "google chrome"]

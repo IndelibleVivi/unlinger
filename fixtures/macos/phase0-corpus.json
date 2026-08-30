@@ -1,0 +1,274 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "name": "abandoned agent-browser Chrome-for-Testing tree",
+      "expected_state": "CONFIRMED",
+      "expected_pack": "agent-browser",
+      "second_observation": true,
+      "processes": [
+        {
+          "pid": 100,
+          "ppid": 1,
+          "pgid": 100,
+          "start": 1000000,
+          "name": "Google Chrome for Testing",
+          "exe": "/Applications/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
+          "args": [
+            "Google Chrome for Testing",
+            "--headless=new",
+            "--remote-debugging-pipe",
+            "--user-data-dir=/private/tmp/agent-browser/session-a"
+          ]
+        },
+        {
+          "pid": 101,
+          "ppid": 100,
+          "pgid": 100,
+          "start": 1000100,
+          "name": "Google Chrome for Testing Helper",
+          "exe": "/Applications/Google Chrome for Testing.app/Contents/Frameworks/Google Chrome for Testing Helper.app/Contents/MacOS/Google Chrome for Testing Helper",
+          "args": ["Google Chrome for Testing Helper", "--type=renderer"]
+        },
+        {
+          "pid": 102,
+          "ppid": 100,
+          "pgid": 100,
+          "start": 1000200,
+          "name": "Google Chrome for Testing Helper",
+          "exe": "/Applications/Google Chrome for Testing.app/Contents/Frameworks/Google Chrome for Testing Helper.app/Contents/MacOS/Google Chrome for Testing Helper",
+          "args": ["Google Chrome for Testing Helper", "--type=gpu-process"]
+        }
+      ]
+    },
+    {
+      "name": "active Playwright controller and browser",
+      "expected_state": "ACTIVE",
+      "expected_pack": "playwright",
+      "second_observation": false,
+      "processes": [
+        {
+          "pid": 50,
+          "ppid": 1,
+          "pgid": 50,
+          "start": 500000,
+          "name": "Codex",
+          "exe": "/Applications/Codex.app/Contents/MacOS/Codex",
+          "args": ["Codex"]
+        },
+        {
+          "pid": 200,
+          "ppid": 50,
+          "pgid": 200,
+          "start": 2000000,
+          "name": "node",
+          "exe": "/usr/local/bin/node",
+          "args": ["node", "/synthetic/node_modules/playwright/cli.js", "run-server"]
+        },
+        {
+          "pid": 201,
+          "ppid": 200,
+          "pgid": 200,
+          "start": 2000100,
+          "name": "Chromium",
+          "exe": "/synthetic/ms-playwright/chromium/Chromium.app/Contents/MacOS/Chromium",
+          "args": [
+            "Chromium",
+            "--headless",
+            "--remote-debugging-pipe",
+            "--user-data-dir=/var/folders/synthetic/playwright_chromiumdev_profile-a"
+          ]
+        },
+        {
+          "pid": 202,
+          "ppid": 201,
+          "pgid": 200,
+          "start": 2000200,
+          "name": "Chromium Helper",
+          "exe": "/synthetic/ms-playwright/chromium/Chromium Helper.app/Contents/MacOS/Chromium Helper",
+          "args": ["Chromium Helper", "--type=utility"]
+        }
+      ]
+    },
+    {
+      "name": "abandoned Playwright browser without controller",
+      "expected_state": "CONFIRMED",
+      "expected_pack": "playwright",
+      "second_observation": true,
+      "processes": [
+        {
+          "pid": 300,
+          "ppid": 1,
+          "pgid": 300,
+          "start": 3000000,
+          "name": "Chromium",
+          "exe": "/synthetic/ms-playwright/chromium/Chromium.app/Contents/MacOS/Chromium",
+          "args": [
+            "Chromium",
+            "--headless=new",
+            "--remote-debugging-pipe",
+            "--user-data-dir=/var/folders/synthetic/playwright_chromiumdev_profile-b"
+          ]
+        },
+        {
+          "pid": 301,
+          "ppid": 300,
+          "pgid": 300,
+          "start": 3000100,
+          "name": "Chromium Helper",
+          "exe": "/synthetic/ms-playwright/chromium/Chromium Helper.app/Contents/MacOS/Chromium Helper",
+          "args": ["Chromium Helper", "--type=renderer"]
+        }
+      ]
+    },
+    {
+      "name": "Puppeteer persistent profile remains protected",
+      "expected_state": "PROTECTED",
+      "expected_pack": "puppeteer",
+      "second_observation": true,
+      "processes": [
+        {
+          "pid": 60,
+          "ppid": 1,
+          "pgid": 60,
+          "start": 600000,
+          "name": "Terminal",
+          "exe": "/System/Applications/Utilities/Terminal.app/Contents/MacOS/Terminal",
+          "args": ["Terminal"]
+        },
+        {
+          "pid": 400,
+          "ppid": 60,
+          "pgid": 400,
+          "start": 4000000,
+          "name": "node",
+          "exe": "/usr/local/bin/node",
+          "args": ["node", "/synthetic/node_modules/puppeteer/run.js"]
+        },
+        {
+          "pid": 401,
+          "ppid": 400,
+          "pgid": 400,
+          "start": 4000100,
+          "name": "Google Chrome for Testing",
+          "exe": "/Applications/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
+          "args": [
+            "Google Chrome for Testing",
+            "--headless=new",
+            "--remote-debugging-pipe",
+            "--user-data-dir=/Users/example/Library/Application Support/Puppeteer/persistent-login"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "ordinary Google Chrome standard profile is never a candidate",
+      "expected_state": "PROTECTED",
+      "expected_pack": null,
+      "second_observation": true,
+      "processes": [
+        {
+          "pid": 500,
+          "ppid": 1,
+          "pgid": 500,
+          "start": 5000000,
+          "name": "Google Chrome",
+          "exe": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+          "args": [
+            "Google Chrome",
+            "--user-data-dir=/Users/example/Library/Application Support/Google/Chrome"
+          ]
+        },
+        {
+          "pid": 501,
+          "ppid": 500,
+          "pgid": 500,
+          "start": 5000100,
+          "name": "Google Chrome Helper",
+          "exe": "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Helper.app/Contents/MacOS/Google Chrome Helper",
+          "args": ["Google Chrome Helper", "--type=renderer"]
+        }
+      ]
+    },
+    {
+      "name": "headed agent-browser session under human control",
+      "expected_state": "PROTECTED",
+      "expected_pack": "agent-browser",
+      "second_observation": true,
+      "processes": [
+        {
+          "pid": 600,
+          "ppid": 1,
+          "pgid": 600,
+          "start": 6000000,
+          "name": "Google Chrome for Testing",
+          "exe": "/Applications/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
+          "args": [
+            "Google Chrome for Testing",
+            "--remote-debugging-port=9222",
+            "--user-data-dir=/private/tmp/agent-browser/human-held"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "manual CDP Chrome-for-Testing has no framework anchor",
+      "expected_state": "PROTECTED",
+      "expected_pack": null,
+      "second_observation": true,
+      "processes": [
+        {
+          "pid": 650,
+          "ppid": 1,
+          "pgid": 650,
+          "start": 6500000,
+          "name": "Google Chrome for Testing",
+          "exe": "/Applications/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
+          "args": [
+            "Google Chrome for Testing",
+            "--remote-debugging-port=9333",
+            "--user-data-dir=/private/tmp/manual-cdp/operator"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "PID reuse between observations blocks confirmation",
+      "expected_state": "AMBIGUOUS",
+      "expected_pack": "agent-browser",
+      "second_observation": true,
+      "processes": [
+        {
+          "pid": 700,
+          "ppid": 1,
+          "pgid": 700,
+          "start": 7000000,
+          "name": "Google Chrome for Testing",
+          "exe": "/Applications/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
+          "args": [
+            "Google Chrome for Testing",
+            "--headless=new",
+            "--remote-debugging-pipe",
+            "--user-data-dir=/private/tmp/agent-browser/reused-pid"
+          ]
+        }
+      ],
+      "second_processes": [
+        {
+          "pid": 700,
+          "ppid": 1,
+          "pgid": 700,
+          "start": 9000000,
+          "name": "Google Chrome for Testing",
+          "exe": "/Applications/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
+          "args": [
+            "Google Chrome for Testing",
+            "--headless=new",
+            "--remote-debugging-pipe",
+            "--user-data-dir=/private/tmp/agent-browser/reused-pid"
+          ]
+        }
+      ]
+    }
+  ]
+}

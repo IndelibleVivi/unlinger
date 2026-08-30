@@ -1,0 +1,8 @@
+schema_version = 1
+id = "playwright"
+version = "0.1.0"
+supported_versions = "observational signatures for Playwright CLI and MCP; exact version range not yet field-proven"
+controller_markers = ["playwright", "@playwright/mcp", "playwright-mcp"]
+framework_markers = ["playwright", "@playwright/mcp", "ms-playwright"]
+ephemeral_profile_markers = ["playwright_chromiumdev_profile", "playwright-artifacts", "ms-playwright"]
+browser_executable_markers = ["chrome for testing", "chromium", "google chrome"]

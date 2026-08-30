@@ -1,0 +1,8 @@
+schema_version = 1
+id = "agent-browser"
+version = "0.1.0"
+supported_versions = "observational signatures; exact version range not yet field-proven"
+controller_markers = ["agent-browser", "@vercel/agent-browser"]
+framework_markers = ["agent-browser", ".agent-browser"]
+ephemeral_profile_markers = ["agent-browser", ".agent-browser"]
+browser_executable_markers = ["chrome for testing", "chromium", "google chrome"]
