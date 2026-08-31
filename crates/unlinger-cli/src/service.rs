@@ -2111,13 +2111,22 @@ fn create_generation(
             .map_err(|error| ServiceError::context("could not sync sealed generation", error))?;
     }
     sync_directory(&staging)?;
-    fs::set_permissions(&staging, fs::Permissions::from_mode(0o500))
-        .map_err(|error| ServiceError::context("could not seal generation directory", error))?;
+
+    // macOS 14/15 rejects renaming a directory after its owner-write bit has
+    // been removed, even when the rename stays within one writable parent.
+    // The sealed child artifacts are already durable; publish the still-
+    // inactive owner-private directory atomically, then seal the final path
+    // before any active manifest can select it.
     fs::rename(&staging, &generation.directory)
         .map_err(|error| ServiceError::context("could not publish generation", error))?;
-    guard.promoted = true;
+    guard.path = generation.directory.clone();
+    fs::set_permissions(&generation.directory, fs::Permissions::from_mode(0o500))
+        .map_err(|error| ServiceError::context("could not seal generation directory", error))?;
+    sync_directory(&generation.directory)?;
     sync_directory(&layout.generations)?;
-    validate_generation(generation)
+    validate_generation(generation)?;
+    guard.promoted = true;
+    Ok(())
 }
 
 fn validate_generation(generation: &GenerationPaths) -> Result<(), ServiceError> {
