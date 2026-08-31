@@ -140,6 +140,29 @@ fn cleared_receipt(id: &str) -> CleanupReceipt {
     }
 }
 
+fn cleared_with_residue_receipt(id: &str) -> CleanupReceipt {
+    CleanupReceipt {
+        incident_id: id.to_owned(),
+        state: IncidentState::Failed,
+        reason_id: Some("cleanup.artifact_unsafe".to_owned()),
+        actions: vec![CleanupAction {
+            stage: CleanupStage::PrimaryTerm,
+            pid: 4242,
+            identity_fingerprint: "identity-redacted".to_owned(),
+            signal: CleanupSignal::Term,
+            disposition: SignalDisposition::Delivered,
+        }],
+        artifact_actions: vec![ArtifactAction {
+            kind: RuntimeArtifactKind::DevToolsActivePort,
+            artifact_fingerprint: "artifact-redacted".to_owned(),
+            disposition: ArtifactDisposition::Unsafe,
+        }],
+        survivor_pids: Vec::new(),
+        revival_checks_completed: 2,
+        resources: CleanupResources::default(),
+    }
+}
+
 fn primary_term_intent() -> CleanupActionIntent {
     CleanupActionIntent {
         stage: CleanupStage::PrimaryTerm,
@@ -2164,6 +2187,34 @@ fn most_recent_reclaim_uses_a_dedicated_query_not_history_presentation_limit() {
         .expect("cleared receipt remains addressable");
     assert_eq!(reclaim.incident_id, "inc-cleared");
     assert_eq!(reclaim.state, IncidentState::Cleared);
+}
+
+#[test]
+fn most_recent_reclaim_includes_proved_process_clearance_with_artifact_residue() {
+    let database = TempDatabase::new();
+    let store = HistoryStore::open(&database.0).expect("open store");
+    let report = confirmed_report("inc-residue");
+    let attempt = store
+        .begin_cleanup_attempt(1_000, &report, "epoch-a")
+        .expect("begin cleanup");
+    store
+        .complete_cleanup_attempt(
+            &attempt,
+            1_100,
+            &cleared_with_residue_receipt("inc-residue"),
+        )
+        .expect("complete cleanup with residue");
+
+    let reclaim = store
+        .most_recent_reclaim()
+        .expect("query recent reclaim")
+        .expect("process clearance remains visible");
+    assert_eq!(reclaim.incident_id, "inc-residue");
+    assert_eq!(reclaim.state, IncidentState::Failed);
+    assert_eq!(
+        reclaim.outcome.overall,
+        unlinger_core::OverallOutcome::ClearedWithResidue
+    );
 }
 
 #[test]

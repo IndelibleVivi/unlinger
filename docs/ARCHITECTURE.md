@@ -56,7 +56,8 @@ flowchart LR
     subgraph LOCAL[Owner-private state and control]
         STORE[SQLite v5 timeline + journals<br/>14 d or 10,000 events]
         IPC[0600 newline-delimited JSON socket<br/>bounded eight-worker server]
-        ORDINARY[Ordinary CLI/UI contract<br/>status history explain controls]
+        PUBLIC[Schema v2 public DTO<br/>ordinary frontend commands only]
+        V1[Schema v1 compatibility<br/>CLI + service transaction]
         INTERNAL[Service-only lifecycle controls<br/>exact generation + instance]
     end
 
@@ -74,8 +75,9 @@ flowchart LR
     REVIVE -->|tree gone, no revival, exact DAP candidate| APREP
     APREP --> STORE
     APREP -->|after durable commit| DAP --> STORE
-    STORE --> IPC --> ORDINARY
-    SVC --> INTERNAL --> IPC
+    STORE --> IPC --> PUBLIC
+    STORE --> IPC --> V1
+    SVC --> INTERNAL --> V1
 ```
 
 `unlingerd` defaults to report-only when invoked directly. Managed source boots name a sealed generation and never receive `--enforce` in the plist. Every managed process begins with a signal-free report-only recovery/first-scan phase. A same-generation restart may carry durable enforce intent only for that exact generation; after recovery and a fresh first scan, it creates a new enforcement epoch and resets cooling before effective enforcement resumes. An open cleanup attempt or delivery-unknown retry block clears that intent and leaves the generation durably report-only. A new generation, explicit `Disarm`, explicit `BeginDrain`, or failed managed startup also clears it. Ordinary SIGTERM/SIGINT performs a clean process exit without pretending to be the service manager's explicit drain transaction.
@@ -94,6 +96,6 @@ The macOS adapter no longer walks every file descriptor of every same-UID proces
 
 This is not a claim that the final deletion race is fully closed. Two known P2 residuals remain: daemon death after the canonical-to-quarantine rename can strand the exact private quarantine entry, and a same-UID actor can still attempt a swap between the final `fstatat` pathname check and `unlinkat`. One controlled generation-9 field run produced a successful live DAP-removal receipt with the current path; that point result does not resolve either race or authorize broader artifact eligibility.
 
-Ordinary IPC commands and service lifecycle controls share the owner-private socket but not the same authority surface. Status, history, explain, pause/resume, retry, exact-incident protect/unprotect, and diagnostics form the ordinary contract. `Arm`, `Disarm`, and `BeginDrain` are internal service controls bound to the exact activation generation and daemon instance. Every request uses one connection and one response. The default and service clients make one 15-second attempt; up to eight accepted connections are served concurrently, each with a 3-second read/write bound. Slow history or a partial peer therefore cannot head-of-line block all later control traffic. A timed-out mutation is uncertain delivery and is never automatically resent; the owner or service transaction must read back exact state. The managed field harness polls only read-only exact-incident `Explain` on a separate worker so native absence sampling is independent. Raw arguments, executable/profile paths, frozen target identities, and session fingerprints terminate inside transient observation/enforcement memory. SQLite, IPC, CLI, and diagnostics retain or project only typed redacted records.
+Ordinary IPC commands and service lifecycle controls share the owner-private socket but not the same typed authority surface. Schema v2 contains only public status/history/incident DTOs plus ordinary pause/resume, retry, exact-incident protect/unprotect, and diagnostics; it strips process/service identities and exposes explicit action capabilities. `Arm`, `Disarm`, and `BeginDrain` exist only in schema v1 and remain bound to the exact activation generation and daemon instance. Every request uses one connection and one response. The default and service clients make one 15-second attempt; up to eight accepted connections are served concurrently, each with a 3-second read/write bound. Slow history or a partial peer therefore cannot head-of-line block all later control traffic. A timed-out mutation is uncertain delivery and is never automatically resent; the owner or service transaction must read back exact state. The managed field harness polls only read-only exact-incident `Explain` on a separate worker so native absence sampling is independent. Raw arguments, executable/profile paths, frozen target identities, and session fingerprints terminate inside transient observation/enforcement memory. SQLite, IPC, CLI, and diagnostics retain or project only typed redacted records.
 
 macOS can leave an exited child visible in the process table as a zombie while `kill(pid, 0)` still reports that the PID exists. Snapshot and exact lookup therefore use `KERN_PROC_PID` status as the fallback authority: a confirmed `SZOMB` is treated as gone, excluded from live incidents, and not counted as unreadable coverage. Other read failures still fail closed.

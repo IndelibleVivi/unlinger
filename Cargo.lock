@@ -670,6 +670,7 @@ dependencies = [
  "serde_json",
  "unlinger-core",
  "unlinger-macos",
+ "unlinger-protocol",
  "unlinger-rules",
 ]
 
@@ -680,6 +681,14 @@ dependencies = [
  "libc",
  "libproc",
  "unlinger-core",
+]
+
+[[package]]
+name = "unlinger-protocol"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

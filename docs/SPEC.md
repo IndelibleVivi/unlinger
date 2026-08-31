@@ -295,6 +295,8 @@ CPU, RSS, age, swap pressure, and duplicate count can alter scan urgency and can
 - **REVIVED** — a supervisor recreated part of the incident.
 - **FAILED** — cleanup could not complete safely.
 
+These states describe the whole frozen process-plus-artifact plan. A terminal cleanup receipt also projects independent `process_outcome`, `artifact_outcome`, `overall_outcome`, and `attention_required` facts. If exact liveness plus revival checks prove the process tree gone but an artifact is refused before any uncertain artifact side effect, the plan remains `FAILED` for durable attention/retry while the human-facing outcome is `cleared_with_residue`. Process or artifact `delivery_unknown`, and failures after a side effect whose terminal result cannot be proved, remain overall `failed` and retain global fail-close behavior.
+
 ---
 
 ## 7. Runtime behavior
@@ -339,7 +341,7 @@ Memory pressure may shorten the delay before the second scan, but does not chang
 12. Confirm the complete tree is gone.
 13. Re-check for immediate supervisor-driven revival.
 14. Clean only eligible runtime artifacts whose live references are gone.
-15. Commit a redacted local receipt.
+15. Commit a redacted local receipt with independent process/artifact/overall outcomes.
 
 Unlinger never uses broad `killall`, process-name-only `pkill`, or an unrestricted PID list captured minutes earlier.
 
@@ -420,7 +422,7 @@ The daemon stores a compact local SQLite database containing:
 
 Default retention: 14 days or 10,000 events, whichever is smaller.
 
-A Unix-domain socket exposes read-mostly local IPC to the CLI and later UI. Ordinary user mutations are limited to pause/resume, explicit protect/unprotect, retry failed cleanup, and diagnostic export. Generation- and instance-bound arm, disarm, and drain messages are an internal service lifecycle protocol; they are not ordinary UI authority.
+A Unix-domain socket exposes read-mostly local IPC. Frontend schema v2 projects public status/history/incident DTOs and ordinary mutations only; it omits process and service lifecycle identities and provides explicit action capabilities. Schema v1 remains the Rust CLI/service compatibility protocol. Ordinary user mutations are limited to pause/resume, explicit protect/unprotect, retry failed cleanup, and diagnostic export. Generation- and instance-bound arm, disarm, and drain messages exist only in the internal schema-v1 service lifecycle protocol; they are not ordinary UI authority.
 
 ### 8.5 Signature packs
 

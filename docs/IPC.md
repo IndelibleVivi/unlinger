@@ -1,8 +1,8 @@
 # 本地 IPC contract
 
-本文锁定 Unlinger 当前 `schema_version = 1` 的 frontend-facing 本地 IPC wire contract。它记录已经实现的协议，不承诺未来 schema 会保持字段不变。Rust source authority 是 [`crates/unlinger-daemon/src/ipc.rs`](../crates/unlinger-daemon/src/ipc.rs)；本文用于让 frontend 不必从 CLI human output 反推 wire shape。
+本文锁定 Unlinger 当前 source 的两条本地 IPC wire surface：`schema_version = 2` 是 frontend-facing public contract，`schema_version = 1` 是现有 Rust CLI 与 service lifecycle 的 compatibility/operator contract。Rust DTO authority 分别是 [`crates/unlinger-protocol`](../crates/unlinger-protocol) 与 [`crates/unlinger-daemon/src/ipc.rs`](../crates/unlinger-daemon/src/ipc.rs)；v2 projection authority 是 [`crates/unlinger-daemon/src/public_ipc.rs`](../crates/unlinger-daemon/src/public_ipc.rs)。
 
-`status`、`history`、`explain`、`pause`、`resume`、`retry_failed_cleanup`、`protect_incident`、`unprotect_incident` 和 `export_diagnostics` 是 ordinary client surface。`arm`、`disarm` 和 `begin_drain` 共用同一 transport，但属于 service lifecycle control，不是 ordinary frontend action。
+`status`、`history`、`explain`、`pause`、`resume`、`retry_failed_cleanup`、`protect_incident`、`unprotect_incident` 和 `export_diagnostics` 是 v2 ordinary client surface。`arm`、`disarm` 和 `begin_drain` 只存在于 v1 service lifecycle protocol；它们不进入 v2 command enum。
 
 ## Transport 与 trust boundary
 
@@ -15,7 +15,30 @@
 - 当前 ordinary/default Rust client 与 service lifecycle client 都对单次 request 使用 15 秒 read/write timeout；server 最多并发处理 8 个已经 accept 的 connection，每个 connection 使用 3 秒 read/write timeout。一个慢 `history` 或只写了部分 request 的 peer 因此不会 head-of-line block 所有后续 status/lifecycle traffic；超过 worker bound 的 connection 可以在没有 JSON envelope 的情况下被关闭。连接失败、timeout、peer UID 不匹配或 daemon 不在时，同样不保证存在 JSON error response。
 - `IpcClient::request` 每次只发送一次，不做 automatic retry。`request_id` 只是 correlation ID，不是幂等或去重 key。任何 mutation 在 response 前 timeout/断线时都属于 uncertain delivery：daemon 可能尚未处理，也可能已经 commit 但 response 迟到；caller 必须先读取对应 durable/runtime state，不能盲目 resend。
 
-## Framing 与 envelope
+## Frontend schema v2
+
+Source server 按 request envelope 的 exact `schema_version` 路由，不做隐式 negotiation。v2 request/envelope 的 framing、limits、single-shot/uncertain-delivery 规则与 v1 相同，但 command 和 payload 由 `unlinger-protocol` 独立定义。
+
+v2 ordinary status 是 `PublicStatus`，只含 version、health/readiness、effective mode、activity、pause、last scan、incident counts、recent reclaim、event-source/storage health、bounded attention/protection 与 explicit action capabilities。它不发送 daemon PID、instance ID、activation/armed generation、enforcement epoch、requested mode、database schema、binary/path identity、service transaction state、raw last error 或 recovery identity。
+
+v2 history/explain 删除 event/attempt IDs、raw/survivor PIDs、source PID、process/member/artifact fingerprints、start identity 和 frozen targets；保留 family/version、member/resource totals、roles、typed evidence/gates、redacted incident ID、action stage/signal/disposition summaries 与独立 cleanup outcomes。Diagnostics v2 只组合 public status 与 public incident detail。
+
+Cleanup projection 同时给出 whole-plan `state` 以及：
+
+```text
+process_outcome  = cleared | revived | failed | delivery_unknown
+artifact_outcome = not_applicable | reconciled | residue | delivery_unknown
+overall_outcome  = cleared | cleared_with_residue | revived | failed
+attention_required = boolean
+```
+
+`state: FAILED` 与 `overall_outcome: cleared_with_residue` 可以并存：whole frozen plan 未全部完成，但 exact process liveness 和 revival checks 已证明 process tree 清除，artifact 在明确 refusal 后被安全保留。`delivery_unknown` 或 side effect 后无法证明 terminal state 的 failure 仍保持 overall failed 与 fail-close。
+
+Canonical frontend contract、fixtures 与 source/live boundary 见 [`apps/UnlingerApp/Contract/README.md`](../apps/UnlingerApp/Contract/README.md)。当前 installed generation 9 仍是 v1-only report-only runtime；v2 是 source-complete、socket-tested、尚未 installed/activated 的 contract。
+
+## Schema v1 framing 与 envelope
+
+本节起记录 v1 compatibility/operator shape。它仍供 Rust CLI、service transaction、旧 installed runtime 与低层 diagnosis 使用，不是新 App 的 DTO surface。
 
 每条 message 是一个 UTF-8 JSON value，后接单个 LF (`\n`)。JSON 不跨多行；一条 connection 上没有第二条 message。
 
@@ -284,7 +307,7 @@ Server 将 structured error `message` 限制为最多 512 Unicode scalar values�
 
 协议层还存在没有 JSON body 的 transport failures，例如 socket 不存在、peer 被拒绝、连接在 response 前关闭或 client-side 4 MiB limit 被触发。Frontend 应把它们与 daemon 返回的 structured `error.code` 分开建模。
 
-## Internal-only lifecycle controls
+## Internal-only lifecycle controls（v1 only）
 
 下列 variants 被保留给 `unlinger service` transaction 与 daemon lifecycle tests。Ordinary frontend 不发送它们，也不提供等价按钮。它们尤其不能在 client timeout 后自动 resend；缺少 response 时必须重新读取 exact lifecycle identity/state，让 service transaction 进入既有 fail-closed recovery：
 
@@ -300,18 +323,18 @@ Server 将 structured error `message` 限制为最多 512 Unicode scalar values�
 
 IPC/history/diagnostics 使用 typed projection，明确不发送 raw argv、executable paths、profile paths、page contents、credentials、cookies、session fingerprint、tracking key 或 frozen signal target list。
 
-但“redacted”不等于“可公开”：raw IPC 仍可包含 daemon/incident/process PIDs、incident IDs、event/attempt IDs、redacted identity/member/artifact fingerprints、`instance_id`、`enforcement_epoch`、`recovery_id` 和 bounded `last_error`。这些值只用于 local correlation 与 diagnosis：
+但“redacted”不等于“可公开”：v1 raw IPC 仍可包含 daemon/incident/process PIDs、incident IDs、event/attempt IDs、redacted identity/member/artifact fingerprints、`instance_id`、`enforcement_epoch`、`recovery_id` 和 bounded `last_error`。这些值只用于 local correlation 与 diagnosis：
 
 - 不放入 analytics、telemetry、crash reporting、remote logs 或 clipboard-by-default flows；
 - ordinary UI 不展示 `instance_id`、`enforcement_epoch`、`recovery_id`、raw `last_error` 或 process identity fingerprints；
 - human-readable status 可展示 lifecycle state、generation、health、requested/effective mode、counts 与 typed attention reasons；
 - export 必须是 explicit user action，并继续使用 private local-file boundary。
 
-当前 CLI `status` human output 会隐藏 PID、instance/recovery IDs、incident IDs in attention、private paths 和 raw last-error detail；`doctor` 还会生成更窄的 sanitized projection。Frontend 不应把 raw `DaemonStatus` 直接 stringify 到 UI 或 application log。
+当前 CLI `status` human output 会隐藏 PID、instance/recovery IDs、incident IDs in attention、private paths 和 raw last-error detail；`doctor` 还会生成更窄的 sanitized projection。Frontend 不读取或 stringify v1 `DaemonStatus`；它只消费 v2 public DTO。
 
 ## Compatibility rules
 
-- 当前没有 schema negotiation：client 发送 exact `schema_version: 1`，server 只接受 `1`。
+- 当前没有 schema negotiation：client 发送 exact schema。Source server 接受 v1/v2；installed generation 9 只接受 v1。Frontend 要求 v2，不 silent downgrade 到 v1。
 - Client 必须验证 response `schema_version` 与 request ID；mismatch 是 protocol error，不是可接受的 stale response，也不是 retry authorization。
 - Timeout、EOF 或 protocol error 不证明 request 未执行。对 pause/resume/retry/protect/unprotect 与 lifecycle mutation，缺失可信 response 时先 read back；不要用同一个或新 request ID 自动重发。
 - `ok/payload/error` 必须成对一致。`ok: true` 只允许 payload；`ok: false` 只允许 error。
@@ -324,9 +347,12 @@ IPC/history/diagnostics 使用 typed projection，明确不发送 raw argv、exe
 
 当前 contract 由以下 source/tests 覆盖：
 
+- [`crates/unlinger-protocol/src/lib.rs`](../crates/unlinger-protocol/src/lib.rs)：v2 ordinary commands、public DTO、envelopes、outcome 与 canonical fixture decoders；
+- [`crates/unlinger-daemon/src/public_ipc.rs`](../crates/unlinger-daemon/src/public_ipc.rs)：internal-to-public projection 与 field removal；
 - [`crates/unlinger-daemon/src/ipc.rs`](../crates/unlinger-daemon/src/ipc.rs)：envelopes、commands、payloads、limits、socket/peer boundary 与 error codes；
 - [`crates/unlinger-daemon/src/paths.rs`](../crates/unlinger-daemon/src/paths.rs)：effective-user path semantics；
-- [`crates/unlinger-daemon/tests/ipc_roundtrip.rs`](../crates/unlinger-daemon/tests/ipc_roundtrip.rs)：socket mode、status/pause/resume、typed retry/protection errors、managed lifecycle identity、same-generation re-arm、bounded attention 与 slow-partial-peer concurrency；其中 `ordinary_schema_v1_status_and_not_found_envelopes_have_stable_json` 用 literal request 和完整 JSON value 锁定 ordinary status success / typed `not_found` envelopes；
+- [`crates/unlinger-daemon/tests/ipc_roundtrip.rs`](../crates/unlinger-daemon/tests/ipc_roundtrip.rs)：socket mode、status/pause/resume、typed retry/protection errors、managed lifecycle identity、same-generation re-arm、bounded attention 与 slow-partial-peer concurrency；v2 tests 锁定 public status、history redaction 与 lifecycle-command absence，v1 golden test 保留 compatibility envelope；
+- [`apps/UnlingerApp/Contract/v2`](../apps/UnlingerApp/Contract/v2)：Rust roundtrip 的 public wire/app-state fixtures；
 - [`crates/unlinger-cli/src/main.rs`](../crates/unlinger-cli/src/main.rs)：ordinary CLI mapping、human-output redaction、doctor projection 与 private diagnostics output。
 
 修改 command/payload shape、limit、error discriminator、mode/readiness semantics、redaction surface、socket trust boundary 或 default path 时，source tests 与本文必须在同一 change 中更新。

@@ -774,6 +774,186 @@ fn ordinary_schema_v1_status_and_not_found_envelopes_have_stable_json() {
 }
 
 #[test]
+fn frontend_schema_v2_status_is_public_and_has_explicit_capabilities() {
+    let temp = TempState::new();
+    let database = temp.directory.join("history.sqlite3");
+    let socket = temp.directory.join("unlingerd.sock");
+    let mut status = DaemonStatus::new(DaemonMode::ReportOnly, 42);
+    status.healthy = true;
+    status.ready = true;
+    status.startup_state = StartupState::ReadyReportOnly;
+    status.managed = true;
+    status.activation_generation = Some(9);
+    status.armed_generation = Some(9);
+    status.enforcement_epoch = Some("private-epoch".to_owned());
+    status.last_scan_at_unix_millis = Some(1_234);
+    let control = ControlPlane::new(HistoryStore::open(&database).expect("open store"), status)
+        .expect("restore control state");
+    let _server = IpcServer::start(&socket, control).expect("start IPC server");
+
+    let response = raw_request(
+        &socket,
+        r#"{"schema_version":2,"request_id":17,"command":{"command":"status"}}"#,
+    );
+    assert_eq!(
+        response,
+        serde_json::json!({
+            "schema_version": 2,
+            "request_id": 17,
+            "ok": true,
+            "payload": {
+                "type": "status",
+                "data": {
+                    "daemon_version": env!("CARGO_PKG_VERSION"),
+                    "healthy": true,
+                    "readiness": "ready",
+                    "effective_mode": "report_only",
+                    "scan_in_progress": false,
+                    "cleanup_in_progress": false,
+                    "last_scan_at_unix_millis": 1234,
+                    "confirmed_incident_count": 0,
+                    "ambiguous_incident_count": 0,
+                    "event_source": {"healthy": true},
+                    "storage": {"healthy": true},
+                    "attention": {"total_count": 0, "items": []},
+                    "protection": {"total_count": 0, "items": []},
+                    "capabilities": {
+                        "pause": {"available": true},
+                        "resume": {
+                            "available": false,
+                            "unavailable_reason_id": "action.not_paused"
+                        },
+                        "retry_failed_cleanup": {
+                            "available": false,
+                            "unavailable_reason_id": "action.no_blocked_cleanup"
+                        },
+                        "protect_incident": {"available": true},
+                        "unprotect_incident": {"available": true},
+                        "export_diagnostics": {"available": true}
+                    }
+                }
+            }
+        })
+    );
+    let encoded = response.to_string();
+    for forbidden in [
+        "pid",
+        "instance_id",
+        "activation_generation",
+        "armed_generation",
+        "enforcement_epoch",
+        "requested_mode",
+        "database_schema_version",
+        "last_error",
+    ] {
+        assert!(!encoded.contains(forbidden), "v2 status leaked {forbidden}");
+    }
+}
+
+#[test]
+fn frontend_schema_v2_history_strips_process_and_storage_identities() {
+    let temp = TempState::new();
+    let database = temp.directory.join("history.sqlite3");
+    let socket = temp.directory.join("unlingerd.sock");
+    let store = HistoryStore::open(&database).expect("open store");
+    let report = confirmed_report("inc-public-history", "tracking-private");
+    store
+        .record_observation(1_000, &report)
+        .expect("record observation");
+    fail_cleanup(&store, &report, 2_000, "cleanup.signal_rejected");
+    let control = ControlPlane::new(
+        store,
+        DaemonStatus::new(DaemonMode::ReportOnly, std::process::id()),
+    )
+    .expect("restore control state");
+    let _server = IpcServer::start(&socket, control).expect("start IPC server");
+
+    let response = raw_request(
+        &socket,
+        r#"{"schema_version":2,"request_id":18,"command":{"command":"history","limit":20}}"#,
+    );
+    assert_eq!(response["schema_version"], 2);
+    assert_eq!(response["ok"], true);
+    assert_eq!(response["payload"]["type"], "history");
+    let encoded = response.to_string();
+    assert!(encoded.contains("inc-public-history"));
+    assert!(encoded.contains("agent-browser"));
+    for forbidden in [
+        "tracking-private",
+        "session-redacted",
+        "identity-inc-public-history",
+        "members-inc-public-history",
+        "\"pid\"",
+        "identity_fingerprint",
+        "member_fingerprint",
+        "attempt_id",
+        "event_id",
+        "survivor_pids",
+        "artifact_fingerprint",
+    ] {
+        assert!(
+            !encoded.contains(forbidden),
+            "v2 history leaked {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn frontend_schema_v2_cannot_invoke_service_lifecycle_commands() {
+    let temp = TempState::new();
+    let database = temp.directory.join("history.sqlite3");
+    let socket = temp.directory.join("unlingerd.sock");
+    let control = ControlPlane::new(
+        HistoryStore::open(&database).expect("open store"),
+        DaemonStatus::new(DaemonMode::ReportOnly, std::process::id()),
+    )
+    .expect("restore control state");
+    let _server = IpcServer::start(&socket, control).expect("start IPC server");
+
+    let response = raw_request(
+        &socket,
+        r#"{"schema_version":2,"request_id":19,"command":{"command":"arm","activation_generation":9,"instance_id":"private"}}"#,
+    );
+    assert_eq!(response["schema_version"], 2);
+    assert_eq!(response["request_id"], 19);
+    assert_eq!(response["ok"], false);
+    assert_eq!(response["error"]["code"], "invalid_json");
+}
+
+#[test]
+fn frontend_schema_v2_errors_do_not_echo_private_request_values() {
+    let temp = TempState::new();
+    let database = temp.directory.join("history.sqlite3");
+    let socket = temp.directory.join("unlingerd.sock");
+    let control = ControlPlane::new(
+        HistoryStore::open(&database).expect("open store"),
+        DaemonStatus::new(DaemonMode::ReportOnly, std::process::id()),
+    )
+    .expect("restore control state");
+    let _server = IpcServer::start(&socket, control).expect("start IPC server");
+    let private_value = "missing-private-correlation";
+    let request = serde_json::json!({
+        "schema_version": 2,
+        "request_id": 20,
+        "command": {
+            "command": "retry_failed_cleanup",
+            "incident_id": private_value
+        }
+    })
+    .to_string();
+
+    let response = raw_request(&socket, &request);
+    assert_eq!(response["schema_version"], 2);
+    assert_eq!(response["request_id"], 20);
+    assert_eq!(response["error"]["code"], "not_found");
+    assert_eq!(
+        response["error"]["message"],
+        "requested local record was not found"
+    );
+    assert!(!response.to_string().contains(private_value));
+}
+
+#[test]
 fn retry_failed_cleanup_roundtrip_is_named_and_not_found_is_typed() {
     let temp = TempState::new();
     let database = temp.directory.join("history.sqlite3");

@@ -13,7 +13,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use unlinger_core::{IncidentReport, SignalDisposition};
+use unlinger_core::{CleanupOutcome, IncidentReport, SignalDisposition};
 
 #[cfg(unix)]
 use std::os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt};
@@ -66,6 +66,8 @@ pub struct RecentReclaim {
     pub incident_id: String,
     pub occurred_at_unix_millis: u64,
     pub state: unlinger_core::IncidentState,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outcome: Option<CleanupOutcome>,
 }
 
 impl From<MostRecentReclaim> for RecentReclaim {
@@ -74,6 +76,7 @@ impl From<MostRecentReclaim> for RecentReclaim {
             incident_id: reclaim.incident_id,
             occurred_at_unix_millis: reclaim.occurred_at_unix_millis,
             state: reclaim.state,
+            outcome: Some(reclaim.outcome),
         }
     }
 }
@@ -1273,6 +1276,12 @@ struct RequestEnvelope {
     command: IpcCommand,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize)]
+struct RequestHeader {
+    schema_version: u32,
+    request_id: u64,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 struct ResponseEnvelope {
     schema_version: u32,
@@ -1590,8 +1599,8 @@ fn serve_connection(stream: &mut UnixStream, control: &ControlPlane) -> Result<(
             return Ok(());
         }
     };
-    let request = match serde_json::from_slice::<RequestEnvelope>(&request_bytes) {
-        Ok(request) => request,
+    let header = match serde_json::from_slice::<RequestHeader>(&request_bytes) {
+        Ok(header) => header,
         Err(error) => {
             write_response(
                 stream,
@@ -1609,42 +1618,106 @@ fn serve_connection(stream: &mut UnixStream, control: &ControlPlane) -> Result<(
             return Ok(());
         }
     };
-    let response = if request.schema_version != IPC_SCHEMA_VERSION {
-        ResponseEnvelope {
-            schema_version: IPC_SCHEMA_VERSION,
-            request_id: request.request_id,
-            ok: false,
-            payload: None,
-            error: Some(IpcErrorBody {
-                code: "unsupported_schema".to_owned(),
-                message: format!("supported IPC schema is {IPC_SCHEMA_VERSION}"),
-            }),
+    match header.schema_version {
+        IPC_SCHEMA_VERSION => {
+            let request = match serde_json::from_slice::<RequestEnvelope>(&request_bytes) {
+                Ok(request) => request,
+                Err(error) => {
+                    write_response(
+                        stream,
+                        &ResponseEnvelope {
+                            schema_version: IPC_SCHEMA_VERSION,
+                            request_id: 0,
+                            ok: false,
+                            payload: None,
+                            error: Some(IpcErrorBody {
+                                code: "invalid_json".to_owned(),
+                                message: bounded_message(&error.to_string()),
+                            }),
+                        },
+                    )?;
+                    return Ok(());
+                }
+            };
+            let response = match control.handle_at(request.command, now_unix_millis()?) {
+                Ok(payload) => ResponseEnvelope {
+                    schema_version: IPC_SCHEMA_VERSION,
+                    request_id: request.request_id,
+                    ok: true,
+                    payload: Some(payload),
+                    error: None,
+                },
+                Err(error) => ResponseEnvelope {
+                    schema_version: IPC_SCHEMA_VERSION,
+                    request_id: request.request_id,
+                    ok: false,
+                    payload: None,
+                    error: Some(IpcErrorBody {
+                        code: error.code().to_owned(),
+                        message: bounded_message(error.message()),
+                    }),
+                },
+            };
+            write_response(stream, &response)
         }
-    } else {
-        match control.handle_at(request.command, now_unix_millis()?) {
-            Ok(payload) => ResponseEnvelope {
+        unlinger_protocol::SCHEMA_VERSION => {
+            let request = match serde_json::from_slice::<unlinger_protocol::RequestEnvelope>(
+                &request_bytes,
+            ) {
+                Ok(request) => request,
+                Err(error) => {
+                    let response = unlinger_protocol::ResponseEnvelope::failure(
+                        header.request_id,
+                        unlinger_protocol::ErrorCode::InvalidJson,
+                        bounded_message(&error.to_string()),
+                    );
+                    write_public_response(stream, &response)?;
+                    return Ok(());
+                }
+            };
+            let response =
+                match crate::public_ipc::handle_at(control, request.command, now_unix_millis()?) {
+                    Ok(payload) => {
+                        unlinger_protocol::ResponseEnvelope::success(request.request_id, payload)
+                    }
+                    Err(error) => unlinger_protocol::ResponseEnvelope::failure(
+                        request.request_id,
+                        public_error_code(&error),
+                        public_error_message(&error),
+                    ),
+                };
+            write_public_response(stream, &response)
+        }
+        _ => write_response(
+            stream,
+            &ResponseEnvelope {
                 schema_version: IPC_SCHEMA_VERSION,
-                request_id: request.request_id,
-                ok: true,
-                payload: Some(payload),
-                error: None,
-            },
-            Err(error) => ResponseEnvelope {
-                schema_version: IPC_SCHEMA_VERSION,
-                request_id: request.request_id,
+                request_id: header.request_id,
                 ok: false,
                 payload: None,
                 error: Some(IpcErrorBody {
-                    code: error.code().to_owned(),
-                    message: bounded_message(error.message()),
+                    code: "unsupported_schema".to_owned(),
+                    message: format!(
+                        "supported IPC schemas are {IPC_SCHEMA_VERSION} and {}",
+                        unlinger_protocol::SCHEMA_VERSION
+                    ),
                 }),
             },
-        }
-    };
-    write_response(stream, &response)
+        ),
+    }
 }
 
 fn write_response(stream: &mut impl Write, response: &ResponseEnvelope) -> Result<(), IpcError> {
+    serde_json::to_writer(&mut *stream, response)?;
+    stream.write_all(b"\n")?;
+    stream.flush()?;
+    Ok(())
+}
+
+fn write_public_response(
+    stream: &mut impl Write,
+    response: &unlinger_protocol::ResponseEnvelope,
+) -> Result<(), IpcError> {
     serde_json::to_writer(&mut *stream, response)?;
     stream.write_all(b"\n")?;
     stream.flush()?;
@@ -1679,4 +1752,22 @@ fn now_unix_millis() -> Result<u64, IpcError> {
 
 fn bounded_message(message: &str) -> String {
     message.chars().take(MAX_ERROR_CHARS).collect()
+}
+
+fn public_error_message(error: &ControlError) -> &'static str {
+    match error {
+        ControlError::InvalidArgument(_) => "request argument is invalid",
+        ControlError::NotFound(_) => "requested local record was not found",
+        ControlError::Store(_) => "local history is unavailable",
+        ControlError::Unavailable(_) => "daemon operation is unavailable",
+    }
+}
+
+fn public_error_code(error: &ControlError) -> unlinger_protocol::ErrorCode {
+    match error {
+        ControlError::InvalidArgument(_) => unlinger_protocol::ErrorCode::InvalidArgument,
+        ControlError::NotFound(_) => unlinger_protocol::ErrorCode::NotFound,
+        ControlError::Store(_) => unlinger_protocol::ErrorCode::StoreError,
+        ControlError::Unavailable(_) => unlinger_protocol::ErrorCode::Unavailable,
+    }
 }

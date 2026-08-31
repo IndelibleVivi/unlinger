@@ -2,6 +2,7 @@
 resolver = "3"
 members = [
     "crates/unlinger-core",
+    "crates/unlinger-protocol",
     "crates/unlinger-rules",
     "crates/unlinger-macos",
     "crates/unlinger-daemon",

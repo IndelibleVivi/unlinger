@@ -11,9 +11,9 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 use unlinger_core::{
     ArtifactAction, ArtifactActionIntent, ArtifactDisposition, CleanupAction, CleanupActionIntent,
-    CleanupActionJournal, CleanupReceipt, CleanupResources, CleanupSignal, CleanupStage,
-    EvidenceItem, GateLedger, IncidentReport, IncidentState, ProcessRoleCount, RootSummary,
-    RuntimeArtifactKind, RuntimeFailure, SignalDisposition,
+    CleanupActionJournal, CleanupOutcome, CleanupReceipt, CleanupResources, CleanupSignal,
+    CleanupStage, EvidenceItem, GateLedger, IncidentReport, IncidentState, ProcessOutcome,
+    ProcessRoleCount, RootSummary, RuntimeArtifactKind, RuntimeFailure, SignalDisposition,
 };
 
 const SCHEMA_VERSION: i64 = 5;
@@ -308,6 +308,7 @@ pub struct MostRecentReclaim {
     pub incident_id: String,
     pub occurred_at_unix_millis: u64,
     pub state: IncidentState,
+    pub outcome: CleanupOutcome,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1649,10 +1650,22 @@ impl HistoryStore {
 
     pub fn most_recent_reclaim(&self) -> Result<Option<MostRecentReclaim>, StoreError> {
         let mut events = self.query_events(
-            "SELECT id, attempt_id, incident_id, occurred_at_ms, kind, state, payload_json
+            "SELECT events.id, events.attempt_id, events.incident_id,
+                    events.occurred_at_ms, events.kind, events.state, events.payload_json
              FROM events
-             WHERE kind = 'cleanup' AND state = 'CLEARED'
-             ORDER BY occurred_at_ms DESC, id DESC LIMIT 1",
+             LEFT JOIN cleanup_attempts ON cleanup_attempts.id = events.attempt_id
+             WHERE events.kind = 'cleanup'
+               AND (
+                   events.state = 'CLEARED'
+                   OR cleanup_attempts.reason_id IN (
+                       'cleanup.artifact_identity_changed',
+                       'cleanup.artifact_live_reference',
+                       'cleanup.artifact_unsafe',
+                       'cleanup.artifact_rejected',
+                       'cleanup.artifact_delivery_unknown'
+                   )
+               )
+             ORDER BY events.occurred_at_ms DESC, events.id DESC LIMIT 1",
             [],
         )?;
         let Some(event) = events.pop() else {
@@ -1660,18 +1673,20 @@ impl HistoryStore {
         };
         let EventPayload::Cleanup { receipt } = event.payload else {
             return Err(StoreError::Corrupt(
-                "most recent reclaim index selected a non-cleanup payload".to_owned(),
+                "most recent reclaim query selected a non-cleanup payload".to_owned(),
             ));
         };
-        if receipt.state != IncidentState::Cleared {
+        let outcome = receipt.outcome();
+        if outcome.process != ProcessOutcome::Cleared {
             return Err(StoreError::Corrupt(
-                "most recent reclaim payload is not CLEARED".to_owned(),
+                "most recent reclaim query selected an unproved process outcome".to_owned(),
             ));
         }
         Ok(Some(MostRecentReclaim {
             incident_id: project_identifier(&receipt.incident_id, "redacted-incident"),
             occurred_at_unix_millis: event.occurred_at_unix_millis,
             state: receipt.state,
+            outcome,
         }))
     }
 
@@ -1775,6 +1790,40 @@ impl HistoryStore {
             )
             .optional()?
             .is_some())
+    }
+
+    pub fn protection_for_incident(
+        &self,
+        incident_id: &str,
+    ) -> Result<Option<ProtectedIncidentSummary>, StoreError> {
+        let connection = self.connection()?;
+        connection
+            .query_row(
+                "SELECT incident_id, protected_at_ms,
+                        last_exact_observed_at_ms, absence_since_ms
+                 FROM incident_protections WHERE incident_id = ?1",
+                params![incident_id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, Option<i64>>(2)?,
+                        row.get::<_, Option<i64>>(3)?,
+                    ))
+                },
+            )
+            .optional()?
+            .map(
+                |(incident_id, protected_at, last_observed, absence_since)| {
+                    projected_protection_summary(
+                        incident_id,
+                        protected_at,
+                        last_observed,
+                        absence_since,
+                    )
+                },
+            )
+            .transpose()
     }
 
     pub fn protection_projection(&self, limit: usize) -> Result<ProtectionProjection, StoreError> {

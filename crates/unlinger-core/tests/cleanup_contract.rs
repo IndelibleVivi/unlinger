@@ -3,13 +3,14 @@ use std::collections::{BTreeMap, VecDeque};
 use std::rc::Rc;
 use std::time::Duration;
 use unlinger_core::{
-    ArtifactActionIntent, ArtifactDisposition, ArtifactFreeze, CleanupActionIntent,
-    CleanupActionJournal, CleanupExecutor, CleanupPlan, CleanupPolicy, CleanupRuntime,
-    CleanupSignal, ClockSample, EvidenceItem, FrozenRuntimeArtifact, GateLedger, IncidentReport,
-    IncidentRevalidator, IncidentState, ProcessIdentity, ProcessRecord, ProcessRole,
-    ProcessRoleCount, ProcessTarget, Revalidation, RevalidationPhase, RevalidationStatus,
-    RootSummary, RuntimeArtifactCandidate, RuntimeArtifactIdentity, RuntimeFailure,
-    SignalDisposition, Snapshot, SnapshotCoverage, WaitOutcome,
+    ArtifactActionIntent, ArtifactDisposition, ArtifactFreeze, ArtifactOutcome,
+    CleanupActionIntent, CleanupActionJournal, CleanupExecutor, CleanupOutcome, CleanupPlan,
+    CleanupPolicy, CleanupRuntime, CleanupSignal, ClockSample, EvidenceItem, FrozenRuntimeArtifact,
+    GateLedger, IncidentReport, IncidentRevalidator, IncidentState, OverallOutcome,
+    ProcessIdentity, ProcessOutcome, ProcessRecord, ProcessRole, ProcessRoleCount, ProcessTarget,
+    Revalidation, RevalidationPhase, RevalidationStatus, RootSummary, RuntimeArtifactCandidate,
+    RuntimeArtifactIdentity, RuntimeFailure, SignalDisposition, Snapshot, SnapshotCoverage,
+    WaitOutcome,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1255,6 +1256,15 @@ fn artifact_appearing_after_initial_absence_is_not_removed() {
         receipt.artifact_actions[0].disposition,
         ArtifactDisposition::IdentityMismatch
     );
+    assert_eq!(
+        receipt.outcome(),
+        CleanupOutcome {
+            process: ProcessOutcome::Cleared,
+            artifact: ArtifactOutcome::Residue,
+            overall: OverallOutcome::ClearedWithResidue,
+            attention_required: true,
+        }
+    );
 }
 
 #[test]
@@ -1294,6 +1304,49 @@ fn replacement_after_exact_removal_prevents_cleared_receipt() {
         receipt.artifact_actions[0].disposition,
         ArtifactDisposition::Removed
     );
+    assert_eq!(
+        receipt.outcome(),
+        CleanupOutcome {
+            process: ProcessOutcome::Cleared,
+            artifact: ArtifactOutcome::Residue,
+            overall: OverallOutcome::ClearedWithResidue,
+            attention_required: true,
+        }
+    );
+}
+
+#[test]
+fn artifact_delivery_unknown_preserves_confirmed_process_success_but_fails_overall() {
+    let prepared = Rc::new(Cell::new(false));
+    let mut runtime = artifact_runtime(Rc::clone(&prepared), ArtifactDisposition::DeliveryUnknown);
+    let mut journal = ArtifactJournal {
+        prepared,
+        completed: Vec::new(),
+        fail_completion: false,
+    };
+    let plan = CleanupPlan::from_confirmed(&report_with_artifact()).expect("artifact plan");
+    let mut should_stop = || false;
+
+    let receipt = CleanupExecutor::execute(
+        &mut runtime,
+        &IdentityRevalidator,
+        &mut journal,
+        &mut should_stop,
+        &plan,
+        &artifact_policy(),
+    )
+    .expect("delivery-unknown artifact receipt");
+
+    assert_eq!(receipt.state, IncidentState::Failed);
+    assert_eq!(
+        receipt.outcome(),
+        CleanupOutcome {
+            process: ProcessOutcome::Cleared,
+            artifact: ArtifactOutcome::DeliveryUnknown,
+            overall: OverallOutcome::Failed,
+            attention_required: true,
+        }
+    );
 }
 
 #[test]
@@ -1313,6 +1366,42 @@ fn older_cleanup_receipt_json_defaults_new_resource_and_artifact_fields() {
     assert_eq!(
         receipt.resources,
         unlinger_core::CleanupResources::default()
+    );
+}
+
+#[test]
+fn retained_pre_projection_artifact_failure_normalizes_without_a_store_migration() {
+    let receipt: unlinger_core::CleanupReceipt = serde_json::from_str(
+        r#"{
+            "incident_id":"inc-retained-residue",
+            "state":"FAILED",
+            "reason_id":"cleanup.artifact_unsafe",
+            "actions":[{
+                "stage":"primary_term",
+                "pid":42,
+                "identity_fingerprint":"process-redacted",
+                "signal":"term",
+                "disposition":"delivered"
+            }],
+            "artifact_actions":[{
+                "kind":"dev_tools_active_port",
+                "artifact_fingerprint":"artifact-redacted",
+                "disposition":"unsafe"
+            }],
+            "survivor_pids":[],
+            "revival_checks_completed":2
+        }"#,
+    )
+    .expect("decode retained residue receipt");
+
+    assert_eq!(
+        receipt.outcome(),
+        CleanupOutcome {
+            process: ProcessOutcome::Cleared,
+            artifact: ArtifactOutcome::Residue,
+            overall: OverallOutcome::ClearedWithResidue,
+            attention_required: true,
+        }
     );
 }
 

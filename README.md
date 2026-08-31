@@ -17,8 +17,9 @@ The repository now contains a macOS source candidate spanning the observation, d
 - frozen cleanup plans with durable PREPARED actions and fresh whole-incident revalidation before each exact signal stage;
 - controller/root TERM, member TERM, exact-survivor KILL, post-action scans, bounded 15/60-second revival checks, and restart-safe delivery-unknown retry lockout;
 - DAP-only runtime-artifact cleanup with a targeted Darwin pathname-reference query, a complete current-user argv pass, exact file/parent identity, an exclusive quarantine step, and a durable action journal; profiles and runtime directories are never deleted;
+- independent process/artifact/overall cleanup outcomes, so a proved-gone tree remains visible as reclaimed when an explicitly refused artifact is safely retained; delivery uncertainty and unproved post-side-effect failures still fail closed;
 - redacted SQLite v5 timelines, cooling/protection/retry/lifecycle state, terminal receipts stamped at completion, and 14-day/10,000-event retention;
-- a 0600 local newline-delimited JSON socket for status, history, explain, pause/resume, retry, exact incident protect/unprotect, and diagnostic export; clients use one 15-second attempt, each connection retains a 3-second I/O bound, and a bounded eight-worker server prevents one slow read from blocking later control traffic;
+- a 0600 local newline-delimited JSON socket with a frontend-only public schema v2 and a schema-v1 CLI/service compatibility lane; v2 omits process/service identities, exposes explicit capabilities, and cannot encode lifecycle commands; clients use one 15-second attempt, each connection retains a 3-second I/O bound, and a bounded eight-worker server prevents one slow read from blocking later control traffic;
 - native process-exit, wake, and memory-pressure scheduling hints with a periodic fallback; every trigger still begins with a fresh snapshot and pressure never lowers a gate;
 - a report-only daemon default and generation/instance/epoch-bound signal authorization;
 - a transactional per-user LaunchAgent lifecycle with sealed immutable generations, exact launchd/IPC/binary checks, SQLite backup, report-only rollback, and same-generation fresh-epoch re-arm only after a signal-free first scan;
@@ -82,6 +83,7 @@ Full command lines, executable paths, and profile paths exist only in transient 
 - [Signature packs](docs/SIGNATURES.md)
 - [Privacy](docs/PRIVACY.md)
 - [Local IPC contract](docs/IPC.md)
+- [Frontend contract and canonical fixtures](apps/UnlingerApp/Contract/README.md)
 - [Field Lab](docs/FIELDLAB.md)
 - [Implementation plan](docs/IMPLEMENTATION_PLAN.md)
 - [Current state](docs/current-state.md)

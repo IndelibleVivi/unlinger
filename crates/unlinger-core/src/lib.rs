@@ -12,9 +12,10 @@ pub use artifact::{
     RuntimeArtifactKind,
 };
 pub use cleanup::{
-    CleanupAction, CleanupActionIntent, CleanupActionJournal, CleanupError, CleanupExecutor,
-    CleanupPlan, CleanupPlanError, CleanupPolicy, CleanupReceipt, CleanupResources, CleanupRuntime,
-    CleanupSignal, CleanupStage, ClockSample, IncidentRevalidator, ResourceSnapshot, Revalidation,
+    ArtifactOutcome, CleanupAction, CleanupActionIntent, CleanupActionJournal, CleanupError,
+    CleanupExecutor, CleanupOutcome, CleanupPlan, CleanupPlanError, CleanupPolicy, CleanupReceipt,
+    CleanupResources, CleanupRuntime, CleanupSignal, CleanupStage, ClockSample,
+    IncidentRevalidator, OverallOutcome, ProcessOutcome, ResourceSnapshot, Revalidation,
     RevalidationPhase, RevalidationStatus, RuntimeFailure, SignalDisposition, WaitOutcome,
 };
 pub use evidence::{

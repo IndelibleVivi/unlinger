@@ -1,6 +1,7 @@
 mod engine;
 mod ipc;
 mod paths;
+mod public_ipc;
 mod store;
 
 pub use engine::{CycleReport, EngineConfig, EngineError, ReconciliationEngine};

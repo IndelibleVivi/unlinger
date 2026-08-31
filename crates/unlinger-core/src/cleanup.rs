@@ -69,6 +69,119 @@ pub struct CleanupReceipt {
     pub resources: CleanupResources,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProcessOutcome {
+    Cleared,
+    Revived,
+    Failed,
+    DeliveryUnknown,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ArtifactOutcome {
+    NotApplicable,
+    Reconciled,
+    Residue,
+    DeliveryUnknown,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OverallOutcome {
+    Cleared,
+    ClearedWithResidue,
+    Revived,
+    Failed,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct CleanupOutcome {
+    pub process: ProcessOutcome,
+    pub artifact: ArtifactOutcome,
+    pub overall: OverallOutcome,
+    pub attention_required: bool,
+}
+
+impl CleanupReceipt {
+    /// Projects the independent process and runtime-artifact facts from both
+    /// current and retained pre-projection receipts. The persisted incident
+    /// state remains the whole frozen-plan execution state, while this view
+    /// prevents an artifact residue from erasing a proved process-tree result.
+    #[must_use]
+    pub fn outcome(&self) -> CleanupOutcome {
+        let reason = self.reason_id.as_deref();
+        let signal_delivery_unknown = self
+            .actions
+            .iter()
+            .any(|action| action.disposition == SignalDisposition::DeliveryUnknown);
+        let artifact_delivery_unknown = self
+            .artifact_actions
+            .iter()
+            .any(|action| action.disposition == ArtifactDisposition::DeliveryUnknown)
+            || reason == Some("cleanup.artifact_delivery_unknown");
+        let artifact_residue_reason = matches!(
+            reason,
+            Some(
+                "cleanup.artifact_identity_changed"
+                    | "cleanup.artifact_live_reference"
+                    | "cleanup.artifact_unsafe"
+                    | "cleanup.artifact_rejected"
+            )
+        );
+
+        let process = if signal_delivery_unknown {
+            ProcessOutcome::DeliveryUnknown
+        } else if self.state == IncidentState::Revived {
+            ProcessOutcome::Revived
+        } else if self.state == IncidentState::Cleared
+            || artifact_residue_reason
+            || artifact_delivery_unknown
+        {
+            ProcessOutcome::Cleared
+        } else {
+            ProcessOutcome::Failed
+        };
+
+        let artifact = if artifact_delivery_unknown {
+            ArtifactOutcome::DeliveryUnknown
+        } else if artifact_residue_reason
+            || self
+                .artifact_actions
+                .iter()
+                .any(|action| !action.disposition.completed_cleanup())
+        {
+            ArtifactOutcome::Residue
+        } else if self.artifact_actions.is_empty() {
+            ArtifactOutcome::NotApplicable
+        } else {
+            ArtifactOutcome::Reconciled
+        };
+
+        let overall = match (process, artifact) {
+            (ProcessOutcome::DeliveryUnknown, _)
+            | (_, ArtifactOutcome::DeliveryUnknown)
+            | (ProcessOutcome::Failed, _) => OverallOutcome::Failed,
+            (
+                ProcessOutcome::Cleared,
+                ArtifactOutcome::NotApplicable | ArtifactOutcome::Reconciled,
+            ) => OverallOutcome::Cleared,
+            (ProcessOutcome::Cleared, ArtifactOutcome::Residue) => {
+                OverallOutcome::ClearedWithResidue
+            }
+            (ProcessOutcome::Revived, _) => OverallOutcome::Revived,
+        };
+
+        CleanupOutcome {
+            process,
+            artifact,
+            overall,
+            attention_required: overall != OverallOutcome::Cleared,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 pub struct CleanupResources {
     #[serde(skip_serializing_if = "Option::is_none")]

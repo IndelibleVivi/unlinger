@@ -460,12 +460,13 @@ impl<R: CleanupRuntime> ReconciliationEngine<R> {
                         receipt.incident_id.clone(),
                     ));
                 }
-                if receipt.state == IncidentState::Cleared {
+                if receipt.outcome().process == unlinger_core::ProcessOutcome::Cleared {
                     self.control.update_status(|status| {
                         status.most_recent_reclaim = Some(RecentReclaim {
                             incident_id: receipt.incident_id.clone(),
                             occurred_at_unix_millis: completed_at,
                             state: receipt.state,
+                            outcome: Some(receipt.outcome()),
                         });
                     })?;
                 }
@@ -578,7 +579,13 @@ fn receipt_requires_global_fail_close(receipt: &CleanupReceipt) -> bool {
             .artifact_actions
             .iter()
             .any(|action| action.disposition == ArtifactDisposition::Removed);
-    uncertain || (receipt.state != IncidentState::Cleared && delivered_side_effect)
+    if uncertain {
+        return true;
+    }
+    if receipt.outcome().overall == unlinger_core::OverallOutcome::ClearedWithResidue {
+        return false;
+    }
+    receipt.state != IncidentState::Cleared && delivered_side_effect
 }
 
 fn terminal_timestamp<R: CleanupRuntime>(runtime: &R, started_at_unix_millis: u64) -> u64 {
@@ -595,5 +602,64 @@ fn cooling_clock(sample: unlinger_core::ClockSample, enforcement_epoch: &str) ->
         continuous_millis: sample.continuous_millis,
         boot_session_fingerprint: sample.boot_session_fingerprint,
         enforcement_epoch: enforcement_epoch.to_owned(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::receipt_requires_global_fail_close;
+    use unlinger_core::{
+        ArtifactAction, ArtifactDisposition, CleanupAction, CleanupReceipt, CleanupResources,
+        CleanupSignal, CleanupStage, IncidentState, RuntimeArtifactKind, SignalDisposition,
+    };
+
+    fn receipt_with_artifact(disposition: ArtifactDisposition, reason_id: &str) -> CleanupReceipt {
+        CleanupReceipt {
+            incident_id: "inc-artifact-outcome".to_owned(),
+            state: IncidentState::Failed,
+            reason_id: Some(reason_id.to_owned()),
+            actions: vec![CleanupAction {
+                stage: CleanupStage::PrimaryTerm,
+                pid: 42,
+                identity_fingerprint: "proc-redacted".to_owned(),
+                signal: CleanupSignal::Term,
+                disposition: SignalDisposition::Delivered,
+            }],
+            artifact_actions: vec![ArtifactAction {
+                kind: RuntimeArtifactKind::DevToolsActivePort,
+                artifact_fingerprint: "artifact-redacted".to_owned(),
+                disposition,
+            }],
+            survivor_pids: Vec::new(),
+            revival_checks_completed: 2,
+            resources: CleanupResources::default(),
+        }
+    }
+
+    #[test]
+    fn pre_delivery_artifact_residue_does_not_fail_the_whole_daemon_closed() {
+        let receipt = receipt_with_artifact(ArtifactDisposition::Unsafe, "cleanup.artifact_unsafe");
+
+        assert!(!receipt_requires_global_fail_close(&receipt));
+    }
+
+    #[test]
+    fn post_delivery_uncertainty_still_fails_the_whole_daemon_closed() {
+        let receipt = receipt_with_artifact(
+            ArtifactDisposition::DeliveryUnknown,
+            "cleanup.artifact_delivery_unknown",
+        );
+
+        assert!(receipt_requires_global_fail_close(&receipt));
+    }
+
+    #[test]
+    fn failure_after_artifact_removal_still_fails_the_whole_daemon_closed() {
+        let receipt = receipt_with_artifact(
+            ArtifactDisposition::Removed,
+            "cleanup.target_lookup_incomplete",
+        );
+
+        assert!(receipt_requires_global_fail_close(&receipt));
     }
 }
