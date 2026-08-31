@@ -2,7 +2,7 @@
 
 本文锁定 Unlinger 当前 source 的两条本地 IPC wire surface：`schema_version = 2` 是 frontend-facing public contract，`schema_version = 1` 是现有 Rust CLI 与 service lifecycle 的 compatibility/operator contract。Rust DTO authority 分别是 [`crates/unlinger-protocol`](../crates/unlinger-protocol) 与 [`crates/unlinger-daemon/src/ipc.rs`](../crates/unlinger-daemon/src/ipc.rs)；v2 projection authority 是 [`crates/unlinger-daemon/src/public_ipc.rs`](../crates/unlinger-daemon/src/public_ipc.rs)。
 
-`status`、`history`、`explain`、`pause`、`resume`、`retry_failed_cleanup`、`protect_incident`、`unprotect_incident` 和 `export_diagnostics` 是 v2 ordinary client surface。`arm`、`disarm` 和 `begin_drain` 只存在于 v1 service lifecycle protocol；它们不进入 v2 command enum。
+`status`、`history`、`explain`、`incidents`、`pause`、`resume`、`retry_failed_cleanup`、`protect_incident`、`unprotect_incident` 和 `export_diagnostics` 是 v2 ordinary client surface。`arm`、`disarm` 和 `begin_drain` 只存在于 v1 service lifecycle protocol；它们不进入 v2 command enum。
 
 ## Transport 与 trust boundary
 
@@ -22,6 +22,8 @@ Source server 按 request envelope 的 exact `schema_version` 路由，不做隐
 v2 ordinary status 是 `PublicStatus`，只含 version、health/readiness、effective mode、activity、pause、last scan、incident counts、recent reclaim、event-source/storage health、bounded attention/protection 与 explicit action capabilities。它不发送 daemon PID、instance ID、activation/armed generation、enforcement epoch、requested mode、database schema、binary/path identity、service transaction state、raw last error 或 recovery identity。
 
 v2 history/explain 删除 event/attempt IDs、raw/survivor PIDs、source PID、process/member/artifact fingerprints、start identity 和 frozen targets；保留 family/version、member/resource totals、roles、typed evidence/gates、redacted incident ID、action stage/signal/disposition summaries 与独立 cleanup outcomes。Diagnostics v2 只组合 public status 与 public incident detail。
+
+v2 `incidents` 是只读 current roster：daemon 在每个 reconciliation cycle 发布当前 incident 集合的 snapshot（上限 32 条），每条是 `incident_id` 加一份与 public history 同款脱敏的 `Observation` projection。它是 observability surface，不是 work queue——roster 不推导任何 action availability，也不提供 manual lifecycle。
 
 Cleanup projection 同时给出 whole-plan `state` 以及：
 

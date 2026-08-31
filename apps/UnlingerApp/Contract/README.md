@@ -4,7 +4,7 @@
 
 当前 source 同时接受两个 exact schema：
 
-- `schema_version: 2`：frontend-only public DTO；ordinary commands only；Selen 使用这一层。
+- `schema_version: 2`：frontend-only public DTO；ordinary commands only；native app 只使用这一层。
 - `schema_version: 1`：现有 Rust CLI、service transaction 与 lifecycle compatibility surface；会携带 internal lifecycle facts，不用于 App。
 
 当前安装中的 generation 9 仍是上一 source head 的 v1-only report-only runtime。v2 已在 source socket integration tests 中验证，但尚未 install/reload/activate。Frontend 开发先使用 fixtures；需要 live v2 时，启动一个 database/socket/instance-lock 全部隔离的 source report-only daemon，或等待未来明确安装的新 generation。不要把 v1 status 当作 v2 fallback。
@@ -25,6 +25,7 @@ v2 只定义：
 - `status`
 - `history { limit }`
 - `explain { incident_id }`
+- `incidents`
 - `pause { duration_millis }`
 - `resume`
 - `retry_failed_cleanup { incident_id }`
@@ -33,6 +34,12 @@ v2 只定义：
 - `export_diagnostics { incident_id }`
 
 `arm`、`disarm`、`begin_drain` 不只是“不要显示”：它们在 v2 `Command` enum 中不存在。带这些 discriminator 的 v2 request 会得到 typed `invalid_json`。
+
+## Current roster
+
+`incidents` 是只读的 current-incidents roster：最近一次 reconciliation cycle 实际看到的 incident 列表（不含已 terminal 的），上限 32 条。每条是 `incident_id` 加一份经过 public history 同款脱敏的 `Observation` projection——family/version、state、executable basename、member/resource totals、role counts、evidence 与 gates；同样不发送 raw PID、fingerprint、tracking/session identity 或 frozen target。
+
+它是 observability surface，不是 work queue：frontend 不从 roster 推导任何 action availability，也不提供 manual kill。
 
 ## Status 与 capabilities
 
@@ -79,6 +86,10 @@ Timeline/detail：
 - `incident-protected.json`
 - `incident-revived.json`
 - `incident-failed.json`
+
+Roster：
+
+- `incidents-current.json`
 
 App-local transport states（不是 daemon response envelope）：
 

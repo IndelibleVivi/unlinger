@@ -26,3 +26,7 @@ jobs:
         run: cargo test --workspace
       - name: Build release workspace
         run: cargo build --release --workspace
+      - name: Test native frontend
+        run: swift test --package-path apps/UnlingerApp
+      - name: Bundle native frontend
+        run: apps/UnlingerApp/scripts/bundle.sh

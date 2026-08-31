@@ -1,11 +1,11 @@
 use crate::{
     AttentionKind, ControlError, ControlPlane, DaemonMode, DaemonStatus, EventPayload,
-    HistoryEvent, IpcCommand, IpcPayload, ProtectedIncidentSummary, StartupState,
-    StorageRecoveryReason,
+    HistoryEvent, IpcCommand, IpcPayload, ObservationRecord, ProtectedIncidentSummary,
+    StartupState, StorageRecoveryReason,
 };
 use unlinger_core::{
-    ArtifactDisposition, ArtifactOutcome, CleanupOutcome, IncidentState, OverallOutcome,
-    ProcessOutcome, SignalDisposition,
+    ArtifactDisposition, ArtifactOutcome, CleanupOutcome, IncidentReport, IncidentState,
+    OverallOutcome, ProcessOutcome, SignalDisposition,
 };
 use unlinger_protocol as public;
 
@@ -14,10 +14,22 @@ pub(crate) fn handle_at(
     command: public::Command,
     now_unix_millis: u64,
 ) -> Result<public::Payload, ControlError> {
+    // The roster is a v2-only read-only surface: it projects the engine's
+    // latest in-memory cycle and has no v1 counterpart.
+    if command == public::Command::Incidents {
+        return Ok(public::Payload::Incidents(
+            control
+                .roster_snapshot()
+                .into_iter()
+                .map(project_current_incident)
+                .collect(),
+        ));
+    }
     let internal = match command {
         public::Command::Status => IpcCommand::Status,
         public::Command::History { limit } => IpcCommand::History { limit },
         public::Command::Explain { incident_id } => IpcCommand::Explain { incident_id },
+        public::Command::Incidents => unreachable!("incidents roster returned above"),
         public::Command::Pause { duration_millis } => IpcCommand::Pause { duration_millis },
         public::Command::Resume => IpcCommand::Resume,
         public::Command::RetryFailedCleanup { incident_id } => {
@@ -267,39 +279,7 @@ fn project_history_event(event: HistoryEvent) -> public::HistoryEvent {
         state: project_incident_state(event.state),
         payload: match event.payload {
             EventPayload::Observation { report } => public::EventPayload::Observation {
-                observation: public::Observation {
-                    family: report.signature_pack,
-                    family_version: report.signature_version,
-                    state: project_incident_state(report.state),
-                    executable_basename: report.root.executable_basename,
-                    member_count: report.member_count,
-                    resident_memory_bytes: report.resident_memory_bytes,
-                    roles: report
-                        .roles
-                        .into_iter()
-                        .map(|role| public::RoleCount {
-                            role: project_process_role(role.role),
-                            count: role.count,
-                        })
-                        .collect(),
-                    evidence: report
-                        .evidence
-                        .into_iter()
-                        .map(|evidence| public::Evidence {
-                            id: evidence.id,
-                            family: project_evidence_family(evidence.family),
-                        })
-                        .collect(),
-                    gates: public::GateLedger {
-                        same_user: report.gates.same_user,
-                        strong_automation_provenance: report.gates.strong_automation_provenance,
-                        confirmed_abandonment: report.gates.confirmed_abandonment,
-                        isolated_session: report.gates.isolated_session,
-                        stable_across_two_observations: report.gates.stable_across_two_observations,
-                        process_identity_unchanged: report.gates.process_identity_unchanged,
-                        no_protection_rule: report.gates.no_protection_rule,
-                    },
-                },
+                observation: project_observation_record(report),
             },
             EventPayload::Cleanup { receipt } => {
                 let outcome = receipt.outcome();
@@ -350,6 +330,53 @@ fn project_history_event(event: HistoryEvent) -> public::HistoryEvent {
                     },
                 }
             }
+        },
+    }
+}
+
+/// Projects one in-memory cycle report into the public roster entry. The
+/// store's `ObservationRecord` redaction step runs first, so tracking keys,
+/// fingerprints, targets, and artifact candidates never leave the daemon.
+fn project_current_incident(report: IncidentReport) -> public::CurrentIncident {
+    let record = ObservationRecord::from(&report);
+    public::CurrentIncident {
+        incident_id: report.incident_id,
+        observation: project_observation_record(record),
+    }
+}
+
+fn project_observation_record(report: ObservationRecord) -> public::Observation {
+    public::Observation {
+        family: report.signature_pack,
+        family_version: report.signature_version,
+        state: project_incident_state(report.state),
+        executable_basename: report.root.executable_basename,
+        member_count: report.member_count,
+        resident_memory_bytes: report.resident_memory_bytes,
+        roles: report
+            .roles
+            .into_iter()
+            .map(|role| public::RoleCount {
+                role: project_process_role(role.role),
+                count: role.count,
+            })
+            .collect(),
+        evidence: report
+            .evidence
+            .into_iter()
+            .map(|evidence| public::Evidence {
+                id: evidence.id,
+                family: project_evidence_family(evidence.family),
+            })
+            .collect(),
+        gates: public::GateLedger {
+            same_user: report.gates.same_user,
+            strong_automation_provenance: report.gates.strong_automation_provenance,
+            confirmed_abandonment: report.gates.confirmed_abandonment,
+            isolated_session: report.gates.isolated_session,
+            stable_across_two_observations: report.gates.stable_across_two_observations,
+            process_identity_unchanged: report.gates.process_identity_unchanged,
+            no_protection_rule: report.gates.no_protection_rule,
         },
     }
 }

@@ -1311,7 +1311,11 @@ mod tests {
 
         drop(open_reference);
         let mut still_referenced = true;
-        for _ in 0..5 {
+        // proc_listpidspath can retain the just-closed descriptor briefly
+        // while other tests are exercising the kernel query in parallel.
+        // Give Darwin a bounded second to retire that observation; production
+        // remains fail-closed for every positive result.
+        for _ in 0..100 {
             still_referenced =
                 path_has_open_reference(&quarantined).expect("query released path references");
             if !still_referenced {

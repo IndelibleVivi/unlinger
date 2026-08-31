@@ -1,4 +1,4 @@
-# Selen backend handoff
+# Frontend implementation boundary
 
 先只读：
 
@@ -13,6 +13,8 @@
 Unlinger 是 local-only macOS runtime hygiene utility。当前 source 默认 report-only；当前安装的 generation 9 也稳定 report-only、unarmed。Frontend 是 backend truth 的 projection，不拥有 signal authorization、service installation/mode switching 或 lifecycle recovery。
 
 v2 已提供 status/history/explain、pause/resume、named retry、exact protect/unprotect 和 explicit diagnostics export。所有 actions 使用 backend capabilities；缺失 capability 不在 Swift 侧猜补。
+
+2026-08-31 起 v2 还提供只读 `incidents` roster（owner 授权）：最近一次 reconciliation cycle 的当前 incident snapshot，上限 32 条，复用 public history 的脱敏 projection。App 把它渲染为 popover 的「正在观察 / Watching right now」区。它是 observability surface，不推导 action availability，也不附带 manual kill。
 
 当前 automatic family admission 仍刻意很窄：exact Chrome for Testing `151.0.7922.34`、无 controller 的 detached tree。Unknown/mixed versions 与 controller-bearing sessions 保持 `PROTECTED`。这不是 frontend bug，也不授权 UI 加 manual kill。
 

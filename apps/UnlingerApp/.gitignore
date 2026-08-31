@@ -1,0 +1,6 @@
+.build/
+build/
+# Historical derived intermediate; canonical inputs are the two *-source.png files.
+AssetsSource/menubar-icon-master.png
+# Dated Faye/Cove/agent working handoffs are private continuity, not source.
+HANDOFF-*.md

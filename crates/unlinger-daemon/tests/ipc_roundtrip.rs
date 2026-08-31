@@ -899,6 +899,95 @@ fn frontend_schema_v2_history_strips_process_and_storage_identities() {
 }
 
 #[test]
+fn frontend_schema_v2_incidents_roster_is_public_and_redacted() {
+    let temp = TempState::new();
+    let database = temp.directory.join("history.sqlite3");
+    let socket = temp.directory.join("unlingerd.sock");
+    let status = DaemonStatus::new(DaemonMode::ReportOnly, 42);
+    let control = ControlPlane::new(HistoryStore::open(&database).expect("open store"), status)
+        .expect("restore control state");
+    control.publish_roster(vec![confirmed_report(
+        "inc-public-roster",
+        "tracking-private-roster",
+    )]);
+    let _server = IpcServer::start(&socket, control).expect("start IPC server");
+
+    let response = raw_request(
+        &socket,
+        r#"{"schema_version":2,"request_id":31,"command":{"command":"incidents"}}"#,
+    );
+    assert_eq!(
+        response,
+        serde_json::json!({
+            "schema_version": 2,
+            "request_id": 31,
+            "ok": true,
+            "payload": {
+                "type": "incidents",
+                "data": [{
+                    "incident_id": "inc-public-roster",
+                    "observation": {
+                        "family": "agent-browser",
+                        "family_version": "0.1.0",
+                        "state": "CONFIRMED",
+                        "executable_basename": "node",
+                        "member_count": 1,
+                        "resident_memory_bytes": 4096,
+                        "roles": [{"role": "controller", "count": 1}],
+                        "evidence": [],
+                        "gates": {
+                            "same_user": true,
+                            "strong_automation_provenance": true,
+                            "confirmed_abandonment": true,
+                            "isolated_session": true,
+                            "stable_across_two_observations": true,
+                            "process_identity_unchanged": true,
+                            "no_protection_rule": true
+                        }
+                    }
+                }]
+            }
+        })
+    );
+    let encoded = response.to_string();
+    for forbidden in [
+        "tracking-private-roster",
+        "tracking_key",
+        "session_fingerprint",
+        "member_fingerprint",
+        "identity_fingerprint",
+        "targets",
+        "pid",
+    ] {
+        assert!(!encoded.contains(forbidden), "v2 roster leaked {forbidden}");
+    }
+}
+
+#[test]
+fn frontend_schema_v2_incidents_roster_is_bounded() {
+    let temp = TempState::new();
+    let database = temp.directory.join("history.sqlite3");
+    let socket = temp.directory.join("unlingerd.sock");
+    let status = DaemonStatus::new(DaemonMode::ReportOnly, 42);
+    let control = ControlPlane::new(HistoryStore::open(&database).expect("open store"), status)
+        .expect("restore control state");
+    let reports = (0..40)
+        .map(|index| confirmed_report(&format!("inc-roster-{index}"), &format!("tracking-{index}")))
+        .collect::<Vec<_>>();
+    control.publish_roster(reports);
+    let _server = IpcServer::start(&socket, control).expect("start IPC server");
+
+    let response = raw_request(
+        &socket,
+        r#"{"schema_version":2,"request_id":32,"command":{"command":"incidents"}}"#,
+    );
+    let data = response["payload"]["data"]
+        .as_array()
+        .expect("roster array");
+    assert_eq!(data.len(), 32, "roster must stay bounded");
+}
+
+#[test]
 fn frontend_schema_v2_cannot_invoke_service_lifecycle_commands() {
     let temp = TempState::new();
     let database = temp.directory.join("history.sqlite3");

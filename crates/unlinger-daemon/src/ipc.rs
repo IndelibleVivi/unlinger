@@ -29,6 +29,7 @@ const MAX_HISTORY_LIMIT: usize = 1_000;
 const MAX_PAUSE_MILLIS: u64 = 30 * 24 * 60 * 60 * 1_000;
 const MAX_ERROR_CHARS: usize = 512;
 const MAX_STATUS_ATTENTION_ITEMS: usize = 16;
+const MAX_ROSTER_ITEMS: usize = 32;
 const DEFAULT_IPC_CLIENT_IO_TIMEOUT: Duration = Duration::from_secs(15);
 const IPC_SERVER_IO_TIMEOUT: Duration = Duration::from_secs(3);
 const MAX_IPC_SERVER_WORKERS: usize = 8;
@@ -361,6 +362,11 @@ impl From<StoreError> for ControlError {
 pub struct ControlPlane {
     store: HistoryStore,
     status: Arc<Mutex<DaemonStatus>>,
+    /// Latest cycle's incident reports, published by the engine after owner
+    /// protection is applied. In-memory only, never serialized to history;
+    /// the public projection in `public_ipc` enforces redaction on the way
+    /// out. Feeds the read-only v2 `incidents` roster.
+    roster: Arc<Mutex<Vec<IncidentReport>>>,
     cleanup_policy_revision: Arc<AtomicU64>,
 }
 
@@ -410,7 +416,28 @@ impl ControlPlane {
         Self {
             store,
             status: Arc::new(Mutex::new(status)),
+            roster: Arc::new(Mutex::new(Vec::new())),
             cleanup_policy_revision: Arc::new(AtomicU64::new(1)),
+        }
+    }
+
+    /// Replaces the current-incident roster with the latest cycle's reports.
+    /// Bounded like the attention projection; the roster is observability,
+    /// never a work queue.
+    pub fn publish_roster(&self, reports: Vec<IncidentReport>) {
+        let mut roster = match self.roster.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        roster.clear();
+        roster.extend(reports.into_iter().take(MAX_ROSTER_ITEMS));
+    }
+
+    /// Returns a snapshot of the latest published roster.
+    pub fn roster_snapshot(&self) -> Vec<IncidentReport> {
+        match self.roster.lock() {
+            Ok(guard) => guard.clone(),
+            Err(poisoned) => poisoned.into_inner().clone(),
         }
     }
 

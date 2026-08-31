@@ -1,0 +1,124 @@
+/* Status */
+"status.headline.quiet" = "一切如常";
+"status.headline.activity" = "正在检查…";
+"status.headline.attention" = "有需要关注的事项";
+"status.detail.event_source_degraded" = "实时调度信号暂时退化，定时检查仍在继续。";
+"status.detail.storage_degraded" = "历史记录存储报告了问题。";
+"mode.report_only" = "自动清理当前关闭，仅观察和记录。";
+"mode.enforce" = "自动清理已开启。";
+"paused.until" = "自动清理已暂停至 %@。观察和记录仍在继续。";
+"last_scan" = "上次检查 %@";
+"ambiguous.count" = "%lld 个拿不准的候选，原样保留未动";
+
+/* Daemon unavailable (app-local state) */
+"unavailable.title" = "连不上后台服务";
+"unavailable.body" = "Unlinger 以后台服务形式在本机运行。服务可能未安装或未在运行——当前没有在进行任何观察。";
+"unavailable.retry" = "重试";
+
+/* Attention items */
+"attention.section" = "需要关注";
+"attention.hint" = "点按一项，查看详情和你可以执行的操作。";
+"attention.daemon_unhealthy" = "后台服务报告了一个问题。";
+"attention.residue" = "进程已处理完毕；一个低风险残留被保留。";
+"attention.failed.delivery_unknown" = "一次清理的结果无法确认，自动重试已被阻止。";
+"attention.failed.generic" = "一次清理没有完成，不会自动重试。";
+"attention.revived" = "一棵已清理的进程树被它的监管进程重新拉起。";
+"attention.event_source" = "实时调度信号暂时退化，定时检查仍在继续。";
+"attention.storage_recovered" = "历史记录存储已从问题中恢复。";
+"attention.generic" = "有一个事项需要关注。";
+"attention.more" = "还有 %lld 项";
+
+/* Recent reclaim */
+"reclaim.cleared" = "回收了一棵被遗弃的进程树。";
+"reclaim.cleared_with_residue" = "进程树已回收；一个低风险残留被保留。";
+"reclaim.revived" = "一棵已回收的进程树被重新拉起。";
+"reclaim.failed" = "一次回收没有完成。";
+"reclaim.generic" = "最近有回收活动。";
+"reclaim.section" = "最近一次回收";
+
+/* Current roster (read-only) */
+"roster.title" = "正在观察";
+"roster.item.unknown" = "未命名进程树";
+"roster.state.confirmed" = "已确认遗弃";
+"roster.state.ambiguous" = "拿不准";
+"roster.hint" = "只读列表——这些只是正在观察的对象。";
+
+/* Protections */
+"protection.count" = "%lld 个被保护——有意保留不动";
+"protection.item" = "%@起受保护";
+
+/* History */
+"history.title" = "历史记录";
+"history.hint" = "Unlinger 看到和做过的，都记录在这里。";
+"history.empty" = "还没有任何记录。";
+"history.section" = "最近事件";
+
+/* Outcomes */
+"outcome.cleared" = "已清理";
+"outcome.cleared_with_residue" = "已清理，残留保留";
+"outcome.revived" = "被重新拉起";
+"outcome.failed" = "未完成";
+"outcome.delivery_unknown" = "结果未确认";
+"outcome.unknown" = "未知";
+"outcome.protected" = "受保护";
+"outcome.observing" = "观察中";
+
+/* Incident detail */
+"detail.timeline" = "时间线";
+"detail.members" = "%lld 个进程，%@";
+"detail.roles.controller" = "控制进程";
+"detail.roles.browser_root" = "浏览器主进程";
+"detail.roles.renderer" = "渲染进程";
+"detail.gates" = "安全检查";
+"detail.gate.passed" = "通过";
+"detail.gate.blocked" = "阻止";
+"detail.evidence" = "证据";
+"detail.resources.reclaimed" = "约释放 %@ 内存";
+"detail.resources.before_after" = "%lld 个进程 / %@ → %lld 个进程 / %@";
+"detail.actions" = "采取的动作";
+"detail.action.term" = "请求退出";
+"detail.action.kill" = "强制退出";
+"detail.action.delivery_unknown" = "%@——送达未确认";
+"detail.action.not_delivered" = "%@——未送达";
+"detail.action.artifact.removed" = "移除了一个残留文件";
+"detail.action.artifact.kept" = "保留了一个残留文件";
+"detail.not_found" = "这条事件已不在记录中。";
+
+/* Mutations */
+"mutation.in_flight" = "正在执行…";
+"mutation.confirmed" = "已完成。";
+"mutation.uncertain.title" = "无法确认这次操作";
+"mutation.uncertain.body" = "请求可能已经生效。当前状态已重新读取，系统不会自动重发；如需再次请求，请使用当前仍可用的操作。";
+"mutation.failed" = "操作未能完成。";
+"mutation.dismiss" = "好的";
+
+/* Capability unavailability */
+"cap.action.not_paused" = "当前没有暂停";
+"cap.action.no_blocked_cleanup" = "没有可重试的被阻止清理";
+"cap.action.already_protected" = "已在保护中";
+"cap.action.not_protected" = "未在保护中";
+"cap.generic" = "当前不可用";
+
+/* Actions */
+"actions.hint" = "暂停只停自动清理；观察和记录不会中断。";
+"action.pause" = "暂停";
+"action.pause.for" = "暂停 %@";
+"action.pause.2h" = "2 小时";
+"action.pause.8h" = "8 小时";
+"action.pause.24h" = "24 小时";
+"action.resume" = "恢复";
+"action.retry" = "重试清理";
+"action.protect" = "保留，别动它";
+"action.unprotect" = "取消保留";
+"action.export" = "导出诊断…";
+"action.exported" = "诊断已导出。";
+"action.quit" = "退出 Unlinger";
+
+/* Language menu */
+"language.menu" = "语言";
+"language.system" = "跟随系统";
+"language.en" = "English";
+"language.zh_hans" = "中文（简体）";
+
+/* Export panel */
+"export.filename" = "unlinger-diagnostics.json";

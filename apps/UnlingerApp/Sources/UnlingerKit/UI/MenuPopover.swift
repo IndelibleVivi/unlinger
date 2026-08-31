@@ -1,0 +1,145 @@
+import SwiftUI
+
+enum Route: Hashable {
+    case history
+    case incident(String)
+}
+
+/// Root of the menu-bar popover: status, attention, recent reclaim,
+/// protections, history link, and status-level actions.
+public struct MenuPopover: View {
+    @Environment(AppState.self) private var state
+
+    public init() {}
+
+    public var body: some View {
+        NavigationStack {
+            Group {
+                switch state.connection {
+                case .connecting:
+                    VStack(spacing: 8) {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text(L10n.text("status.headline.activity"))
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 120)
+                case .unavailable:
+                    unavailable
+                case .live:
+                    live
+                }
+            }
+            .padding()
+            .navigationDestination(for: Route.self) { route in
+                switch route {
+                case .history:
+                    HistoryView()
+                case .incident(let incidentID):
+                    IncidentDetailView(incidentID: incidentID)
+                }
+            }
+        }
+        .frame(width: 340)
+    }
+
+    private var unavailable: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label(L10n.text("unavailable.title"), systemImage: "circle.slash")
+                .font(.headline)
+            Text(L10n.text("unavailable.body"))
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+            Button(L10n.text("unavailable.retry")) {
+                Task { await state.refresh() }
+            }
+            .padding(.top, 4)
+        }
+    }
+
+    private var live: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                if let viewModel = state.viewModel {
+                    StatusSection(viewModel: viewModel)
+
+                    if !state.currentIncidents.isEmpty {
+                        Divider()
+                        RosterSection(incidents: state.currentIncidents)
+                    }
+
+                    if !viewModel.attention.isEmpty {
+                        Divider()
+                        AttentionList(items: viewModel.attention, overflow: viewModel.attentionOverflow)
+                    }
+
+                    if let reclaim = viewModel.recentReclaim {
+                        Divider()
+                        reclaimRow(reclaim)
+                    }
+
+                    if !viewModel.protections.isEmpty {
+                        Divider()
+                        VStack(alignment: .leading, spacing: 6) {
+                            Label(L10n.text("protection.count", viewModel.protections.count), systemImage: "hand.raised")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            ForEach(viewModel.protections.prefix(3)) { protection in
+                                NavigationLink(value: Route.incident(protection.incidentId)) {
+                                    HStack {
+                                        Text(L10n.text("protection.item", Format.relativeTime(Date(unixMillis: protection.protectedAtUnixMillis))))
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                        Spacer(minLength: 0)
+                                        Image(systemName: "chevron.right")
+                                            .font(.caption2)
+                                            .foregroundStyle(.tertiary)
+                                            .accessibilityHidden(true)
+                                    }
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                    }
+
+                    Divider()
+                    VStack(alignment: .leading, spacing: 2) {
+                        NavigationLink(value: Route.history) {
+                            Label(L10n.text("history.title"), systemImage: "clock")
+                                .font(.subheadline)
+                        }
+                        Text(L10n.text("history.hint"))
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                    }
+
+                    Divider()
+                    ActionControls(capabilities: state.status?.capabilities)
+                }
+            }
+        }
+        .scrollIndicators(.never)
+        .frame(maxHeight: 480)
+    }
+
+    private func reclaimRow(_ reclaim: ReclaimViewData) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(L10n.text("reclaim.section"))
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Image(systemName: "arrow.down.circle")
+                    .foregroundStyle(.secondary)
+                    .font(.subheadline)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(L10n.text(reclaim.copyKey))
+                        .font(.subheadline)
+                    Text(Format.relativeTime(reclaim.occurredAt))
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                }
+            }
+        }
+    }
+}

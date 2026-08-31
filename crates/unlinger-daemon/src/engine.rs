@@ -360,6 +360,11 @@ impl<R: CleanupRuntime> ReconciliationEngine<R> {
             }
         }
 
+        // Publish the redacted-elsewhere current-incident roster after owner
+        // protection is applied, so the public v2 `incidents` surface shows
+        // what this cycle actually sees.
+        self.control.publish_roster(incidents.clone());
+
         for report in &incidents {
             self.control
                 .store()

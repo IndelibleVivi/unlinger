@@ -1,0 +1,124 @@
+/* Status */
+"status.headline.quiet" = "Nothing needs attention";
+"status.headline.activity" = "Checking…";
+"status.headline.attention" = "Something needs attention";
+"status.detail.event_source_degraded" = "Live scheduling hints are degraded; periodic checks continue.";
+"status.detail.storage_degraded" = "History storage reported a problem.";
+"mode.report_only" = "Automatic cleanup is off. Unlinger only watches and records.";
+"mode.enforce" = "Automatic cleanup is on.";
+"paused.until" = "Automatic cleanup is paused until %@. Watching continues.";
+"last_scan" = "Last check %@";
+"ambiguous.count" = "%lld borderline candidate(s) left untouched";
+
+/* Daemon unavailable (app-local state) */
+"unavailable.title" = "Can't reach the background service";
+"unavailable.body" = "Unlinger runs as a local background service. It may not be installed or running — nothing is being observed right now.";
+"unavailable.retry" = "Try again";
+
+/* Attention items */
+"attention.section" = "Needs attention";
+"attention.hint" = "Open an item to see details and what you can do.";
+"attention.daemon_unhealthy" = "The background service reported a problem.";
+"attention.residue" = "Processes were cleared; one low-risk leftover was kept.";
+"attention.failed.delivery_unknown" = "A cleanup result couldn't be confirmed, so automatic retry is blocked.";
+"attention.failed.generic" = "A cleanup didn't finish. It won't be retried automatically.";
+"attention.revived" = "A cleaned-up process tree was restarted by its supervisor.";
+"attention.event_source" = "Live scheduling hints are degraded; periodic checks continue.";
+"attention.storage_recovered" = "History storage recovered from a problem.";
+"attention.generic" = "An item needs attention.";
+"attention.more" = "%lld more";
+
+/* Recent reclaim */
+"reclaim.cleared" = "Reclaimed an abandoned process tree.";
+"reclaim.cleared_with_residue" = "Reclaimed a process tree; a low-risk leftover was kept.";
+"reclaim.revived" = "A reclaimed tree was restarted.";
+"reclaim.failed" = "A reclaim didn't finish.";
+"reclaim.generic" = "Recent reclaim activity.";
+"reclaim.section" = "Most recent reclaim";
+
+/* Current roster (read-only) */
+"roster.title" = "Watching right now";
+"roster.item.unknown" = "Unnamed process tree";
+"roster.state.confirmed" = "Confirmed abandoned";
+"roster.state.ambiguous" = "Borderline";
+"roster.hint" = "Read-only — these are just being watched.";
+
+/* Protections */
+"protection.count" = "%lld protected — left alone on purpose";
+"protection.item" = "Protected %@";
+
+/* History */
+"history.title" = "History";
+"history.hint" = "Everything Unlinger has seen and done is recorded here.";
+"history.empty" = "No recorded events yet.";
+"history.section" = "Recent events";
+
+/* Outcomes */
+"outcome.cleared" = "Cleared";
+"outcome.cleared_with_residue" = "Cleared, leftover kept";
+"outcome.revived" = "Restarted";
+"outcome.failed" = "Didn't finish";
+"outcome.delivery_unknown" = "Result unconfirmed";
+"outcome.unknown" = "Unknown";
+"outcome.protected" = "Protected";
+"outcome.observing" = "Observing";
+
+/* Incident detail */
+"detail.timeline" = "Timeline";
+"detail.members" = "%lld processes, %@";
+"detail.roles.controller" = "controller";
+"detail.roles.browser_root" = "browser root";
+"detail.roles.renderer" = "renderer";
+"detail.gates" = "Safety checks";
+"detail.gate.passed" = "Passed";
+"detail.gate.blocked" = "Blocked";
+"detail.evidence" = "Evidence";
+"detail.resources.reclaimed" = "About %@ of memory reclaimed";
+"detail.resources.before_after" = "%lld processes / %@ → %lld processes / %@";
+"detail.actions" = "Actions taken";
+"detail.action.term" = "Asked to quit";
+"detail.action.kill" = "Force-quit";
+"detail.action.delivery_unknown" = "%@ — couldn't confirm delivery";
+"detail.action.not_delivered" = "%@ — not delivered";
+"detail.action.artifact.removed" = "Removed a leftover file";
+"detail.action.artifact.kept" = "Kept a leftover file";
+"detail.not_found" = "This incident is no longer recorded.";
+
+/* Mutations */
+"mutation.in_flight" = "Working…";
+"mutation.confirmed" = "Done.";
+"mutation.uncertain.title" = "Couldn't confirm that action";
+"mutation.uncertain.body" = "The request may still have gone through. Current state has been re-read and the request will not be sent again automatically. Use the currently available actions if another request is appropriate.";
+"mutation.failed" = "The action couldn't be completed.";
+"mutation.dismiss" = "OK";
+
+/* Capability unavailability */
+"cap.action.not_paused" = "Not paused right now";
+"cap.action.no_blocked_cleanup" = "No blocked cleanup to retry";
+"cap.action.already_protected" = "Already protected";
+"cap.action.not_protected" = "Not protected";
+"cap.generic" = "Not available right now";
+
+/* Actions */
+"actions.hint" = "Pause stops automatic cleanup only. Watching and recording never stop.";
+"action.pause" = "Pause";
+"action.pause.for" = "Pause for %@";
+"action.pause.2h" = "2 hours";
+"action.pause.8h" = "8 hours";
+"action.pause.24h" = "24 hours";
+"action.resume" = "Resume";
+"action.retry" = "Retry cleanup";
+"action.protect" = "Leave this alone";
+"action.unprotect" = "Stop leaving alone";
+"action.export" = "Export diagnostics…";
+"action.exported" = "Diagnostics exported.";
+"action.quit" = "Quit Unlinger";
+
+/* Language menu */
+"language.menu" = "Language";
+"language.system" = "Follow System";
+"language.en" = "English";
+"language.zh_hans" = "中文（简体）";
+
+/* Export panel */
+"export.filename" = "unlinger-diagnostics.json";

@@ -28,6 +28,7 @@ pub enum Command {
     Status,
     History { limit: usize },
     Explain { incident_id: String },
+    Incidents,
     Pause { duration_millis: u64 },
     Resume,
     RetryFailedCleanup { incident_id: String },
@@ -98,6 +99,7 @@ pub enum Payload {
     Status(PublicStatus),
     History(Vec<HistoryEvent>),
     Incident(IncidentDetail),
+    Incidents(Vec<CurrentIncident>),
     Pause { until_unix_millis: u64 },
     Resumed,
     RetryScheduled { incident_id: String },
@@ -475,6 +477,15 @@ pub struct IncidentDetail {
     pub capabilities: IncidentCapabilities,
 }
 
+/// One currently observed incident from the latest reconciliation cycle.
+/// Read-only roster entry: the observation projection is identical to the
+/// redacted history observation record and carries no process identity.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct CurrentIncident {
+    pub incident_id: String,
+    pub observation: Observation,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct DiagnosticsBundle {
     pub document_schema_version: u32,
@@ -579,6 +590,10 @@ mod tests {
             include_str!(concat!(
                 env!("CARGO_MANIFEST_DIR"),
                 "/../../apps/UnlingerApp/Contract/v2/incident-failed.json"
+            )),
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../apps/UnlingerApp/Contract/v2/incidents-current.json"
             )),
         ];
         for source in wire_fixtures {

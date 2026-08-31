@@ -2,7 +2,7 @@
 
 **Updated:** 2026-08-31
 **Programme:** Unlinger 0.1
-**Source:** private backend source candidate with frontend schema v2; not released or installed
+**Source:** private backend plus native SwiftUI source candidate; frontend not installed; source not released
 **Remote:** private origin configured
 **Installed runtime:** generation 9, v1-only, loaded and healthy at a stable report-only floor
 **Activation:** unarmed after one complete managed full-timing acceptance run; ambient enforcement remains off
@@ -13,7 +13,11 @@ The current source spans native macOS observation, deterministic schema-v2 sessi
 
 Cleanup receipts now derive independent process, artifact, overall, and attention outcomes for both new and retained events. A known artifact refusal after exact tree absence/revival proof remains a whole-plan `FAILED` attention/retry item but projects `cleared_with_residue`, remains visible as a recent process reclaim, and no longer fails the entire managed daemon closed. Signal/artifact delivery uncertainty and unproved failures after a delivered side effect retain global fail-close.
 
-Frontend schema v2 is owned by `unlinger-protocol`, excludes service lifecycle commands at the command-enum boundary, strips process/storage/service identities from status/history/explain/diagnostics, and provides explicit global/incident capabilities. Thirteen canonical wire/app-state fixtures and a bounded Selen handoff are tracked and Rust-roundtripped. Schema v1 remains the Rust CLI/service compatibility lane. The active generation 9 predates this source and therefore remains v1-only; no install, reload, mode change, or activation occurred in this tranche.
+Frontend schema v2 is owned by `unlinger-protocol`, excludes service lifecycle commands at the command-enum boundary, strips process/storage/service identities from status/history/explain/incidents/diagnostics, and provides explicit global/incident capabilities. Fourteen canonical wire/app-state fixtures are tracked and Rust-roundtripped; `apps/UnlingerApp/FRONTEND_BOUNDARY.md` records the stable technical boundary, while dated working handoffs remain private continuity outside Git. Schema v1 remains the Rust CLI/service compatibility lane. The active generation 9 predates this source and therefore remains v1-only; no install, reload, mode change, or activation occurred in this tranche.
+
+The native frontend now has a first SwiftUI implementation under `apps/UnlingerApp`: a SwiftPM menu-bar thin client (`UnlingerKit` library + `UnlingerApp` executable + `scripts/bundle.sh` ad-hoc-signed `.app`) speaking schema v2 only over the per-user socket, with canonical-fixture-driven previews/tests, capability-gated actions, and the delivery-uncertain no-resend/readback mutation flow. It is verified against fixtures and an isolated source report-only daemon; it has not been pointed at, installed beside, or integrated with the installed generation 9.
+
+On 2026-08-31 the owner authorized a read-only v2 `incidents` roster command: the daemon publishes a bounded (32) snapshot of the current incident set each reconciliation cycle, projected through the same public redaction as history, and the app renders it as a "watching right now" popover section. It is observability only — no action availability derives from the roster, and no manual lifecycle control was added.
 
 The macOS live-process boundary now treats only a PID confirmed `SZOMB` through `KERN_PROC_PID` as gone; every other incomplete read remains fail closed. DAP cleanup no longer walks every descriptor of every same-UID process. It uses Darwin's targeted `proc_listpidspath` query for the exact canonical or quarantine pathname, a complete current-user argv pass, and frozen parent/file identity checks before and after the query.
 
@@ -23,7 +27,7 @@ Ordinary and service IPC clients make one 15-second request attempt; accepted se
 
 ## Verification truth
 
-Current-source verification passes: workspace fmt, strict workspace clippy, 249 ordinary tests with the two owner-only live harnesses ignored, release workspace build, Rust v2 fixture roundtrips, raw-socket v2 public-redaction/lifecycle-absence/error-redaction checks, a source-only doctor over 430/430 current-user processes with zero unreadable argv/descriptor coverage, and a 429/429 dry-run scan with zero incidents. A fresh read-only service readback still proves generation 9 installed/loaded/healthy, exact launchd/IPC/generation/binary identity, private permissions, ReadyReportOnly, requested/effective report-only, unarmed, idle, healthy event source, no storage recovery, no current/blocked/protected incidents, and its prior Cleared reclaim.
+Current-source verification passes: workspace fmt, strict workspace clippy, 251 ordinary Rust tests with the two owner-only live harnesses ignored, release workspace build, 33 native frontend tests, an ad-hoc-signed `.app` bundle whose packaged resource set excludes stale incremental files, Rust v2 fixture roundtrips, raw-socket v2 public-redaction/lifecycle-absence/error-redaction checks, a source-only doctor over 421/421 current-user processes with zero unreadable argv/descriptor coverage, and a 421/421 dry-run scan with zero incidents. A fresh read-only service readback still proves generation 9 installed/loaded/healthy, exact launchd/IPC/generation/binary identity, private permissions, ReadyReportOnly, requested/effective report-only, unarmed, idle, healthy event source, no storage recovery, no current/blocked/protected incidents, and its prior Cleared reclaim.
 
 Synthetic verification includes exact owned-child signal/process-exit tests, an owned-zombie lookup/capture fixture, targeted-path artifact reference and quarantine tests, durable journal/recovery tests, uncertain-delivery and named-retry policy-revision races, terminal Failed lifecycle tests, stable quiescent service predicates, and transactional service recovery tests. The two live CfT harnesses remain ignored by ordinary workspace tests and require their explicit owner acknowledgement/boundary.
 
@@ -44,7 +48,7 @@ This is one controlled installed process/artifact/restart acceptance point, not 
 ## Open gates
 
 - retain the generation-9 report-only floor while collecting sustained evidence;
-- integrate the native frontend against schema v2 fixtures/source report-only socket, then separately authorize any install/readback of a v2-capable generation;
+- separately authorize any install/readback of a v2-capable generation for the native frontend (fixture and isolated-source-socket integration is done);
 - resolve or explicitly accept the two artifact P2s before any broad artifact-completeness claim;
 - collect broader supported-family/version, controller-bearing, chaos, sleep/wake, sustained pressure, restart-during-cooling, longevity/overhead, and multi-day zero-false-positive evidence;
 - build/test Intel or universal artifacts, then separately complete signing, notarization, packaging, versioned rollback/update, release, and public-alpha acceptance;
