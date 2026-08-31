@@ -1,16 +1,26 @@
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{
+    Connection, OpenFlags, OptionalExtension, Transaction, TransactionBehavior, params,
+};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
+use std::ffi::OsString;
 use std::fmt::{Display, Formatter};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 use unlinger_core::{
-    CleanupReceipt, EvidenceItem, GateLedger, IncidentReport, IncidentState, ProcessRoleCount,
-    RootSummary,
+    ArtifactAction, ArtifactActionIntent, ArtifactDisposition, CleanupAction, CleanupActionIntent,
+    CleanupActionJournal, CleanupReceipt, CleanupResources, CleanupSignal, CleanupStage,
+    EvidenceItem, GateLedger, IncidentReport, IncidentState, ProcessRoleCount, RootSummary,
+    RuntimeArtifactKind, RuntimeFailure, SignalDisposition,
 };
 
-const SCHEMA_VERSION: i64 = 2;
+const SCHEMA_VERSION: i64 = 5;
+const MAX_ATTENTION_SUMMARIES: usize = 50;
+const MAX_REDACTED_IDENTIFIER_CHARS: usize = 192;
+const MAX_REASON_ID_CHARS: usize = 128;
+const MAX_RESOURCE_RECEIPT_BYTES: usize = 4 * 1024;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -81,11 +91,154 @@ pub enum EventPayload {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct HistoryEvent {
     pub event_id: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub attempt_id: Option<i64>,
     pub incident_id: String,
     pub occurred_at_unix_millis: u64,
     pub kind: EventKind,
     pub state: IncidentState,
     pub payload: EventPayload,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CoolingClock {
+    pub wall_unix_millis: u64,
+    pub continuous_millis: u64,
+    pub boot_session_fingerprint: String,
+    pub enforcement_epoch: String,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ManagedStartupPhase {
+    Recovering,
+    FirstScanReportOnly,
+    ReadyReportOnly,
+    ReadyEnforce,
+    Draining,
+    Failed,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ManagedLifecycle {
+    pub activation_generation: u64,
+    pub instance_id: String,
+    pub requested_enforce: bool,
+    pub effective_enforce: bool,
+    pub armed_generation: Option<u64>,
+    pub enforcement_epoch: Option<String>,
+    pub ready: bool,
+    pub draining: bool,
+    pub startup_phase: ManagedStartupPhase,
+    pub updated_at_unix_millis: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CleanupAttemptHandle {
+    pub id: i64,
+    pub incident_id: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PreparedActionHandle {
+    pub id: i64,
+    pub attempt_id: i64,
+    pub sequence: usize,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PreparedArtifactActionHandle {
+    pub id: i64,
+    pub attempt_id: i64,
+    pub sequence: usize,
+}
+
+pub struct CleanupAttemptJournal<'a> {
+    store: &'a HistoryStore,
+    attempt: CleanupAttemptHandle,
+    next_sequence: usize,
+    prepared: BTreeMap<String, PreparedActionHandle>,
+    next_artifact_sequence: usize,
+    prepared_artifacts: BTreeMap<String, PreparedArtifactActionHandle>,
+}
+
+impl CleanupActionJournal for CleanupAttemptJournal<'_> {
+    fn prepare_action(
+        &mut self,
+        intent: &CleanupActionIntent,
+        prepared_at_unix_millis: u64,
+    ) -> Result<String, RuntimeFailure> {
+        let next_sequence = self.next_sequence.checked_add(1).ok_or_else(|| {
+            RuntimeFailure::new("cleanup journal action sequence overflowed usize")
+        })?;
+        let prepared = self
+            .store
+            .prepare_cleanup_action(
+                &self.attempt,
+                self.next_sequence,
+                prepared_at_unix_millis,
+                intent,
+            )
+            .map_err(|error| RuntimeFailure::new(error.to_string()))?;
+        self.next_sequence = next_sequence;
+        let action_id = format!("sqlite-action:{}", prepared.id);
+        self.prepared.insert(action_id.clone(), prepared);
+        Ok(action_id)
+    }
+
+    fn complete_action(
+        &mut self,
+        action_id: &str,
+        disposition: SignalDisposition,
+        completed_at_unix_millis: u64,
+    ) -> Result<(), RuntimeFailure> {
+        let prepared = self.prepared.get(action_id).ok_or_else(|| {
+            RuntimeFailure::new(format!(
+                "cleanup journal action {action_id:?} is not prepared"
+            ))
+        })?;
+        self.store
+            .complete_cleanup_action(prepared, completed_at_unix_millis, disposition)
+            .map_err(|error| RuntimeFailure::new(error.to_string()))
+    }
+
+    fn prepare_artifact_action(
+        &mut self,
+        intent: &ArtifactActionIntent,
+        prepared_at_unix_millis: u64,
+    ) -> Result<String, RuntimeFailure> {
+        let next_sequence = self.next_artifact_sequence.checked_add(1).ok_or_else(|| {
+            RuntimeFailure::new("cleanup journal artifact sequence overflowed usize")
+        })?;
+        let prepared = self
+            .store
+            .prepare_cleanup_artifact_action(
+                &self.attempt,
+                self.next_artifact_sequence,
+                prepared_at_unix_millis,
+                intent,
+            )
+            .map_err(|error| RuntimeFailure::new(error.to_string()))?;
+        self.next_artifact_sequence = next_sequence;
+        let action_id = format!("sqlite-artifact-action:{}", prepared.id);
+        self.prepared_artifacts.insert(action_id.clone(), prepared);
+        Ok(action_id)
+    }
+
+    fn complete_artifact_action(
+        &mut self,
+        action_id: &str,
+        disposition: ArtifactDisposition,
+        completed_at_unix_millis: u64,
+    ) -> Result<(), RuntimeFailure> {
+        let prepared = self.prepared_artifacts.get(action_id).ok_or_else(|| {
+            RuntimeFailure::new(format!(
+                "cleanup journal artifact action {action_id:?} is not prepared"
+            ))
+        })?;
+        self.store
+            .complete_cleanup_artifact_action(prepared, completed_at_unix_millis, disposition)
+            .map_err(|error| RuntimeFailure::new(error.to_string()))
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -115,6 +268,117 @@ pub struct PruneResult {
     pub remaining_events: usize,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StorageRecoveryReason {
+    IntegrityCheckFailed,
+    RequiredSchemaInvalid,
+}
+
+impl StorageRecoveryReason {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::IntegrityCheckFailed => "integrity_check_failed",
+            Self::RequiredSchemaInvalid => "required_schema_invalid",
+        }
+    }
+
+    fn parse(value: &str) -> Result<Self, StoreError> {
+        match value {
+            "integrity_check_failed" => Ok(Self::IntegrityCheckFailed),
+            "required_schema_invalid" => Ok(Self::RequiredSchemaInvalid),
+            other => Err(StoreError::Corrupt(format!(
+                "unknown storage recovery reason {other:?}"
+            ))),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StorageRecoveryOccurrence {
+    pub recovery_id: String,
+    pub occurred_at_unix_millis: u64,
+    pub reason: StorageRecoveryReason,
+    pub quarantine_directory: PathBuf,
+    pub quarantined_sidecar_count: usize,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct MostRecentReclaim {
+    pub incident_id: String,
+    pub occurred_at_unix_millis: u64,
+    pub state: IncidentState,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ObservedIncidentIdentity {
+    pub incident_id: String,
+    pub tracking_key: String,
+    pub root_identity_fingerprint: String,
+    pub member_fingerprint: String,
+}
+
+impl From<&IncidentReport> for ObservedIncidentIdentity {
+    fn from(report: &IncidentReport) -> Self {
+        Self {
+            incident_id: report.incident_id.clone(),
+            tracking_key: report.tracking_key.clone(),
+            root_identity_fingerprint: report.root.identity_fingerprint.clone(),
+            member_fingerprint: report.member_fingerprint.clone(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct BlockedCleanupSummary {
+    pub incident_id: String,
+    pub state: IncidentState,
+    pub blocked_at_unix_millis: u64,
+    pub reason_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_exact_observed_at_unix_millis: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exact_absence_since_unix_millis: Option<u64>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub struct StoreAttentionProjection {
+    pub blocked_cleanup_count: usize,
+    pub blocked_cleanups: Vec<BlockedCleanupSummary>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ProtectedIncidentSummary {
+    pub incident_id: String,
+    pub protected_at_unix_millis: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_exact_observed_at_unix_millis: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exact_absence_since_unix_millis: Option<u64>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ProtectionProjection {
+    pub protected_incident_count: usize,
+    pub protected_incidents: Vec<ProtectedIncidentSummary>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct ProtectionReconciliation {
+    pub observed_count: usize,
+    pub unproven_count: usize,
+    pub absent_count: usize,
+    pub retired_count: usize,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct RetryBlockReconciliation {
+    pub observed_count: usize,
+    pub absent_count: usize,
+    pub unproven_count: usize,
+    pub retired_count: usize,
+}
+
 #[derive(Debug)]
 pub enum StoreError {
     Io(std::io::Error),
@@ -123,6 +387,8 @@ pub enum StoreError {
     Corrupt(String),
     Range(String),
     Invalid(String),
+    UnsupportedSchema(String),
+    UnsafePath(String),
 }
 
 impl Display for StoreError {
@@ -134,6 +400,10 @@ impl Display for StoreError {
             Self::Corrupt(message) => write!(formatter, "history data is corrupt: {message}"),
             Self::Range(message) => write!(formatter, "history value is out of range: {message}"),
             Self::Invalid(message) => write!(formatter, "invalid history operation: {message}"),
+            Self::UnsupportedSchema(message) => {
+                write!(formatter, "unsupported history schema: {message}")
+            }
+            Self::UnsafePath(message) => write!(formatter, "unsafe history path: {message}"),
         }
     }
 }
@@ -161,6 +431,7 @@ impl From<serde_json::Error> for StoreError {
 #[derive(Clone, Debug)]
 pub struct HistoryStore {
     path: PathBuf,
+    startup_recovery: Option<StorageRecoveryOccurrence>,
 }
 
 impl HistoryStore {
@@ -178,9 +449,28 @@ impl HistoryStore {
                 fs::set_permissions(parent, fs::Permissions::from_mode(0o700))?;
             }
         }
-        let store = Self { path };
-        let connection = store.connection()?;
-        initialize_schema(&connection)?;
+        let startup_recovery = match preflight_store_file(&path) {
+            Ok(_) => {
+                initialize_store_file(&path)?;
+                None
+            }
+            Err(error) if is_recoverable_corruption(&error) => {
+                let reason = recovery_reason(&error);
+                let occurrence = quarantine_database(&path, reason)?;
+                initialize_store_file(&path)?;
+                let store = Self {
+                    path: path.clone(),
+                    startup_recovery: Some(occurrence.clone()),
+                };
+                store.persist_storage_recovery(&occurrence)?;
+                Some(occurrence)
+            }
+            Err(error) => return Err(error),
+        };
+        let store = Self {
+            path,
+            startup_recovery,
+        };
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -192,6 +482,476 @@ impl HistoryStore {
     #[must_use]
     pub fn path(&self) -> &Path {
         &self.path
+    }
+
+    #[must_use]
+    pub const fn schema_version() -> u32 {
+        SCHEMA_VERSION as u32
+    }
+
+    #[must_use]
+    pub fn startup_recovery(&self) -> Option<&StorageRecoveryOccurrence> {
+        self.startup_recovery.as_ref()
+    }
+
+    pub fn latest_storage_recovery(&self) -> Result<Option<StorageRecoveryOccurrence>, StoreError> {
+        let connection = self.connection()?;
+        let row = connection
+            .query_row(
+                "SELECT recovery_id, occurred_at_ms, reason_id,
+                        quarantine_directory_name, quarantined_sidecar_count
+                 FROM storage_recoveries
+                 ORDER BY occurred_at_ms DESC, id DESC LIMIT 1",
+                [],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                        row.get::<_, i64>(4)?,
+                    ))
+                },
+            )
+            .optional()?;
+        row.map(
+            |(recovery_id, occurred_at, reason, quarantine_name, sidecar_count)| {
+                let parent = self.path.parent().unwrap_or_else(|| Path::new("."));
+                Ok(StorageRecoveryOccurrence {
+                    recovery_id,
+                    occurred_at_unix_millis: u64::try_from(occurred_at).map_err(|_| {
+                        StoreError::Corrupt("negative storage recovery timestamp".to_owned())
+                    })?,
+                    reason: StorageRecoveryReason::parse(&reason)?,
+                    quarantine_directory: parent.join(quarantine_name),
+                    quarantined_sidecar_count: usize::try_from(sidecar_count).map_err(|_| {
+                        StoreError::Corrupt(
+                            "negative or oversized storage recovery sidecar count".to_owned(),
+                        )
+                    })?,
+                })
+            },
+        )
+        .transpose()
+    }
+
+    fn persist_storage_recovery(
+        &self,
+        occurrence: &StorageRecoveryOccurrence,
+    ) -> Result<(), StoreError> {
+        let occurred_at = sqlite_millis(
+            occurrence.occurred_at_unix_millis,
+            "storage recovery timestamp",
+        )?;
+        let sidecar_count = i64::try_from(occurrence.quarantined_sidecar_count).map_err(|_| {
+            StoreError::Range("storage recovery sidecar count overflowed i64".to_owned())
+        })?;
+        let quarantine_name = occurrence
+            .quarantine_directory
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or_else(|| {
+                StoreError::Invalid(
+                    "storage recovery quarantine directory must have a UTF-8 basename".to_owned(),
+                )
+            })?;
+        let connection = self.connection()?;
+        connection.execute(
+            "INSERT INTO storage_recoveries (
+                 recovery_id, occurred_at_ms, reason_id,
+                 quarantine_directory_name, quarantined_sidecar_count
+             ) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![
+                occurrence.recovery_id,
+                occurred_at,
+                occurrence.reason.as_str(),
+                quarantine_name,
+                sidecar_count
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn begin_managed_boot(
+        &self,
+        activation_generation: u64,
+        instance_id: &str,
+        occurred_at_unix_millis: u64,
+    ) -> Result<ManagedLifecycle, StoreError> {
+        validate_managed_identity(activation_generation, instance_id)?;
+        let generation = sqlite_generation(activation_generation)?;
+        let occurred_at = sqlite_millis(occurred_at_unix_millis, "managed boot timestamp")?;
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let carry_requested_enforce =
+            managed_lifecycle_transaction(&transaction)?.is_some_and(|lifecycle| {
+                let ready_enforce_restart = lifecycle.startup_phase
+                    == ManagedStartupPhase::ReadyEnforce
+                    && lifecycle.effective_enforce;
+                let graceful_pre_ready_restart = lifecycle.startup_phase
+                    == ManagedStartupPhase::ReadyReportOnly
+                    && !lifecycle.ready
+                    && !lifecycle.effective_enforce
+                    && lifecycle.armed_generation.is_none()
+                    && lifecycle.enforcement_epoch.is_none();
+                lifecycle.activation_generation == activation_generation
+                    && lifecycle.requested_enforce
+                    && (ready_enforce_restart || graceful_pre_ready_restart)
+            });
+        transaction.execute(
+            "INSERT INTO managed_lifecycle (
+                 singleton, activation_generation, instance_id,
+                 requested_enforce, effective_enforce, armed_generation,
+                 enforcement_epoch, ready, draining, startup_phase, updated_at_ms
+             ) VALUES (1, ?1, ?2, ?3, 0, NULL, NULL, 0, 0, 'recovering', ?4)
+             ON CONFLICT(singleton) DO UPDATE SET
+                 activation_generation = excluded.activation_generation,
+                 instance_id = excluded.instance_id,
+                 requested_enforce = excluded.requested_enforce,
+                 effective_enforce = 0,
+                 armed_generation = NULL,
+                 enforcement_epoch = NULL,
+                 ready = 0,
+                 draining = 0,
+                 startup_phase = 'recovering',
+                 updated_at_ms = excluded.updated_at_ms",
+            params![
+                generation,
+                instance_id,
+                i64::from(carry_requested_enforce),
+                occurred_at
+            ],
+        )?;
+        let lifecycle = managed_lifecycle_transaction(&transaction)?.ok_or_else(|| {
+            StoreError::Corrupt("managed boot did not create lifecycle state".to_owned())
+        })?;
+        transaction.commit()?;
+        Ok(lifecycle)
+    }
+
+    pub fn finish_managed_recovery(
+        &self,
+        activation_generation: u64,
+        instance_id: &str,
+        occurred_at_unix_millis: u64,
+    ) -> Result<ManagedLifecycle, StoreError> {
+        self.transition_managed(
+            activation_generation,
+            instance_id,
+            occurred_at_unix_millis,
+            |transaction, lifecycle, occurred_at| {
+                if lifecycle.draining {
+                    return Err(StoreError::Invalid(
+                        "managed daemon is already draining".to_owned(),
+                    ));
+                }
+                transaction.execute(
+                    "UPDATE managed_lifecycle
+                     SET effective_enforce = 0, armed_generation = NULL,
+                         enforcement_epoch = NULL,
+                         ready = 0, startup_phase = 'first_scan_report_only',
+                         updated_at_ms = ?1
+                     WHERE singleton = 1",
+                    params![occurred_at],
+                )?;
+                Ok(())
+            },
+        )
+    }
+
+    /// Preserve owner-requested enforcement across a normal raw shutdown that
+    /// arrives before the signal-free first scan completes. Fatal startup exits
+    /// never call this transition, so their recovering/first-scan state cannot
+    /// accidentally carry intent when durable fail-close itself fails.
+    pub fn preserve_managed_pre_ready_restart_intent(
+        &self,
+        activation_generation: u64,
+        instance_id: &str,
+        occurred_at_unix_millis: u64,
+    ) -> Result<ManagedLifecycle, StoreError> {
+        self.transition_managed(
+            activation_generation,
+            instance_id,
+            occurred_at_unix_millis,
+            |transaction, lifecycle, occurred_at| {
+                if lifecycle.draining {
+                    return Err(StoreError::Invalid(
+                        "draining managed daemon cannot preserve restart intent".to_owned(),
+                    ));
+                }
+                if lifecycle.ready
+                    || !matches!(
+                        lifecycle.startup_phase,
+                        ManagedStartupPhase::Recovering | ManagedStartupPhase::FirstScanReportOnly
+                    )
+                {
+                    return Err(StoreError::Invalid(
+                        "managed daemon is not in pre-ready startup".to_owned(),
+                    ));
+                }
+                transaction.execute(
+                    "UPDATE managed_lifecycle
+                     SET effective_enforce = 0, armed_generation = NULL,
+                         enforcement_epoch = NULL, ready = 0, draining = 0,
+                         startup_phase = 'ready_report_only', updated_at_ms = ?1
+                     WHERE singleton = 1",
+                    params![occurred_at],
+                )?;
+                Ok(())
+            },
+        )
+    }
+
+    pub fn complete_managed_first_scan(
+        &self,
+        activation_generation: u64,
+        instance_id: &str,
+        enforcement_epoch: &str,
+        occurred_at_unix_millis: u64,
+    ) -> Result<ManagedLifecycle, StoreError> {
+        validate_enforcement_epoch(enforcement_epoch)?;
+        self.transition_managed(
+            activation_generation,
+            instance_id,
+            occurred_at_unix_millis,
+            |transaction, lifecycle, occurred_at| {
+                if lifecycle.draining {
+                    return Err(StoreError::Invalid(
+                        "managed daemon is already draining".to_owned(),
+                    ));
+                }
+                if lifecycle.startup_phase != ManagedStartupPhase::FirstScanReportOnly {
+                    return Err(StoreError::Invalid(
+                        "managed daemon is not awaiting its first report-only scan".to_owned(),
+                    ));
+                }
+                if lifecycle.requested_enforce {
+                    if managed_arm_blocker(transaction)?.is_some() {
+                        apply_managed_report_only_ready(transaction, occurred_at, true)?;
+                    } else {
+                        apply_managed_arm(transaction, enforcement_epoch, occurred_at)?;
+                    }
+                } else {
+                    apply_managed_report_only_ready(transaction, occurred_at, false)?;
+                }
+                Ok(())
+            },
+        )
+    }
+
+    pub fn arm_managed(
+        &self,
+        activation_generation: u64,
+        instance_id: &str,
+        enforcement_epoch: &str,
+        occurred_at_unix_millis: u64,
+    ) -> Result<ManagedLifecycle, StoreError> {
+        validate_enforcement_epoch(enforcement_epoch)?;
+        self.transition_managed(
+            activation_generation,
+            instance_id,
+            occurred_at_unix_millis,
+            |transaction, lifecycle, occurred_at| {
+                if lifecycle.effective_enforce
+                    && lifecycle.armed_generation == Some(activation_generation)
+                    && lifecycle.enforcement_epoch.is_some()
+                {
+                    return Ok(());
+                }
+                if lifecycle.draining {
+                    return Err(StoreError::Invalid(
+                        "managed daemon is draining and cannot arm".to_owned(),
+                    ));
+                }
+                if !lifecycle.ready {
+                    return Err(StoreError::Invalid(
+                        "managed daemon is not ready for enforcement".to_owned(),
+                    ));
+                }
+                if let Some(blocker) = managed_arm_blocker(transaction)? {
+                    return Err(StoreError::Invalid(blocker.to_owned()));
+                }
+                apply_managed_arm(transaction, enforcement_epoch, occurred_at)?;
+                Ok(())
+            },
+        )
+    }
+
+    /// Clears durable enforcement intent while the managed daemon is proven absent.
+    ///
+    /// The caller owns the daemon-absence proof. Generation matching prevents a
+    /// stale recovery operation from mutating a replacement generation.
+    pub fn clear_managed_enforce_request_offline(
+        &self,
+        activation_generation: u64,
+        occurred_at_unix_millis: u64,
+    ) -> Result<ManagedLifecycle, StoreError> {
+        if activation_generation == 0 {
+            return Err(StoreError::Invalid(
+                "managed activation generation must be greater than zero".to_owned(),
+            ));
+        }
+        let generation = sqlite_generation(activation_generation)?;
+        let occurred_at = sqlite_millis(
+            occurred_at_unix_millis,
+            "offline managed report-only recovery timestamp",
+        )?;
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let current = managed_lifecycle_transaction(&transaction)?
+            .ok_or_else(|| StoreError::Invalid("managed lifecycle has not begun".to_owned()))?;
+        if current.activation_generation != activation_generation {
+            return Err(StoreError::Invalid(format!(
+                "managed activation generation mismatch: expected {}, got {activation_generation}",
+                current.activation_generation
+            )));
+        }
+        transaction.execute(
+            "UPDATE managed_lifecycle
+             SET requested_enforce = 0, effective_enforce = 0,
+                 armed_generation = NULL, enforcement_epoch = NULL,
+                 ready = 0, draining = 0, startup_phase = 'recovering',
+                 updated_at_ms = ?1
+             WHERE singleton = 1 AND activation_generation = ?2",
+            params![occurred_at, generation],
+        )?;
+        let lifecycle = managed_lifecycle_transaction(&transaction)?.ok_or_else(|| {
+            StoreError::Corrupt(
+                "managed lifecycle disappeared during offline report-only recovery".to_owned(),
+            )
+        })?;
+        transaction.commit()?;
+        Ok(lifecycle)
+    }
+
+    pub fn disarm_managed(
+        &self,
+        activation_generation: u64,
+        instance_id: &str,
+        occurred_at_unix_millis: u64,
+    ) -> Result<ManagedLifecycle, StoreError> {
+        self.transition_managed(
+            activation_generation,
+            instance_id,
+            occurred_at_unix_millis,
+            |transaction, lifecycle, occurred_at| {
+                let phase = if lifecycle.draining {
+                    "draining"
+                } else if lifecycle.ready {
+                    "ready_report_only"
+                } else {
+                    managed_startup_phase_name(lifecycle.startup_phase)
+                };
+                transaction.execute(
+                    "UPDATE managed_lifecycle
+                     SET requested_enforce = 0, effective_enforce = 0,
+                         armed_generation = NULL, enforcement_epoch = NULL,
+                         startup_phase = ?1, updated_at_ms = ?2
+                     WHERE singleton = 1",
+                    params![phase, occurred_at],
+                )?;
+                Ok(())
+            },
+        )
+    }
+
+    pub fn begin_managed_drain(
+        &self,
+        activation_generation: u64,
+        instance_id: &str,
+        occurred_at_unix_millis: u64,
+    ) -> Result<ManagedLifecycle, StoreError> {
+        self.transition_managed(
+            activation_generation,
+            instance_id,
+            occurred_at_unix_millis,
+            |transaction, _lifecycle, occurred_at| {
+                transaction.execute(
+                    "UPDATE managed_lifecycle
+                     SET requested_enforce = 0, effective_enforce = 0,
+                         armed_generation = NULL, enforcement_epoch = NULL,
+                         ready = 0, draining = 1, startup_phase = 'draining',
+                         updated_at_ms = ?1
+                     WHERE singleton = 1",
+                    params![occurred_at],
+                )?;
+                Ok(())
+            },
+        )
+    }
+
+    pub fn fail_managed(
+        &self,
+        activation_generation: u64,
+        instance_id: &str,
+        occurred_at_unix_millis: u64,
+    ) -> Result<ManagedLifecycle, StoreError> {
+        self.transition_managed(
+            activation_generation,
+            instance_id,
+            occurred_at_unix_millis,
+            |transaction, lifecycle, occurred_at| {
+                let (phase, draining) = if lifecycle.draining {
+                    ("draining", 1_i64)
+                } else {
+                    ("failed", 0_i64)
+                };
+                transaction.execute(
+                    "UPDATE managed_lifecycle
+                     SET requested_enforce = 0, effective_enforce = 0,
+                         armed_generation = NULL, enforcement_epoch = NULL,
+                         ready = 0, draining = ?1, startup_phase = ?2,
+                         updated_at_ms = ?3
+                     WHERE singleton = 1",
+                    params![draining, phase, occurred_at],
+                )?;
+                Ok(())
+            },
+        )
+    }
+
+    pub fn managed_lifecycle(&self) -> Result<Option<ManagedLifecycle>, StoreError> {
+        let connection = self.connection()?;
+        managed_lifecycle_connection(&connection)
+    }
+
+    pub fn automatic_enforcement_blocked(&self) -> Result<bool, StoreError> {
+        let connection = self.connection()?;
+        Ok(persistent_enforcement_blocker(&connection)?.is_some())
+    }
+
+    fn transition_managed(
+        &self,
+        activation_generation: u64,
+        instance_id: &str,
+        occurred_at_unix_millis: u64,
+        transition: impl FnOnce(&Transaction<'_>, &ManagedLifecycle, i64) -> Result<(), StoreError>,
+    ) -> Result<ManagedLifecycle, StoreError> {
+        validate_managed_identity(activation_generation, instance_id)?;
+        let occurred_at = sqlite_millis(occurred_at_unix_millis, "managed lifecycle timestamp")?;
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let current = managed_lifecycle_transaction(&transaction)?
+            .ok_or_else(|| StoreError::Invalid("managed lifecycle has not begun".to_owned()))?;
+        require_exact_managed_identity(&current, activation_generation, instance_id)?;
+        transition(&transaction, &current, occurred_at)?;
+        let lifecycle = managed_lifecycle_transaction(&transaction)?.ok_or_else(|| {
+            StoreError::Corrupt("managed lifecycle disappeared during transition".to_owned())
+        })?;
+        transaction.commit()?;
+        Ok(lifecycle)
+    }
+
+    #[must_use]
+    pub fn journal_for<'a>(&'a self, attempt: &CleanupAttemptHandle) -> CleanupAttemptJournal<'a> {
+        CleanupAttemptJournal {
+            store: self,
+            attempt: attempt.clone(),
+            next_sequence: 0,
+            prepared: BTreeMap::new(),
+            next_artifact_sequence: 0,
+            prepared_artifacts: BTreeMap::new(),
+        }
     }
 
     pub fn record_observation(
@@ -209,20 +969,641 @@ impl HistoryStore {
         )
     }
 
-    pub fn record_cleanup(
+    pub fn begin_cleanup_attempt(
         &self,
         occurred_at_unix_millis: u64,
-        receipt: &CleanupReceipt,
-    ) -> Result<i64, StoreError> {
-        self.insert_event(
+        report: &IncidentReport,
+        enforcement_epoch: &str,
+    ) -> Result<CleanupAttemptHandle, StoreError> {
+        if report.state != IncidentState::Confirmed || !report.gates.cleanup_eligible() {
+            return Err(StoreError::Invalid(
+                "cleanup attempts require an eligible CONFIRMED incident".to_owned(),
+            ));
+        }
+        if enforcement_epoch.trim().is_empty() {
+            return Err(StoreError::Invalid(
+                "cleanup attempts require a non-empty enforcement epoch".to_owned(),
+            ));
+        }
+        let occurred_at = sqlite_millis(occurred_at_unix_millis, "cleanup attempt timestamp")?;
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let blocked = transaction
+            .query_row(
+                "SELECT 1 FROM cleanup_retry_blocks WHERE incident_id = ?1",
+                params![report.incident_id],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_some();
+        if blocked {
+            return Err(StoreError::Invalid(format!(
+                "cleanup retry is blocked for incident {:?}",
+                report.incident_id
+            )));
+        }
+        let open_incident = transaction
+            .query_row(
+                "SELECT incident_id FROM cleanup_attempts WHERE completed_at_ms IS NULL LIMIT 1",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?;
+        if let Some(open_incident) = open_incident {
+            return Err(StoreError::Invalid(format!(
+                "cleanup attempt for incident {open_incident:?} is already open"
+            )));
+        }
+        transaction.execute(
+            "INSERT INTO cleanup_attempts (
+                 incident_id, tracking_key, root_identity_fingerprint,
+                 member_fingerprint, enforcement_epoch, started_at_ms
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                report.incident_id,
+                report.tracking_key,
+                report.root.identity_fingerprint,
+                report.member_fingerprint,
+                enforcement_epoch,
+                occurred_at
+            ],
+        )?;
+        let attempt_id = transaction.last_insert_rowid();
+        let started = CleanupReceipt {
+            incident_id: report.incident_id.clone(),
+            state: IncidentState::Reclaiming,
+            reason_id: None,
+            actions: Vec::new(),
+            artifact_actions: Vec::new(),
+            survivor_pids: Vec::new(),
+            revival_checks_completed: 0,
+            resources: CleanupResources::default(),
+        };
+        insert_event_transaction(
+            &transaction,
+            Some(attempt_id),
             occurred_at_unix_millis,
-            &receipt.incident_id,
+            &report.incident_id,
             EventKind::Cleanup,
-            receipt.state,
+            IncidentState::Reclaiming,
+            &EventPayload::Cleanup { receipt: started },
+        )?;
+        transaction.commit()?;
+        Ok(CleanupAttemptHandle {
+            id: attempt_id,
+            incident_id: report.incident_id.clone(),
+        })
+    }
+
+    pub fn prepare_cleanup_action(
+        &self,
+        attempt: &CleanupAttemptHandle,
+        sequence: usize,
+        occurred_at_unix_millis: u64,
+        intent: &CleanupActionIntent,
+    ) -> Result<PreparedActionHandle, StoreError> {
+        if intent.identity_fingerprint.trim().is_empty() {
+            return Err(StoreError::Invalid(
+                "cleanup action requires a redacted identity fingerprint".to_owned(),
+            ));
+        }
+        let sequence_i64 = i64::try_from(sequence)
+            .map_err(|_| StoreError::Range("cleanup action sequence overflowed i64".to_owned()))?;
+        let pid = i64::from(intent.pid);
+        let occurred_at = sqlite_millis(occurred_at_unix_millis, "action preparation timestamp")?;
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let stored = transaction
+            .query_row(
+                "SELECT incident_id, completed_at_ms
+                 FROM cleanup_attempts WHERE id = ?1",
+                params![attempt.id],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<i64>>(1)?)),
+            )
+            .optional()?
+            .ok_or_else(|| StoreError::Invalid("cleanup attempt does not exist".to_owned()))?;
+        if stored.0 != attempt.incident_id {
+            return Err(StoreError::Invalid(
+                "cleanup attempt handle incident does not match storage".to_owned(),
+            ));
+        }
+        if stored.1.is_some() {
+            return Err(StoreError::Invalid(
+                "cleanup attempt is already terminal".to_owned(),
+            ));
+        }
+        transaction.execute(
+            "INSERT INTO cleanup_actions (
+                 attempt_id, sequence, prepared_at_ms, stage, pid,
+                 identity_fingerprint, signal
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![
+                attempt.id,
+                sequence_i64,
+                occurred_at,
+                cleanup_stage_name(intent.stage),
+                pid,
+                intent.identity_fingerprint,
+                cleanup_signal_name(intent.signal)
+            ],
+        )?;
+        let action_id = transaction.last_insert_rowid();
+        transaction.commit()?;
+        Ok(PreparedActionHandle {
+            id: action_id,
+            attempt_id: attempt.id,
+            sequence,
+        })
+    }
+
+    pub fn complete_cleanup_action(
+        &self,
+        prepared: &PreparedActionHandle,
+        occurred_at_unix_millis: u64,
+        disposition: SignalDisposition,
+    ) -> Result<(), StoreError> {
+        let occurred_at = sqlite_millis(occurred_at_unix_millis, "action disposition timestamp")?;
+        let sequence = i64::try_from(prepared.sequence)
+            .map_err(|_| StoreError::Range("cleanup action sequence overflowed i64".to_owned()))?;
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let stored = transaction
+            .query_row(
+                "SELECT attempt_id, sequence, disposition
+                 FROM cleanup_actions WHERE id = ?1",
+                params![prepared.id],
+                |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, Option<String>>(2)?,
+                    ))
+                },
+            )
+            .optional()?
+            .ok_or_else(|| {
+                StoreError::Invalid("prepared cleanup action does not exist".to_owned())
+            })?;
+        if stored.0 != prepared.attempt_id || stored.1 != sequence {
+            return Err(StoreError::Invalid(
+                "prepared cleanup action handle does not match storage".to_owned(),
+            ));
+        }
+        match stored.2 {
+            Some(existing) => {
+                let existing = parse_signal_disposition(&existing)?;
+                if existing != disposition {
+                    return Err(StoreError::Invalid(format!(
+                        "cleanup action has conflicting disposition: stored {}, requested {}",
+                        signal_disposition_name(existing),
+                        signal_disposition_name(disposition)
+                    )));
+                }
+            }
+            None => {
+                transaction.execute(
+                    "UPDATE cleanup_actions
+                     SET disposition = ?1, completed_at_ms = ?2
+                     WHERE id = ?3 AND disposition IS NULL",
+                    params![
+                        signal_disposition_name(disposition),
+                        occurred_at,
+                        prepared.id
+                    ],
+                )?;
+            }
+        }
+        transaction.commit()?;
+        Ok(())
+    }
+
+    pub fn prepare_cleanup_artifact_action(
+        &self,
+        attempt: &CleanupAttemptHandle,
+        sequence: usize,
+        occurred_at_unix_millis: u64,
+        intent: &ArtifactActionIntent,
+    ) -> Result<PreparedArtifactActionHandle, StoreError> {
+        if !valid_artifact_fingerprint(&intent.artifact_fingerprint) {
+            return Err(StoreError::Invalid(
+                "artifact action requires a bounded redacted artifact fingerprint".to_owned(),
+            ));
+        }
+        let sequence_i64 = i64::try_from(sequence).map_err(|_| {
+            StoreError::Range("cleanup artifact action sequence overflowed i64".to_owned())
+        })?;
+        let occurred_at = sqlite_millis(
+            occurred_at_unix_millis,
+            "artifact action preparation timestamp",
+        )?;
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let stored = transaction
+            .query_row(
+                "SELECT incident_id, completed_at_ms
+                 FROM cleanup_attempts WHERE id = ?1",
+                params![attempt.id],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<i64>>(1)?)),
+            )
+            .optional()?
+            .ok_or_else(|| StoreError::Invalid("cleanup attempt does not exist".to_owned()))?;
+        if stored.0 != attempt.incident_id {
+            return Err(StoreError::Invalid(
+                "cleanup attempt handle incident does not match storage".to_owned(),
+            ));
+        }
+        if stored.1.is_some() {
+            return Err(StoreError::Invalid(
+                "cleanup attempt is already terminal".to_owned(),
+            ));
+        }
+        transaction.execute(
+            "INSERT INTO cleanup_artifact_actions (
+                 attempt_id, sequence, prepared_at_ms, kind, artifact_fingerprint
+             ) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![
+                attempt.id,
+                sequence_i64,
+                occurred_at,
+                runtime_artifact_kind_name(intent.kind),
+                intent.artifact_fingerprint
+            ],
+        )?;
+        let action_id = transaction.last_insert_rowid();
+        transaction.commit()?;
+        Ok(PreparedArtifactActionHandle {
+            id: action_id,
+            attempt_id: attempt.id,
+            sequence,
+        })
+    }
+
+    pub fn complete_cleanup_artifact_action(
+        &self,
+        prepared: &PreparedArtifactActionHandle,
+        occurred_at_unix_millis: u64,
+        disposition: ArtifactDisposition,
+    ) -> Result<(), StoreError> {
+        let occurred_at = sqlite_millis(
+            occurred_at_unix_millis,
+            "artifact action disposition timestamp",
+        )?;
+        let sequence = i64::try_from(prepared.sequence).map_err(|_| {
+            StoreError::Range("cleanup artifact action sequence overflowed i64".to_owned())
+        })?;
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let stored = transaction
+            .query_row(
+                "SELECT attempt_id, sequence, disposition
+                 FROM cleanup_artifact_actions WHERE id = ?1",
+                params![prepared.id],
+                |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, Option<String>>(2)?,
+                    ))
+                },
+            )
+            .optional()?
+            .ok_or_else(|| {
+                StoreError::Invalid("prepared cleanup artifact action does not exist".to_owned())
+            })?;
+        if stored.0 != prepared.attempt_id || stored.1 != sequence {
+            return Err(StoreError::Invalid(
+                "prepared cleanup artifact action handle does not match storage".to_owned(),
+            ));
+        }
+        match stored.2 {
+            Some(existing) => {
+                let existing = parse_artifact_disposition(&existing)?;
+                if existing != disposition {
+                    return Err(StoreError::Invalid(format!(
+                        "cleanup artifact action has conflicting disposition: stored {}, requested {}",
+                        artifact_disposition_name(existing),
+                        artifact_disposition_name(disposition)
+                    )));
+                }
+            }
+            None => {
+                transaction.execute(
+                    "UPDATE cleanup_artifact_actions
+                     SET disposition = ?1, completed_at_ms = ?2
+                     WHERE id = ?3 AND disposition IS NULL",
+                    params![
+                        artifact_disposition_name(disposition),
+                        occurred_at,
+                        prepared.id
+                    ],
+                )?;
+            }
+        }
+        transaction.commit()?;
+        Ok(())
+    }
+
+    pub fn complete_cleanup_attempt(
+        &self,
+        attempt: &CleanupAttemptHandle,
+        occurred_at_unix_millis: u64,
+        terminal_receipt: &CleanupReceipt,
+    ) -> Result<CleanupReceipt, StoreError> {
+        if !matches!(
+            terminal_receipt.state,
+            IncidentState::Cleared | IncidentState::Failed | IncidentState::Revived
+        ) {
+            return Err(StoreError::Invalid(
+                "cleanup attempt terminal state must be CLEARED, FAILED, or REVIVED".to_owned(),
+            ));
+        }
+        if terminal_receipt.incident_id != attempt.incident_id {
+            return Err(StoreError::Invalid(
+                "cleanup receipt incident does not match attempt handle".to_owned(),
+            ));
+        }
+        let occurred_at = sqlite_millis(occurred_at_unix_millis, "attempt completion timestamp")?;
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let stored = transaction
+            .query_row(
+                "SELECT incident_id, tracking_key, terminal_state
+                 FROM cleanup_attempts WHERE id = ?1",
+                params![attempt.id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, Option<String>>(2)?,
+                    ))
+                },
+            )
+            .optional()?
+            .ok_or_else(|| StoreError::Invalid("cleanup attempt does not exist".to_owned()))?;
+        if stored.0 != attempt.incident_id {
+            return Err(StoreError::Invalid(
+                "cleanup attempt handle incident does not match storage".to_owned(),
+            ));
+        }
+        if let Some(stored_state) = stored.2 {
+            let stored_state = parse_state(&stored_state)?;
+            if stored_state != terminal_receipt.state {
+                return Err(StoreError::Invalid(format!(
+                    "cleanup attempt is already terminal as {}",
+                    state_name(stored_state)
+                )));
+            }
+            let receipt = terminal_receipt_for_attempt(&transaction, attempt.id)?;
+            transaction.commit()?;
+            return Ok(receipt);
+        }
+
+        let prepared_count = transaction.query_row(
+            "SELECT COUNT(*) FROM cleanup_actions
+             WHERE attempt_id = ?1 AND disposition IS NULL",
+            params![attempt.id],
+            |row| row.get::<_, i64>(0),
+        )?;
+        let prepared_artifact_count = transaction.query_row(
+            "SELECT COUNT(*) FROM cleanup_artifact_actions
+             WHERE attempt_id = ?1 AND disposition IS NULL",
+            params![attempt.id],
+            |row| row.get::<_, i64>(0),
+        )?;
+        if prepared_count > 0 || prepared_artifact_count > 0 {
+            return Err(StoreError::Invalid(format!(
+                "cleanup attempt {} still has {prepared_count} PREPARED process action(s) and {prepared_artifact_count} PREPARED artifact action(s); startup recovery must resolve delivery uncertainty",
+                attempt.id,
+            )));
+        }
+        let actions = actions_for_attempt(&transaction, attempt.id)?;
+        let artifact_actions = artifact_actions_for_attempt(&transaction, attempt.id)?;
+        let resources_json = serde_json::to_string(&terminal_receipt.resources)?;
+        if resources_json.len() > MAX_RESOURCE_RECEIPT_BYTES {
+            return Err(StoreError::Invalid(
+                "cleanup resource receipt exceeds its storage bound".to_owned(),
+            ));
+        }
+        let resources = serde_json::from_str::<CleanupResources>(&resources_json)?;
+        let projected = CleanupReceipt {
+            incident_id: attempt.incident_id.clone(),
+            state: terminal_receipt.state,
+            reason_id: terminal_receipt.reason_id.clone(),
+            actions,
+            artifact_actions,
+            survivor_pids: terminal_receipt.survivor_pids.clone(),
+            revival_checks_completed: terminal_receipt.revival_checks_completed,
+            resources,
+        };
+        let survivor_pids_json = serde_json::to_string(&projected.survivor_pids)?;
+        transaction.execute(
+            "UPDATE cleanup_attempts
+             SET completed_at_ms = ?1, terminal_state = ?2, reason_id = ?3,
+                 survivor_pids_json = ?4, revival_checks_completed = ?5,
+                 resources_json = ?6
+             WHERE id = ?7 AND completed_at_ms IS NULL",
+            params![
+                occurred_at,
+                state_name(projected.state),
+                projected.reason_id,
+                survivor_pids_json,
+                i64::try_from(projected.revival_checks_completed).map_err(|_| {
+                    StoreError::Range("revival check count overflowed i64".to_owned())
+                })?,
+                resources_json,
+                attempt.id
+            ],
+        )?;
+        if matches!(
+            projected.state,
+            IncidentState::Failed | IncidentState::Revived
+        ) {
+            insert_retry_block(
+                &transaction,
+                &projected.incident_id,
+                &stored.1,
+                occurred_at,
+                projected.reason_id.as_deref(),
+                attempt.id,
+            )?;
+        }
+        insert_event_transaction(
+            &transaction,
+            Some(attempt.id),
+            occurred_at_unix_millis,
+            &projected.incident_id,
+            EventKind::Cleanup,
+            projected.state,
             &EventPayload::Cleanup {
-                receipt: receipt.clone(),
+                receipt: projected.clone(),
             },
-        )
+        )?;
+        transaction.commit()?;
+        Ok(projected)
+    }
+
+    pub fn recover_incomplete_attempts(
+        &self,
+        occurred_at_unix_millis: u64,
+    ) -> Result<Vec<CleanupReceipt>, StoreError> {
+        let occurred_at = sqlite_millis(occurred_at_unix_millis, "attempt recovery timestamp")?;
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let open_attempts = {
+            let mut statement = transaction.prepare(
+                "SELECT id, incident_id, tracking_key
+                 FROM cleanup_attempts WHERE completed_at_ms IS NULL ORDER BY id",
+            )?;
+            let rows = statement.query_map([], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })?;
+            rows.collect::<Result<Vec<_>, _>>()?
+        };
+        let mut recovered = Vec::with_capacity(open_attempts.len());
+        for (attempt_id, incident_id, tracking_key) in open_attempts {
+            let prepared_count = transaction.query_row(
+                "SELECT COUNT(*) FROM cleanup_actions
+                 WHERE attempt_id = ?1 AND disposition IS NULL",
+                params![attempt_id],
+                |row| row.get::<_, i64>(0),
+            )?;
+            let prepared_artifact_count = transaction.query_row(
+                "SELECT COUNT(*) FROM cleanup_artifact_actions
+                 WHERE attempt_id = ?1 AND disposition IS NULL",
+                params![attempt_id],
+                |row| row.get::<_, i64>(0),
+            )?;
+            let completed_unknown_count = transaction.query_row(
+                "SELECT
+                     (SELECT COUNT(*) FROM cleanup_actions
+                      WHERE attempt_id = ?1 AND disposition = 'delivery_unknown')
+                   + (SELECT COUNT(*) FROM cleanup_artifact_actions
+                      WHERE attempt_id = ?1 AND disposition = 'delivery_unknown')",
+                params![attempt_id],
+                |row| row.get::<_, i64>(0),
+            )?;
+            let completed_side_effect_count = transaction.query_row(
+                "SELECT
+                     (SELECT COUNT(*) FROM cleanup_actions
+                      WHERE attempt_id = ?1 AND disposition = 'delivered')
+                   + (SELECT COUNT(*) FROM cleanup_artifact_actions
+                      WHERE attempt_id = ?1 AND disposition = 'removed')",
+                params![attempt_id],
+                |row| row.get::<_, i64>(0),
+            )?;
+            transaction.execute(
+                "UPDATE cleanup_actions
+                 SET disposition = 'delivery_unknown', completed_at_ms = ?1
+                 WHERE attempt_id = ?2 AND disposition IS NULL",
+                params![occurred_at, attempt_id],
+            )?;
+            transaction.execute(
+                "UPDATE cleanup_artifact_actions
+                 SET disposition = 'delivery_unknown', completed_at_ms = ?1
+                 WHERE attempt_id = ?2 AND disposition IS NULL",
+                params![occurred_at, attempt_id],
+            )?;
+            let receipt = CleanupReceipt {
+                incident_id: incident_id.clone(),
+                state: IncidentState::Failed,
+                reason_id: Some(
+                    if prepared_count > 0
+                        || prepared_artifact_count > 0
+                        || completed_unknown_count > 0
+                    {
+                        "cleanup.interrupted_delivery_unknown"
+                    } else if completed_side_effect_count > 0 {
+                        "cleanup.interrupted_after_delivery"
+                    } else {
+                        "cleanup.interrupted_before_signal"
+                    }
+                    .to_owned(),
+                ),
+                actions: actions_for_attempt(&transaction, attempt_id)?,
+                artifact_actions: artifact_actions_for_attempt(&transaction, attempt_id)?,
+                survivor_pids: Vec::new(),
+                revival_checks_completed: 0,
+                resources: CleanupResources::default(),
+            };
+            let resources_json = serde_json::to_string(&receipt.resources)?;
+            transaction.execute(
+                "UPDATE cleanup_attempts
+                 SET completed_at_ms = ?1, terminal_state = 'FAILED', reason_id = ?2,
+                     survivor_pids_json = '[]', revival_checks_completed = 0,
+                     resources_json = ?3
+                 WHERE id = ?4 AND completed_at_ms IS NULL",
+                params![occurred_at, receipt.reason_id, resources_json, attempt_id],
+            )?;
+            insert_retry_block(
+                &transaction,
+                &incident_id,
+                &tracking_key,
+                occurred_at,
+                receipt.reason_id.as_deref(),
+                attempt_id,
+            )?;
+            insert_event_transaction(
+                &transaction,
+                Some(attempt_id),
+                occurred_at_unix_millis,
+                &incident_id,
+                EventKind::Cleanup,
+                IncidentState::Failed,
+                &EventPayload::Cleanup {
+                    receipt: receipt.clone(),
+                },
+            )?;
+            recovered.push(receipt);
+        }
+        transaction.commit()?;
+        Ok(recovered)
+    }
+
+    pub fn cleanup_blocked(&self, incident_id: &str) -> Result<bool, StoreError> {
+        let connection = self.connection()?;
+        Ok(connection
+            .query_row(
+                "SELECT 1 FROM cleanup_retry_blocks WHERE incident_id = ?1",
+                params![incident_id],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_some())
+    }
+
+    pub fn authorize_retry(
+        &self,
+        incident_id: &str,
+        occurred_at_unix_millis: u64,
+    ) -> Result<bool, StoreError> {
+        let _ = sqlite_millis(occurred_at_unix_millis, "retry authorization timestamp")?;
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let tracking_key = transaction
+            .query_row(
+                "SELECT tracking_key FROM cleanup_retry_blocks WHERE incident_id = ?1",
+                params![incident_id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?;
+        let Some(tracking_key) = tracking_key else {
+            transaction.commit()?;
+            return Ok(false);
+        };
+        transaction.execute(
+            "DELETE FROM cleanup_retry_blocks WHERE incident_id = ?1",
+            params![incident_id],
+        )?;
+        transaction.execute(
+            "DELETE FROM cooling_candidates WHERE tracking_key = ?1",
+            params![tracking_key],
+        )?;
+        transaction.commit()?;
+        Ok(true)
     }
 
     fn insert_event(
@@ -239,8 +1620,9 @@ impl HistoryStore {
         let payload_json = serde_json::to_string(payload)?;
         let connection = self.connection()?;
         connection.execute(
-            "INSERT INTO events (incident_id, occurred_at_ms, kind, state, payload_json) \
-             VALUES (?1, ?2, ?3, ?4, ?5)",
+            "INSERT INTO events (
+                 attempt_id, incident_id, occurred_at_ms, kind, state, payload_json
+             ) VALUES (NULL, ?1, ?2, ?3, ?4, ?5)",
             params![
                 incident_id,
                 occurred_at,
@@ -259,15 +1641,442 @@ impl HistoryStore {
         let limit = i64::try_from(limit.min(10_000))
             .map_err(|_| StoreError::Range("history limit overflowed i64".to_owned()))?;
         self.query_events(
-            "SELECT id, incident_id, occurred_at_ms, kind, state, payload_json \
+            "SELECT id, attempt_id, incident_id, occurred_at_ms, kind, state, payload_json \
              FROM events ORDER BY occurred_at_ms DESC, id DESC LIMIT ?1",
             params![limit],
         )
     }
 
+    pub fn most_recent_reclaim(&self) -> Result<Option<MostRecentReclaim>, StoreError> {
+        let mut events = self.query_events(
+            "SELECT id, attempt_id, incident_id, occurred_at_ms, kind, state, payload_json
+             FROM events
+             WHERE kind = 'cleanup' AND state = 'CLEARED'
+             ORDER BY occurred_at_ms DESC, id DESC LIMIT 1",
+            [],
+        )?;
+        let Some(event) = events.pop() else {
+            return Ok(None);
+        };
+        let EventPayload::Cleanup { receipt } = event.payload else {
+            return Err(StoreError::Corrupt(
+                "most recent reclaim index selected a non-cleanup payload".to_owned(),
+            ));
+        };
+        if receipt.state != IncidentState::Cleared {
+            return Err(StoreError::Corrupt(
+                "most recent reclaim payload is not CLEARED".to_owned(),
+            ));
+        }
+        Ok(Some(MostRecentReclaim {
+            incident_id: project_identifier(&receipt.incident_id, "redacted-incident"),
+            occurred_at_unix_millis: event.occurred_at_unix_millis,
+            state: receipt.state,
+        }))
+    }
+
+    pub fn protect_incident(
+        &self,
+        incident_id: &str,
+        now_unix_millis: u64,
+    ) -> Result<Option<ProtectedIncidentSummary>, StoreError> {
+        let now = sqlite_millis(now_unix_millis, "incident protection timestamp")?;
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let payload_json = transaction
+            .query_row(
+                "SELECT payload_json FROM events
+                 WHERE incident_id = ?1 AND kind = 'observation'
+                 ORDER BY occurred_at_ms DESC, id DESC LIMIT 1",
+                params![incident_id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?;
+        let Some(payload_json) = payload_json else {
+            let existing = protection_summary_transaction(&transaction, incident_id)?;
+            transaction.commit()?;
+            return Ok(existing);
+        };
+        let EventPayload::Observation { report } = serde_json::from_str(&payload_json)? else {
+            return Err(StoreError::Corrupt(
+                "observation index selected a non-observation payload".to_owned(),
+            ));
+        };
+        if report.incident_id != incident_id {
+            return Err(StoreError::Corrupt(
+                "observation incident ID disagrees with its index".to_owned(),
+            ));
+        }
+        transaction.execute(
+            "INSERT INTO incident_protections (
+                 incident_id, root_identity_fingerprint, member_fingerprint, protected_at_ms
+             ) VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(incident_id) DO UPDATE SET
+                 root_identity_fingerprint = excluded.root_identity_fingerprint,
+                 member_fingerprint = excluded.member_fingerprint,
+                 protected_at_ms = CASE
+                     WHEN incident_protections.root_identity_fingerprint
+                              = excluded.root_identity_fingerprint
+                      AND incident_protections.member_fingerprint = excluded.member_fingerprint
+                     THEN incident_protections.protected_at_ms
+                     ELSE excluded.protected_at_ms
+                 END,
+                 last_exact_observed_at_ms = CASE
+                     WHEN incident_protections.root_identity_fingerprint
+                              = excluded.root_identity_fingerprint
+                      AND incident_protections.member_fingerprint = excluded.member_fingerprint
+                     THEN incident_protections.last_exact_observed_at_ms
+                     ELSE NULL
+                 END,
+                 absence_since_ms = CASE
+                     WHEN incident_protections.root_identity_fingerprint
+                              = excluded.root_identity_fingerprint
+                      AND incident_protections.member_fingerprint = excluded.member_fingerprint
+                     THEN incident_protections.absence_since_ms
+                     ELSE NULL
+                 END",
+            params![
+                report.incident_id,
+                report.root.identity_fingerprint,
+                report.member_fingerprint,
+                now
+            ],
+        )?;
+        let summary =
+            protection_summary_transaction(&transaction, incident_id)?.ok_or_else(|| {
+                StoreError::Corrupt("incident protection disappeared during creation".to_owned())
+            })?;
+        transaction.commit()?;
+        Ok(Some(summary))
+    }
+
+    pub fn unprotect_incident(&self, incident_id: &str) -> Result<bool, StoreError> {
+        let connection = self.connection()?;
+        Ok(connection.execute(
+            "DELETE FROM incident_protections WHERE incident_id = ?1",
+            params![incident_id],
+        )? > 0)
+    }
+
+    pub fn is_incident_protected(&self, report: &IncidentReport) -> Result<bool, StoreError> {
+        let connection = self.connection()?;
+        Ok(connection
+            .query_row(
+                "SELECT 1 FROM incident_protections
+                 WHERE incident_id = ?1
+                   AND root_identity_fingerprint = ?2
+                   AND member_fingerprint = ?3",
+                params![
+                    report.incident_id,
+                    report.root.identity_fingerprint,
+                    report.member_fingerprint
+                ],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_some())
+    }
+
+    pub fn protection_projection(&self, limit: usize) -> Result<ProtectionProjection, StoreError> {
+        let connection = self.connection()?;
+        let count =
+            connection.query_row("SELECT COUNT(*) FROM incident_protections", [], |row| {
+                row.get::<_, i64>(0)
+            })?;
+        let protected_incident_count = usize::try_from(count).map_err(|_| {
+            StoreError::Corrupt("negative or oversized protection count".to_owned())
+        })?;
+        let limit = i64::try_from(limit.min(MAX_ATTENTION_SUMMARIES))
+            .map_err(|_| StoreError::Range("protection summary limit overflowed i64".to_owned()))?;
+        if limit == 0 {
+            return Ok(ProtectionProjection {
+                protected_incident_count,
+                protected_incidents: Vec::new(),
+            });
+        }
+        let mut statement = connection.prepare(
+            "SELECT incident_id, protected_at_ms,
+                    last_exact_observed_at_ms, absence_since_ms
+             FROM incident_protections
+             ORDER BY protected_at_ms DESC, incident_id ASC LIMIT ?1",
+        )?;
+        let rows = statement.query_map(params![limit], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, Option<i64>>(2)?,
+                row.get::<_, Option<i64>>(3)?,
+            ))
+        })?;
+        let protected_incidents = rows
+            .map(|row| {
+                let (incident_id, protected_at, last_observed, absence_since) = row?;
+                projected_protection_summary(
+                    incident_id,
+                    protected_at,
+                    last_observed,
+                    absence_since,
+                )
+            })
+            .collect::<Result<Vec<_>, StoreError>>()?;
+        Ok(ProtectionProjection {
+            protected_incident_count,
+            protected_incidents,
+        })
+    }
+
+    pub fn reconcile_incident_protections(
+        &self,
+        live_root_identity_fingerprints: &BTreeSet<String>,
+        absence_proven: bool,
+        now_unix_millis: u64,
+        exact_absence_retention_millis: u64,
+    ) -> Result<ProtectionReconciliation, StoreError> {
+        if exact_absence_retention_millis == 0 {
+            return Err(StoreError::Invalid(
+                "protection exact-absence retention must be non-zero".to_owned(),
+            ));
+        }
+        let now = sqlite_millis(now_unix_millis, "protection reconciliation timestamp")?;
+        let retention = sqlite_millis(
+            exact_absence_retention_millis,
+            "protection exact-absence retention",
+        )?;
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let protections = {
+            let mut statement = transaction.prepare(
+                "SELECT incident_id, root_identity_fingerprint, absence_since_ms
+                 FROM incident_protections",
+            )?;
+            let rows = statement.query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, Option<i64>>(2)?,
+                ))
+            })?;
+            rows.collect::<Result<Vec<_>, _>>()?
+        };
+        let mut result = ProtectionReconciliation::default();
+        for (incident_id, root_identity, absence_since) in protections {
+            if live_root_identity_fingerprints.contains(&root_identity) {
+                transaction.execute(
+                    "UPDATE incident_protections
+                     SET last_exact_observed_at_ms = ?1, absence_since_ms = NULL
+                     WHERE incident_id = ?2",
+                    params![now, incident_id],
+                )?;
+                result.observed_count += 1;
+                continue;
+            }
+            if !absence_proven {
+                transaction.execute(
+                    "UPDATE incident_protections SET absence_since_ms = NULL
+                     WHERE incident_id = ?1",
+                    params![incident_id],
+                )?;
+                result.unproven_count += 1;
+                continue;
+            }
+            result.absent_count += 1;
+            match absence_since {
+                None => {
+                    transaction.execute(
+                        "UPDATE incident_protections SET absence_since_ms = ?1
+                         WHERE incident_id = ?2",
+                        params![now, incident_id],
+                    )?;
+                }
+                Some(since) if now.saturating_sub(since) >= retention => {
+                    transaction.execute(
+                        "DELETE FROM incident_protections WHERE incident_id = ?1",
+                        params![incident_id],
+                    )?;
+                    result.retired_count += 1;
+                }
+                Some(_) => {}
+            }
+        }
+        transaction.commit()?;
+        Ok(result)
+    }
+
+    pub fn attention_projection(
+        &self,
+        limit: usize,
+    ) -> Result<StoreAttentionProjection, StoreError> {
+        let connection = self.connection()?;
+        let count =
+            connection.query_row("SELECT COUNT(*) FROM cleanup_retry_blocks", [], |row| {
+                row.get::<_, i64>(0)
+            })?;
+        let blocked_cleanup_count = usize::try_from(count).map_err(|_| {
+            StoreError::Corrupt("negative or oversized retry block count".to_owned())
+        })?;
+        let limit = i64::try_from(limit.min(MAX_ATTENTION_SUMMARIES))
+            .map_err(|_| StoreError::Range("attention summary limit overflowed i64".to_owned()))?;
+        if limit == 0 {
+            return Ok(StoreAttentionProjection {
+                blocked_cleanup_count,
+                blocked_cleanups: Vec::new(),
+            });
+        }
+        let mut statement = connection.prepare(
+            "SELECT blocks.incident_id, attempts.terminal_state, blocks.blocked_at_ms,
+                    blocks.reason_id, blocks.last_exact_observed_at_ms,
+                    blocks.absence_since_ms
+             FROM cleanup_retry_blocks AS blocks
+             JOIN cleanup_attempts AS attempts ON attempts.id = blocks.source_attempt_id
+             ORDER BY blocks.blocked_at_ms DESC, blocks.incident_id ASC
+             LIMIT ?1",
+        )?;
+        let rows = statement.query_map(params![limit], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, i64>(2)?,
+                row.get::<_, Option<String>>(3)?,
+                row.get::<_, Option<i64>>(4)?,
+                row.get::<_, Option<i64>>(5)?,
+            ))
+        })?;
+        let mut blocked_cleanups = Vec::new();
+        for row in rows {
+            let (incident_id, state, blocked_at, reason_id, last_observed, absence_since) = row?;
+            let state = parse_state(&state)?;
+            if !matches!(state, IncidentState::Failed | IncidentState::Revived) {
+                return Err(StoreError::Corrupt(format!(
+                    "retry block references non-blocking terminal state {}",
+                    state_name(state)
+                )));
+            }
+            blocked_cleanups.push(BlockedCleanupSummary {
+                incident_id: project_identifier(&incident_id, "redacted-incident"),
+                state,
+                blocked_at_unix_millis: parse_nonnegative_millis(
+                    blocked_at,
+                    "retry block timestamp",
+                )?,
+                reason_id: project_reason_id(reason_id.as_deref()),
+                last_exact_observed_at_unix_millis: last_observed
+                    .map(|value| parse_nonnegative_millis(value, "last exact observation"))
+                    .transpose()?,
+                exact_absence_since_unix_millis: absence_since
+                    .map(|value| parse_nonnegative_millis(value, "exact absence timestamp"))
+                    .transpose()?,
+            });
+        }
+        Ok(StoreAttentionProjection {
+            blocked_cleanup_count,
+            blocked_cleanups,
+        })
+    }
+
+    pub fn reconcile_retry_blocks(
+        &self,
+        observed: &[ObservedIncidentIdentity],
+        live_root_identity_fingerprints: &BTreeSet<String>,
+        absence_proven: bool,
+        now_unix_millis: u64,
+        exact_absence_retention_millis: u64,
+    ) -> Result<RetryBlockReconciliation, StoreError> {
+        if exact_absence_retention_millis == 0 {
+            return Err(StoreError::Invalid(
+                "retry block exact-absence retention must be non-zero".to_owned(),
+            ));
+        }
+        let now = sqlite_millis(now_unix_millis, "retry block reconciliation timestamp")?;
+        let retention = sqlite_millis(
+            exact_absence_retention_millis,
+            "retry block exact-absence retention",
+        )?;
+        let observed = observed
+            .iter()
+            .map(|identity| {
+                (
+                    identity.incident_id.as_str(),
+                    identity.tracking_key.as_str(),
+                    identity.root_identity_fingerprint.as_str(),
+                    identity.member_fingerprint.as_str(),
+                )
+            })
+            .collect::<BTreeSet<_>>();
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let blocks = {
+            let mut statement = transaction.prepare(
+                "SELECT blocks.incident_id, blocks.tracking_key,
+                        attempts.root_identity_fingerprint, attempts.member_fingerprint,
+                        blocks.absence_since_ms
+                 FROM cleanup_retry_blocks AS blocks
+                 JOIN cleanup_attempts AS attempts ON attempts.id = blocks.source_attempt_id",
+            )?;
+            let rows = statement.query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, Option<i64>>(4)?,
+                ))
+            })?;
+            rows.collect::<Result<Vec<_>, _>>()?
+        };
+        let mut result = RetryBlockReconciliation::default();
+        for (incident_id, tracking_key, root_identity, member_fingerprint, absence_since) in blocks
+        {
+            let exact_observed = observed.contains(&(
+                incident_id.as_str(),
+                tracking_key.as_str(),
+                root_identity.as_str(),
+                member_fingerprint.as_str(),
+            )) || live_root_identity_fingerprints.contains(&root_identity);
+            if exact_observed {
+                transaction.execute(
+                    "UPDATE cleanup_retry_blocks
+                     SET last_exact_observed_at_ms = ?1, absence_since_ms = NULL
+                     WHERE incident_id = ?2",
+                    params![now, incident_id],
+                )?;
+                result.observed_count += 1;
+                continue;
+            }
+            if !absence_proven {
+                transaction.execute(
+                    "UPDATE cleanup_retry_blocks SET absence_since_ms = NULL
+                     WHERE incident_id = ?1",
+                    params![incident_id],
+                )?;
+                result.unproven_count += 1;
+                continue;
+            }
+            result.absent_count += 1;
+            match absence_since {
+                None => {
+                    transaction.execute(
+                        "UPDATE cleanup_retry_blocks SET absence_since_ms = ?1
+                         WHERE incident_id = ?2",
+                        params![now, incident_id],
+                    )?;
+                }
+                Some(since) if now.saturating_sub(since) >= retention => {
+                    transaction.execute(
+                        "DELETE FROM cleanup_retry_blocks WHERE incident_id = ?1",
+                        params![incident_id],
+                    )?;
+                    result.retired_count += 1;
+                }
+                Some(_) => {}
+            }
+        }
+        transaction.commit()?;
+        Ok(result)
+    }
+
     pub fn explain(&self, incident_id: &str) -> Result<Option<IncidentDetail>, StoreError> {
         let events = self.query_events(
-            "SELECT id, incident_id, occurred_at_ms, kind, state, payload_json \
+            "SELECT id, attempt_id, incident_id, occurred_at_ms, kind, state, payload_json \
              FROM events WHERE incident_id = ?1 ORDER BY occurred_at_ms ASC, id ASC",
             params![incident_id],
         )?;
@@ -305,8 +2114,50 @@ impl HistoryStore {
             params![max_events],
         )?;
         transaction.execute(
-            "DELETE FROM cooling_candidates WHERE last_seen_ms < ?1",
+            "DELETE FROM cooling_candidates WHERE last_wall_ms < ?1",
             params![cutoff],
+        )?;
+        transaction.execute(
+            "DELETE FROM cleanup_actions
+             WHERE attempt_id IN (
+                 SELECT attempts.id FROM cleanup_attempts AS attempts
+                 WHERE attempts.completed_at_ms IS NOT NULL
+                   AND NOT EXISTS (
+                       SELECT 1 FROM events WHERE events.attempt_id = attempts.id
+                   )
+                   AND NOT EXISTS (
+                       SELECT 1 FROM cleanup_retry_blocks AS blocks
+                       WHERE blocks.source_attempt_id = attempts.id
+                   )
+             )",
+            [],
+        )?;
+        transaction.execute(
+            "DELETE FROM cleanup_artifact_actions
+             WHERE attempt_id IN (
+                 SELECT attempts.id FROM cleanup_attempts AS attempts
+                 WHERE attempts.completed_at_ms IS NOT NULL
+                   AND NOT EXISTS (
+                       SELECT 1 FROM events WHERE events.attempt_id = attempts.id
+                   )
+                   AND NOT EXISTS (
+                       SELECT 1 FROM cleanup_retry_blocks AS blocks
+                       WHERE blocks.source_attempt_id = attempts.id
+                   )
+             )",
+            [],
+        )?;
+        transaction.execute(
+            "DELETE FROM cleanup_attempts
+             WHERE completed_at_ms IS NOT NULL
+               AND NOT EXISTS (
+                   SELECT 1 FROM events WHERE events.attempt_id = cleanup_attempts.id
+               )
+               AND NOT EXISTS (
+                   SELECT 1 FROM cleanup_retry_blocks AS blocks
+                   WHERE blocks.source_attempt_id = cleanup_attempts.id
+               )",
+            [],
         )?;
         transaction.commit()?;
         let remaining_events = self.event_count()?;
@@ -339,7 +2190,7 @@ impl HistoryStore {
     pub fn track_cooling(
         &self,
         report: &IncidentReport,
-        observed_at_unix_millis: u64,
+        clock: &CoolingClock,
         abandonment_grace_millis: u64,
         continuity_gap_millis: u64,
     ) -> Result<bool, StoreError> {
@@ -348,58 +2199,111 @@ impl HistoryStore {
                 "only COOLING incidents can advance abandonment grace".to_owned(),
             ));
         }
-        let observed_at = i64::try_from(observed_at_unix_millis).map_err(|_| {
-            StoreError::Range("cooling observation timestamp overflowed i64".to_owned())
-        })?;
+        if clock.boot_session_fingerprint.trim().is_empty()
+            || clock.enforcement_epoch.trim().is_empty()
+        {
+            return Err(StoreError::Invalid(
+                "cooling clock requires boot and enforcement epoch fingerprints".to_owned(),
+            ));
+        }
+        let wall = sqlite_millis(clock.wall_unix_millis, "cooling wall timestamp")?;
+        let continuous = sqlite_millis(clock.continuous_millis, "cooling continuous timestamp")?;
         let mut connection = self.connection()?;
         let transaction = connection.transaction()?;
         let existing = transaction
             .query_row(
-                "SELECT first_seen_ms, last_seen_ms, root_identity_fingerprint, member_fingerprint \
+                "SELECT first_continuous_ms, last_continuous_ms,
+                        first_wall_ms, last_wall_ms,
+                        root_identity_fingerprint, member_fingerprint,
+                        boot_session_fingerprint, enforcement_epoch,
+                        signature_pack, signature_version
                  FROM cooling_candidates WHERE tracking_key = ?1",
                 params![report.tracking_key],
                 |row| {
                     Ok((
                         row.get::<_, i64>(0)?,
                         row.get::<_, i64>(1)?,
-                        row.get::<_, String>(2)?,
-                        row.get::<_, String>(3)?,
+                        row.get::<_, i64>(2)?,
+                        row.get::<_, i64>(3)?,
+                        row.get::<_, String>(4)?,
+                        row.get::<_, String>(5)?,
+                        row.get::<_, String>(6)?,
+                        row.get::<_, String>(7)?,
+                        row.get::<_, String>(8)?,
+                        row.get::<_, String>(9)?,
                     ))
                 },
             )
             .optional()?;
-        let first_seen = match existing {
-            Some((first_seen, last_seen, root_identity, members))
-                if root_identity == report.root.identity_fingerprint
-                    && members == report.member_fingerprint
-                    && observed_at >= last_seen
-                    && u64::try_from(observed_at - last_seen)
-                        .is_ok_and(|gap| gap <= continuity_gap_millis) =>
+        let (first_continuous, first_wall) = match existing {
+            Some((
+                first_continuous,
+                last_continuous,
+                first_wall,
+                last_wall,
+                root_identity,
+                members,
+                boot_session,
+                enforcement_epoch,
+                signature_pack,
+                signature_version,
+            )) if root_identity == report.root.identity_fingerprint
+                && members == report.member_fingerprint
+                && boot_session == clock.boot_session_fingerprint
+                && enforcement_epoch == clock.enforcement_epoch
+                && signature_pack == report.signature_pack
+                && signature_version == report.signature_version
+                && continuous >= last_continuous
+                && wall >= last_wall
+                && u64::try_from(continuous - last_continuous)
+                    .is_ok_and(|gap| gap <= continuity_gap_millis)
+                && wall_continuity_is_plausible(
+                    wall,
+                    last_wall,
+                    continuous,
+                    last_continuous,
+                    continuity_gap_millis,
+                ) =>
             {
-                first_seen
+                (first_continuous, first_wall)
             }
-            _ => observed_at,
+            _ => (continuous, wall),
         };
         transaction.execute(
             "INSERT INTO cooling_candidates (
-                 tracking_key, first_seen_ms, last_seen_ms,
-                 root_identity_fingerprint, member_fingerprint
-             ) VALUES (?1, ?2, ?3, ?4, ?5)
+                 tracking_key, first_continuous_ms, last_continuous_ms,
+                 first_wall_ms, last_wall_ms, root_identity_fingerprint,
+                 member_fingerprint, boot_session_fingerprint, enforcement_epoch,
+                 signature_pack, signature_version
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
              ON CONFLICT(tracking_key) DO UPDATE SET
-                 first_seen_ms = excluded.first_seen_ms,
-                 last_seen_ms = excluded.last_seen_ms,
+                 first_continuous_ms = excluded.first_continuous_ms,
+                 last_continuous_ms = excluded.last_continuous_ms,
+                 first_wall_ms = excluded.first_wall_ms,
+                 last_wall_ms = excluded.last_wall_ms,
                  root_identity_fingerprint = excluded.root_identity_fingerprint,
-                 member_fingerprint = excluded.member_fingerprint",
+                 member_fingerprint = excluded.member_fingerprint,
+                 boot_session_fingerprint = excluded.boot_session_fingerprint,
+                 enforcement_epoch = excluded.enforcement_epoch,
+                 signature_pack = excluded.signature_pack,
+                 signature_version = excluded.signature_version",
             params![
                 report.tracking_key,
-                first_seen,
-                observed_at,
+                first_continuous,
+                continuous,
+                first_wall,
+                wall,
                 report.root.identity_fingerprint,
-                report.member_fingerprint
+                report.member_fingerprint,
+                clock.boot_session_fingerprint,
+                clock.enforcement_epoch,
+                report.signature_pack,
+                report.signature_version,
             ],
         )?;
         transaction.commit()?;
-        let elapsed = u64::try_from(observed_at.saturating_sub(first_seen)).unwrap_or_default();
+        let elapsed =
+            u64::try_from(continuous.saturating_sub(first_continuous)).unwrap_or_default();
         Ok(elapsed >= abandonment_grace_millis)
     }
 
@@ -464,16 +2368,17 @@ impl HistoryStore {
         let raw_rows = statement.query_map(parameters, |row| {
             Ok((
                 row.get::<_, i64>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, i64>(2)?,
-                row.get::<_, String>(3)?,
+                row.get::<_, Option<i64>>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, i64>(3)?,
                 row.get::<_, String>(4)?,
                 row.get::<_, String>(5)?,
+                row.get::<_, String>(6)?,
             ))
         })?;
         let mut events = Vec::new();
         for row in raw_rows {
-            let (event_id, incident_id, occurred_at, kind, state, payload_json) = row?;
+            let (event_id, attempt_id, incident_id, occurred_at, kind, state, payload_json) = row?;
             let occurred_at_unix_millis = u64::try_from(occurred_at)
                 .map_err(|_| StoreError::Corrupt("negative event timestamp".to_owned()))?;
             let kind = EventKind::parse(&kind)?;
@@ -486,6 +2391,7 @@ impl HistoryStore {
             }
             events.push(HistoryEvent {
                 event_id,
+                attempt_id,
                 incident_id,
                 occurred_at_unix_millis,
                 kind,
@@ -497,49 +2403,1492 @@ impl HistoryStore {
     }
 
     fn connection(&self) -> Result<Connection, StoreError> {
+        if !validate_existing_store_components(&self.path)? {
+            return Err(StoreError::UnsafePath(
+                "history database disappeared after startup".to_owned(),
+            ));
+        }
         let connection = Connection::open(&self.path)?;
         connection.busy_timeout(std::time::Duration::from_secs(2))?;
         connection.pragma_update(None, "foreign_keys", "ON")?;
+        connection.pragma_update(None, "journal_mode", "WAL")?;
+        connection.pragma_update(None, "synchronous", "FULL")?;
         Ok(connection)
     }
 }
 
-fn initialize_schema(connection: &Connection) -> Result<(), StoreError> {
+fn initialize_store_file(path: &Path) -> Result<(), StoreError> {
+    let mut connection = Connection::open(path)?;
+    connection.busy_timeout(std::time::Duration::from_secs(2))?;
+    connection.pragma_update(None, "foreign_keys", "ON")?;
+    initialize_schema(&mut connection)?;
+    run_quick_check(&connection)?;
+    validate_required_schema(&connection)?;
+    connection.pragma_update(None, "journal_mode", "WAL")?;
+    connection.pragma_update(None, "synchronous", "FULL")?;
+    drop(connection);
+    secure_store_component_permissions(path)?;
+    Ok(())
+}
+
+fn preflight_store_file(path: &Path) -> Result<bool, StoreError> {
+    let existed = validate_existing_store_components(path)?;
+    if !existed {
+        return Ok(false);
+    }
+    let connection = Connection::open_with_flags(
+        path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )?;
+    connection.busy_timeout(std::time::Duration::from_secs(2))?;
+    run_quick_check(&connection)?;
     let user_version =
         connection.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))?;
     if user_version > SCHEMA_VERSION {
-        return Err(StoreError::Corrupt(format!(
+        return Err(StoreError::UnsupportedSchema(format!(
             "database schema version {user_version} is newer than supported {SCHEMA_VERSION}"
         )));
     }
-    connection.execute_batch(
-        "PRAGMA journal_mode = WAL;
-         CREATE TABLE IF NOT EXISTS events (
-             id INTEGER PRIMARY KEY AUTOINCREMENT,
-             incident_id TEXT NOT NULL,
-             occurred_at_ms INTEGER NOT NULL CHECK (occurred_at_ms >= 0),
-             kind TEXT NOT NULL CHECK (kind IN ('observation', 'cleanup')),
-             state TEXT NOT NULL,
-             payload_json TEXT NOT NULL
-         );
-         CREATE INDEX IF NOT EXISTS events_incident_timeline
-             ON events (incident_id, occurred_at_ms, id);
-         CREATE INDEX IF NOT EXISTS events_recent
-             ON events (occurred_at_ms DESC, id DESC);
-         CREATE TABLE IF NOT EXISTS settings (
-             key TEXT PRIMARY KEY,
-             integer_value INTEGER
-         );
-         CREATE TABLE IF NOT EXISTS cooling_candidates (
-             tracking_key TEXT PRIMARY KEY,
-             first_seen_ms INTEGER NOT NULL CHECK (first_seen_ms >= 0),
-             last_seen_ms INTEGER NOT NULL CHECK (last_seen_ms >= first_seen_ms),
-             root_identity_fingerprint TEXT NOT NULL,
-             member_fingerprint TEXT NOT NULL
-         );
-         PRAGMA user_version = 2;",
+    if user_version == SCHEMA_VERSION {
+        validate_required_schema(&connection)?;
+    }
+    Ok(true)
+}
+
+fn validate_existing_store_components(path: &Path) -> Result<bool, StoreError> {
+    let main = match fs::symlink_metadata(path) {
+        Ok(metadata) => {
+            validate_store_component(path, &metadata, "database")?;
+            true
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+        Err(error) => return Err(StoreError::Io(error)),
+    };
+    for suffix in ["-wal", "-shm", "-journal"] {
+        let sidecar = sqlite_sidecar_path(path, suffix);
+        match fs::symlink_metadata(&sidecar) {
+            Ok(metadata) => {
+                if !main {
+                    return Err(StoreError::UnsafePath(format!(
+                        "SQLite {suffix} sidecar exists without its database"
+                    )));
+                }
+                validate_store_component(&sidecar, &metadata, "SQLite sidecar")?;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(StoreError::Io(error)),
+        }
+    }
+    Ok(main)
+}
+
+fn validate_store_component(
+    _path: &Path,
+    metadata: &fs::Metadata,
+    label: &str,
+) -> Result<(), StoreError> {
+    if !metadata.file_type().is_file() {
+        return Err(StoreError::UnsafePath(format!(
+            "{label} must be a regular file and must not be a symlink"
+        )));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        if metadata.uid() != unsafe { libc::geteuid() } {
+            return Err(StoreError::UnsafePath(format!(
+                "{label} is not owned by the current user"
+            )));
+        }
+        if metadata.permissions().mode() & 0o077 != 0 {
+            return Err(StoreError::UnsafePath(format!(
+                "{label} permissions expose private state"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn secure_store_component_permissions(path: &Path) -> Result<(), StoreError> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        for component in [
+            path.to_path_buf(),
+            sqlite_sidecar_path(path, "-wal"),
+            sqlite_sidecar_path(path, "-shm"),
+            sqlite_sidecar_path(path, "-journal"),
+        ] {
+            match fs::symlink_metadata(&component) {
+                Ok(metadata) => {
+                    if !metadata.file_type().is_file()
+                        || metadata.uid() != unsafe { libc::geteuid() }
+                    {
+                        return Err(StoreError::UnsafePath(
+                            "new SQLite component is not a current-user regular file".to_owned(),
+                        ));
+                    }
+                    fs::set_permissions(&component, fs::Permissions::from_mode(0o600))?;
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(StoreError::Io(error)),
+            }
+        }
+    }
+    Ok(())
+}
+
+fn run_quick_check(connection: &Connection) -> Result<(), StoreError> {
+    let mut statement = connection.prepare("PRAGMA quick_check")?;
+    let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
+    let mut saw_ok = false;
+    for row in rows {
+        let result = row?;
+        if result == "ok" {
+            saw_ok = true;
+        } else {
+            return Err(StoreError::Corrupt(
+                "SQLite quick_check reported an integrity failure".to_owned(),
+            ));
+        }
+    }
+    if !saw_ok {
+        return Err(StoreError::Corrupt(
+            "SQLite quick_check returned no result".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_required_schema(connection: &Connection) -> Result<(), StoreError> {
+    let user_version =
+        connection.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))?;
+    if user_version != SCHEMA_VERSION {
+        return Err(StoreError::Corrupt(format!(
+            "required schema validation expected version {SCHEMA_VERSION}, found {user_version}"
+        )));
+    }
+    const REQUIRED: &[(&str, &[&str])] = &[
+        (
+            "cleanup_attempts",
+            &[
+                "id",
+                "incident_id",
+                "tracking_key",
+                "root_identity_fingerprint",
+                "member_fingerprint",
+                "enforcement_epoch",
+                "started_at_ms",
+                "completed_at_ms",
+                "terminal_state",
+                "reason_id",
+                "survivor_pids_json",
+                "revival_checks_completed",
+                "resources_json",
+            ],
+        ),
+        (
+            "cleanup_actions",
+            &[
+                "id",
+                "attempt_id",
+                "sequence",
+                "prepared_at_ms",
+                "completed_at_ms",
+                "stage",
+                "pid",
+                "identity_fingerprint",
+                "signal",
+                "disposition",
+            ],
+        ),
+        (
+            "cleanup_artifact_actions",
+            &[
+                "id",
+                "attempt_id",
+                "sequence",
+                "prepared_at_ms",
+                "completed_at_ms",
+                "kind",
+                "artifact_fingerprint",
+                "disposition",
+            ],
+        ),
+        (
+            "cleanup_retry_blocks",
+            &[
+                "incident_id",
+                "tracking_key",
+                "blocked_at_ms",
+                "reason_id",
+                "source_attempt_id",
+                "last_exact_observed_at_ms",
+                "absence_since_ms",
+            ],
+        ),
+        (
+            "events",
+            &[
+                "id",
+                "incident_id",
+                "occurred_at_ms",
+                "kind",
+                "state",
+                "payload_json",
+                "attempt_id",
+            ],
+        ),
+        ("settings", &["key", "integer_value"]),
+        (
+            "cooling_candidates",
+            &[
+                "tracking_key",
+                "first_continuous_ms",
+                "last_continuous_ms",
+                "first_wall_ms",
+                "last_wall_ms",
+                "root_identity_fingerprint",
+                "member_fingerprint",
+                "boot_session_fingerprint",
+                "enforcement_epoch",
+                "signature_pack",
+                "signature_version",
+            ],
+        ),
+        (
+            "managed_lifecycle",
+            &[
+                "singleton",
+                "activation_generation",
+                "instance_id",
+                "requested_enforce",
+                "effective_enforce",
+                "armed_generation",
+                "enforcement_epoch",
+                "ready",
+                "draining",
+                "startup_phase",
+                "updated_at_ms",
+            ],
+        ),
+        (
+            "storage_recoveries",
+            &[
+                "id",
+                "recovery_id",
+                "occurred_at_ms",
+                "reason_id",
+                "quarantine_directory_name",
+                "quarantined_sidecar_count",
+            ],
+        ),
+        (
+            "incident_protections",
+            &[
+                "incident_id",
+                "root_identity_fingerprint",
+                "member_fingerprint",
+                "protected_at_ms",
+                "last_exact_observed_at_ms",
+                "absence_since_ms",
+            ],
+        ),
+    ];
+    for (table, required_columns) in REQUIRED {
+        let exists = connection
+            .query_row(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1",
+                params![table],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_some();
+        if !exists {
+            return Err(StoreError::Corrupt(format!(
+                "required schema table {table:?} is missing"
+            )));
+        }
+        let pragma = format!("PRAGMA table_info({table})");
+        let mut statement = connection.prepare(&pragma)?;
+        let columns = statement
+            .query_map([], |row| row.get::<_, String>(1))?
+            .collect::<Result<BTreeSet<_>, _>>()?;
+        for column in *required_columns {
+            if !columns.contains(*column) {
+                return Err(StoreError::Corrupt(format!(
+                    "required schema column {table}.{column} is missing"
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn is_recoverable_corruption(error: &StoreError) -> bool {
+    match error {
+        StoreError::Corrupt(_) => true,
+        StoreError::Sqlite(rusqlite::Error::SqliteFailure(failure, _)) => matches!(
+            failure.code,
+            rusqlite::ErrorCode::DatabaseCorrupt | rusqlite::ErrorCode::NotADatabase
+        ),
+        _ => false,
+    }
+}
+
+fn recovery_reason(error: &StoreError) -> StorageRecoveryReason {
+    match error {
+        StoreError::Corrupt(message)
+            if message.contains("required schema") || message.contains("application tables") =>
+        {
+            StorageRecoveryReason::RequiredSchemaInvalid
+        }
+        _ => StorageRecoveryReason::IntegrityCheckFailed,
+    }
+}
+
+fn quarantine_database(
+    path: &Path,
+    reason: StorageRecoveryReason,
+) -> Result<StorageRecoveryOccurrence, StoreError> {
+    if !validate_existing_store_components(path)? {
+        return Err(StoreError::UnsafePath(
+            "corrupt database disappeared before quarantine".to_owned(),
+        ));
+    }
+    let occurred_at_unix_millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| StoreError::Invalid("system clock is before Unix epoch".to_owned()))?
+        .as_millis()
+        .try_into()
+        .map_err(|_| StoreError::Range("storage recovery timestamp overflowed u64".to_owned()))?;
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let basename = path
+        .file_name()
+        .ok_or_else(|| StoreError::Invalid("history database path has no filename".to_owned()))?;
+    let mut selected = None;
+    for sequence in 0_u16..=u16::MAX {
+        let mut name = basename.to_os_string();
+        name.push(format!(".quarantine-{occurred_at_unix_millis}-{sequence}"));
+        let candidate = parent.join(name);
+        match fs::create_dir(&candidate) {
+            Ok(()) => {
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    fs::set_permissions(&candidate, fs::Permissions::from_mode(0o700))?;
+                }
+                selected = Some((sequence, candidate));
+                break;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(StoreError::Io(error)),
+        }
+    }
+    let (sequence, quarantine_directory) = selected.ok_or_else(|| {
+        StoreError::Invalid("could not allocate a unique storage quarantine directory".to_owned())
+    })?;
+
+    fs::rename(path, quarantine_directory.join(basename))?;
+    let mut quarantined_sidecar_count = 0_usize;
+    for suffix in ["-wal", "-shm", "-journal"] {
+        let source = sqlite_sidecar_path(path, suffix);
+        let destination = quarantine_directory.join(
+            source
+                .file_name()
+                .ok_or_else(|| StoreError::Invalid("SQLite sidecar has no filename".to_owned()))?,
+        );
+        match fs::rename(&source, destination) {
+            Ok(()) => quarantined_sidecar_count += 1,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(StoreError::Io(error)),
+        }
+    }
+    sync_directory(&quarantine_directory)?;
+    sync_directory(parent)?;
+    Ok(StorageRecoveryOccurrence {
+        recovery_id: format!("storage-recovery-{occurred_at_unix_millis}-{sequence}"),
+        occurred_at_unix_millis,
+        reason,
+        quarantine_directory,
+        quarantined_sidecar_count,
+    })
+}
+
+fn sqlite_sidecar_path(path: &Path, suffix: &str) -> PathBuf {
+    let mut value: OsString = path.as_os_str().to_os_string();
+    value.push(suffix);
+    PathBuf::from(value)
+}
+
+fn sync_directory(path: &Path) -> Result<(), StoreError> {
+    fs::File::open(path)?.sync_all()?;
+    Ok(())
+}
+
+fn initialize_schema(connection: &mut Connection) -> Result<(), StoreError> {
+    let user_version =
+        connection.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))?;
+    if user_version > SCHEMA_VERSION {
+        return Err(StoreError::UnsupportedSchema(format!(
+            "database schema version {user_version} is newer than supported {SCHEMA_VERSION}"
+        )));
+    }
+    if user_version == SCHEMA_VERSION {
+        return Ok(());
+    }
+    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    if user_version == 0 {
+        let has_application_tables = transaction
+            .query_row(
+                "SELECT 1 FROM sqlite_master
+                 WHERE type = 'table' AND name IN ('events', 'settings', 'cooling_candidates')
+                 LIMIT 1",
+                [],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_some();
+        if has_application_tables {
+            return Err(StoreError::Corrupt(
+                "unversioned database contains Unlinger application tables".to_owned(),
+            ));
+        }
+        transaction.execute_batch(SCHEMA_SQL)?;
+    } else {
+        if user_version < 3 {
+            transaction.execute_batch(MIGRATION_V3_FOUNDATIONS_SQL)?;
+            if !events_have_attempt_id(&transaction)? {
+                transaction.execute_batch(
+                    "ALTER TABLE events ADD COLUMN attempt_id INTEGER
+                         REFERENCES cleanup_attempts(id);",
+                )?;
+            }
+            transaction.execute_batch(
+                "DROP TABLE IF EXISTS cooling_candidates;
+                 CREATE TABLE cooling_candidates (
+                     tracking_key TEXT PRIMARY KEY,
+                     first_continuous_ms INTEGER NOT NULL CHECK (first_continuous_ms >= 0),
+                     last_continuous_ms INTEGER NOT NULL
+                         CHECK (last_continuous_ms >= first_continuous_ms),
+                     first_wall_ms INTEGER NOT NULL CHECK (first_wall_ms >= 0),
+                     last_wall_ms INTEGER NOT NULL CHECK (last_wall_ms >= 0),
+                     root_identity_fingerprint TEXT NOT NULL,
+                     member_fingerprint TEXT NOT NULL,
+                     boot_session_fingerprint TEXT NOT NULL,
+                     enforcement_epoch TEXT NOT NULL
+                 );
+                 CREATE INDEX IF NOT EXISTS events_incident_timeline
+                     ON events (incident_id, occurred_at_ms, id);
+                 CREATE INDEX IF NOT EXISTS events_recent
+                     ON events (occurred_at_ms DESC, id DESC);
+                 CREATE INDEX IF NOT EXISTS events_attempt_timeline
+                     ON events (attempt_id, id);",
+            )?;
+        }
+        if user_version < 4 {
+            transaction.execute_batch(MANAGED_LIFECYCLE_SQL)?;
+        }
+        if user_version < 5 {
+            transaction.execute_batch(MIGRATION_V5_SQL)?;
+        }
+    }
+    transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+    transaction.commit()?;
+    Ok(())
+}
+
+const MIGRATION_V5_SQL: &str = "DELETE FROM cooling_candidates;
+     ALTER TABLE cleanup_attempts
+         ADD COLUMN resources_json TEXT;
+     ALTER TABLE cooling_candidates
+         ADD COLUMN signature_pack TEXT NOT NULL DEFAULT '';
+     ALTER TABLE cooling_candidates
+         ADD COLUMN signature_version TEXT NOT NULL DEFAULT '';
+     ALTER TABLE cleanup_retry_blocks
+         ADD COLUMN last_exact_observed_at_ms INTEGER
+             CHECK (last_exact_observed_at_ms >= blocked_at_ms);
+     ALTER TABLE cleanup_retry_blocks
+         ADD COLUMN absence_since_ms INTEGER
+             CHECK (absence_since_ms >= blocked_at_ms);
+     CREATE TABLE storage_recoveries (
+         id INTEGER PRIMARY KEY AUTOINCREMENT,
+         recovery_id TEXT NOT NULL UNIQUE,
+         occurred_at_ms INTEGER NOT NULL CHECK (occurred_at_ms >= 0),
+         reason_id TEXT NOT NULL CHECK (
+             reason_id IN ('integrity_check_failed', 'required_schema_invalid')
+         ),
+         quarantine_directory_name TEXT NOT NULL,
+         quarantined_sidecar_count INTEGER NOT NULL
+             CHECK (quarantined_sidecar_count >= 0)
+     );
+     CREATE INDEX storage_recoveries_recent
+         ON storage_recoveries (occurred_at_ms DESC, id DESC);
+     CREATE TABLE incident_protections (
+         incident_id TEXT PRIMARY KEY,
+         root_identity_fingerprint TEXT NOT NULL,
+         member_fingerprint TEXT NOT NULL,
+         protected_at_ms INTEGER NOT NULL CHECK (protected_at_ms >= 0),
+         last_exact_observed_at_ms INTEGER
+             CHECK (last_exact_observed_at_ms >= protected_at_ms),
+         absence_since_ms INTEGER CHECK (absence_since_ms >= protected_at_ms)
+     );
+     CREATE INDEX incident_protections_recent
+         ON incident_protections (protected_at_ms DESC, incident_id ASC);
+     CREATE TABLE cleanup_artifact_actions (
+         id INTEGER PRIMARY KEY AUTOINCREMENT,
+         attempt_id INTEGER NOT NULL REFERENCES cleanup_attempts(id),
+         sequence INTEGER NOT NULL CHECK (sequence >= 0),
+         prepared_at_ms INTEGER NOT NULL CHECK (prepared_at_ms >= 0),
+         completed_at_ms INTEGER CHECK (completed_at_ms >= prepared_at_ms),
+         kind TEXT NOT NULL CHECK (kind IN ('dev_tools_active_port')),
+         artifact_fingerprint TEXT NOT NULL,
+         disposition TEXT CHECK (
+             disposition IN (
+                 'removed', 'already_absent', 'identity_mismatch', 'referenced',
+                 'unsafe', 'rejected', 'cancelled_before_delivery', 'delivery_unknown'
+             )
+         ),
+         UNIQUE (attempt_id, sequence),
+         CHECK (
+             (completed_at_ms IS NULL AND disposition IS NULL)
+             OR (completed_at_ms IS NOT NULL AND disposition IS NOT NULL)
+         )
+     );
+     CREATE INDEX cleanup_artifact_actions_attempt_sequence
+         ON cleanup_artifact_actions (attempt_id, sequence);";
+
+const MIGRATION_V3_FOUNDATIONS_SQL: &str = "CREATE TABLE IF NOT EXISTS cleanup_attempts (
+         id INTEGER PRIMARY KEY AUTOINCREMENT,
+         incident_id TEXT NOT NULL,
+         tracking_key TEXT NOT NULL,
+         root_identity_fingerprint TEXT NOT NULL,
+         member_fingerprint TEXT NOT NULL,
+         enforcement_epoch TEXT NOT NULL,
+         started_at_ms INTEGER NOT NULL CHECK (started_at_ms >= 0),
+         completed_at_ms INTEGER CHECK (completed_at_ms >= started_at_ms),
+         terminal_state TEXT CHECK (terminal_state IN ('CLEARED', 'FAILED', 'REVIVED')),
+         reason_id TEXT,
+         survivor_pids_json TEXT,
+         revival_checks_completed INTEGER NOT NULL DEFAULT 0
+             CHECK (revival_checks_completed >= 0),
+         CHECK (
+             (completed_at_ms IS NULL AND terminal_state IS NULL)
+             OR (completed_at_ms IS NOT NULL AND terminal_state IS NOT NULL)
+         )
+     );
+     CREATE UNIQUE INDEX IF NOT EXISTS cleanup_attempts_one_open
+         ON cleanup_attempts ((1)) WHERE completed_at_ms IS NULL;
+     CREATE INDEX IF NOT EXISTS cleanup_attempts_incident
+         ON cleanup_attempts (incident_id, id DESC);
+     CREATE TABLE IF NOT EXISTS cleanup_actions (
+         id INTEGER PRIMARY KEY AUTOINCREMENT,
+         attempt_id INTEGER NOT NULL REFERENCES cleanup_attempts(id),
+         sequence INTEGER NOT NULL CHECK (sequence >= 0),
+         prepared_at_ms INTEGER NOT NULL CHECK (prepared_at_ms >= 0),
+         completed_at_ms INTEGER CHECK (completed_at_ms >= prepared_at_ms),
+         stage TEXT NOT NULL CHECK (stage IN ('primary_term', 'member_term', 'exact_kill')),
+         pid INTEGER NOT NULL CHECK (pid > 0),
+         identity_fingerprint TEXT NOT NULL,
+         signal TEXT NOT NULL CHECK (signal IN ('term', 'kill')),
+         disposition TEXT CHECK (
+             disposition IN (
+                 'delivered', 'already_exited', 'identity_mismatch', 'rejected',
+                 'cancelled_before_delivery', 'delivery_unknown'
+             )
+         ),
+         UNIQUE (attempt_id, sequence),
+         CHECK (
+             (completed_at_ms IS NULL AND disposition IS NULL)
+             OR (completed_at_ms IS NOT NULL AND disposition IS NOT NULL)
+         )
+     );
+     CREATE INDEX IF NOT EXISTS cleanup_actions_attempt_sequence
+         ON cleanup_actions (attempt_id, sequence);
+     CREATE TABLE IF NOT EXISTS cleanup_retry_blocks (
+         incident_id TEXT PRIMARY KEY,
+         tracking_key TEXT NOT NULL,
+         blocked_at_ms INTEGER NOT NULL CHECK (blocked_at_ms >= 0),
+         reason_id TEXT,
+         source_attempt_id INTEGER NOT NULL REFERENCES cleanup_attempts(id)
+     );
+     CREATE TABLE IF NOT EXISTS settings (
+         key TEXT PRIMARY KEY,
+         integer_value INTEGER
+     );
+     CREATE TABLE IF NOT EXISTS events (
+         id INTEGER PRIMARY KEY AUTOINCREMENT,
+         incident_id TEXT NOT NULL,
+         occurred_at_ms INTEGER NOT NULL CHECK (occurred_at_ms >= 0),
+         kind TEXT NOT NULL CHECK (kind IN ('observation', 'cleanup')),
+         state TEXT NOT NULL,
+         payload_json TEXT NOT NULL,
+         attempt_id INTEGER REFERENCES cleanup_attempts(id)
+     );";
+
+const SCHEMA_SQL: &str = "CREATE TABLE cleanup_attempts (
+         id INTEGER PRIMARY KEY AUTOINCREMENT,
+         incident_id TEXT NOT NULL,
+         tracking_key TEXT NOT NULL,
+         root_identity_fingerprint TEXT NOT NULL,
+         member_fingerprint TEXT NOT NULL,
+         enforcement_epoch TEXT NOT NULL,
+         started_at_ms INTEGER NOT NULL CHECK (started_at_ms >= 0),
+         completed_at_ms INTEGER CHECK (completed_at_ms >= started_at_ms),
+         terminal_state TEXT CHECK (terminal_state IN ('CLEARED', 'FAILED', 'REVIVED')),
+         reason_id TEXT,
+         survivor_pids_json TEXT,
+         revival_checks_completed INTEGER NOT NULL DEFAULT 0
+             CHECK (revival_checks_completed >= 0),
+         resources_json TEXT,
+         CHECK (
+             (completed_at_ms IS NULL AND terminal_state IS NULL)
+             OR (completed_at_ms IS NOT NULL AND terminal_state IS NOT NULL)
+         )
+     );
+     CREATE UNIQUE INDEX cleanup_attempts_one_open
+         ON cleanup_attempts ((1)) WHERE completed_at_ms IS NULL;
+     CREATE INDEX cleanup_attempts_incident
+         ON cleanup_attempts (incident_id, id DESC);
+     CREATE TABLE cleanup_actions (
+         id INTEGER PRIMARY KEY AUTOINCREMENT,
+         attempt_id INTEGER NOT NULL REFERENCES cleanup_attempts(id),
+         sequence INTEGER NOT NULL CHECK (sequence >= 0),
+         prepared_at_ms INTEGER NOT NULL CHECK (prepared_at_ms >= 0),
+         completed_at_ms INTEGER CHECK (completed_at_ms >= prepared_at_ms),
+         stage TEXT NOT NULL CHECK (stage IN ('primary_term', 'member_term', 'exact_kill')),
+         pid INTEGER NOT NULL CHECK (pid > 0),
+         identity_fingerprint TEXT NOT NULL,
+         signal TEXT NOT NULL CHECK (signal IN ('term', 'kill')),
+         disposition TEXT CHECK (
+             disposition IN (
+                 'delivered', 'already_exited', 'identity_mismatch', 'rejected',
+                 'cancelled_before_delivery', 'delivery_unknown'
+             )
+         ),
+         UNIQUE (attempt_id, sequence),
+         CHECK (
+             (completed_at_ms IS NULL AND disposition IS NULL)
+             OR (completed_at_ms IS NOT NULL AND disposition IS NOT NULL)
+         )
+     );
+     CREATE INDEX cleanup_actions_attempt_sequence
+         ON cleanup_actions (attempt_id, sequence);
+     CREATE TABLE cleanup_artifact_actions (
+         id INTEGER PRIMARY KEY AUTOINCREMENT,
+         attempt_id INTEGER NOT NULL REFERENCES cleanup_attempts(id),
+         sequence INTEGER NOT NULL CHECK (sequence >= 0),
+         prepared_at_ms INTEGER NOT NULL CHECK (prepared_at_ms >= 0),
+         completed_at_ms INTEGER CHECK (completed_at_ms >= prepared_at_ms),
+         kind TEXT NOT NULL CHECK (kind IN ('dev_tools_active_port')),
+         artifact_fingerprint TEXT NOT NULL,
+         disposition TEXT CHECK (
+             disposition IN (
+                 'removed', 'already_absent', 'identity_mismatch', 'referenced',
+                 'unsafe', 'rejected', 'cancelled_before_delivery', 'delivery_unknown'
+             )
+         ),
+         UNIQUE (attempt_id, sequence),
+         CHECK (
+             (completed_at_ms IS NULL AND disposition IS NULL)
+             OR (completed_at_ms IS NOT NULL AND disposition IS NOT NULL)
+         )
+     );
+     CREATE INDEX cleanup_artifact_actions_attempt_sequence
+         ON cleanup_artifact_actions (attempt_id, sequence);
+     CREATE TABLE cleanup_retry_blocks (
+         incident_id TEXT PRIMARY KEY,
+         tracking_key TEXT NOT NULL,
+         blocked_at_ms INTEGER NOT NULL CHECK (blocked_at_ms >= 0),
+         reason_id TEXT,
+         source_attempt_id INTEGER NOT NULL REFERENCES cleanup_attempts(id),
+         last_exact_observed_at_ms INTEGER
+             CHECK (last_exact_observed_at_ms >= blocked_at_ms),
+         absence_since_ms INTEGER CHECK (absence_since_ms >= blocked_at_ms)
+     );
+     CREATE TABLE events (
+         id INTEGER PRIMARY KEY AUTOINCREMENT,
+         incident_id TEXT NOT NULL,
+         occurred_at_ms INTEGER NOT NULL CHECK (occurred_at_ms >= 0),
+         kind TEXT NOT NULL CHECK (kind IN ('observation', 'cleanup')),
+         state TEXT NOT NULL,
+         payload_json TEXT NOT NULL,
+         attempt_id INTEGER REFERENCES cleanup_attempts(id)
+     );
+     CREATE INDEX events_incident_timeline
+         ON events (incident_id, occurred_at_ms, id);
+     CREATE INDEX events_recent
+         ON events (occurred_at_ms DESC, id DESC);
+     CREATE INDEX events_attempt_timeline
+         ON events (attempt_id, id);
+     CREATE TABLE settings (
+         key TEXT PRIMARY KEY,
+         integer_value INTEGER
+     );
+     CREATE TABLE cooling_candidates (
+         tracking_key TEXT PRIMARY KEY,
+         first_continuous_ms INTEGER NOT NULL CHECK (first_continuous_ms >= 0),
+         last_continuous_ms INTEGER NOT NULL
+             CHECK (last_continuous_ms >= first_continuous_ms),
+         first_wall_ms INTEGER NOT NULL CHECK (first_wall_ms >= 0),
+         last_wall_ms INTEGER NOT NULL CHECK (last_wall_ms >= 0),
+         root_identity_fingerprint TEXT NOT NULL,
+         member_fingerprint TEXT NOT NULL,
+         boot_session_fingerprint TEXT NOT NULL,
+         enforcement_epoch TEXT NOT NULL,
+         signature_pack TEXT NOT NULL,
+         signature_version TEXT NOT NULL
+     );
+     CREATE TABLE managed_lifecycle (
+         singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+         activation_generation INTEGER NOT NULL CHECK (activation_generation > 0),
+         instance_id TEXT NOT NULL,
+         requested_enforce INTEGER NOT NULL CHECK (requested_enforce IN (0, 1)),
+         effective_enforce INTEGER NOT NULL CHECK (effective_enforce IN (0, 1)),
+         armed_generation INTEGER CHECK (armed_generation > 0),
+         enforcement_epoch TEXT,
+         ready INTEGER NOT NULL CHECK (ready IN (0, 1)),
+         draining INTEGER NOT NULL CHECK (draining IN (0, 1)),
+         startup_phase TEXT NOT NULL CHECK (
+             startup_phase IN (
+                 'recovering', 'first_scan_report_only', 'ready_report_only',
+                 'ready_enforce', 'draining', 'failed'
+             )
+         ),
+         updated_at_ms INTEGER NOT NULL CHECK (updated_at_ms >= 0),
+         CHECK (
+             (effective_enforce = 0 AND armed_generation IS NULL AND enforcement_epoch IS NULL)
+             OR (
+                 effective_enforce = 1
+                 AND requested_enforce = 1
+                 AND armed_generation = activation_generation
+                 AND enforcement_epoch IS NOT NULL
+                 AND ready = 1
+                 AND draining = 0
+             )
+         )
+     );
+     CREATE TABLE storage_recoveries (
+         id INTEGER PRIMARY KEY AUTOINCREMENT,
+         recovery_id TEXT NOT NULL UNIQUE,
+         occurred_at_ms INTEGER NOT NULL CHECK (occurred_at_ms >= 0),
+         reason_id TEXT NOT NULL CHECK (
+             reason_id IN ('integrity_check_failed', 'required_schema_invalid')
+         ),
+         quarantine_directory_name TEXT NOT NULL,
+         quarantined_sidecar_count INTEGER NOT NULL
+             CHECK (quarantined_sidecar_count >= 0)
+     );
+     CREATE INDEX storage_recoveries_recent
+         ON storage_recoveries (occurred_at_ms DESC, id DESC);
+     CREATE TABLE incident_protections (
+         incident_id TEXT PRIMARY KEY,
+         root_identity_fingerprint TEXT NOT NULL,
+         member_fingerprint TEXT NOT NULL,
+         protected_at_ms INTEGER NOT NULL CHECK (protected_at_ms >= 0),
+         last_exact_observed_at_ms INTEGER
+             CHECK (last_exact_observed_at_ms >= protected_at_ms),
+         absence_since_ms INTEGER CHECK (absence_since_ms >= protected_at_ms)
+     );
+     CREATE INDEX incident_protections_recent
+         ON incident_protections (protected_at_ms DESC, incident_id ASC);";
+
+const MANAGED_LIFECYCLE_SQL: &str = "CREATE TABLE IF NOT EXISTS managed_lifecycle (
+         singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+         activation_generation INTEGER NOT NULL CHECK (activation_generation > 0),
+         instance_id TEXT NOT NULL,
+         requested_enforce INTEGER NOT NULL CHECK (requested_enforce IN (0, 1)),
+         effective_enforce INTEGER NOT NULL CHECK (effective_enforce IN (0, 1)),
+         armed_generation INTEGER CHECK (armed_generation > 0),
+         enforcement_epoch TEXT,
+         ready INTEGER NOT NULL CHECK (ready IN (0, 1)),
+         draining INTEGER NOT NULL CHECK (draining IN (0, 1)),
+         startup_phase TEXT NOT NULL CHECK (
+             startup_phase IN (
+                 'recovering', 'first_scan_report_only', 'ready_report_only',
+                 'ready_enforce', 'draining', 'failed'
+             )
+         ),
+         updated_at_ms INTEGER NOT NULL CHECK (updated_at_ms >= 0),
+         CHECK (
+             (effective_enforce = 0 AND armed_generation IS NULL AND enforcement_epoch IS NULL)
+             OR (
+                 effective_enforce = 1
+                 AND requested_enforce = 1
+                 AND armed_generation = activation_generation
+                 AND enforcement_epoch IS NOT NULL
+                 AND ready = 1
+                 AND draining = 0
+             )
+         )
+     );";
+
+fn events_have_attempt_id(transaction: &Transaction<'_>) -> Result<bool, StoreError> {
+    let mut statement = transaction.prepare("PRAGMA table_info(events)")?;
+    let rows = statement.query_map([], |row| row.get::<_, String>(1))?;
+    for column in rows {
+        if column? == "attempt_id" {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn insert_event_transaction(
+    transaction: &Transaction<'_>,
+    attempt_id: Option<i64>,
+    occurred_at_unix_millis: u64,
+    incident_id: &str,
+    kind: EventKind,
+    state: IncidentState,
+    payload: &EventPayload,
+) -> Result<i64, StoreError> {
+    let occurred_at = sqlite_millis(occurred_at_unix_millis, "event timestamp")?;
+    let payload_json = serde_json::to_string(payload)?;
+    transaction.execute(
+        "INSERT INTO events (
+             attempt_id, incident_id, occurred_at_ms, kind, state, payload_json
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        params![
+            attempt_id,
+            incident_id,
+            occurred_at,
+            kind.as_str(),
+            state_name(state),
+            payload_json
+        ],
+    )?;
+    Ok(transaction.last_insert_rowid())
+}
+
+fn actions_for_attempt(
+    transaction: &Transaction<'_>,
+    attempt_id: i64,
+) -> Result<Vec<CleanupAction>, StoreError> {
+    let mut statement = transaction.prepare(
+        "SELECT stage, pid, identity_fingerprint, signal, disposition
+         FROM cleanup_actions WHERE attempt_id = ?1 ORDER BY sequence",
+    )?;
+    let rows = statement.query_map(params![attempt_id], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, i64>(1)?,
+            row.get::<_, String>(2)?,
+            row.get::<_, String>(3)?,
+            row.get::<_, Option<String>>(4)?,
+        ))
+    })?;
+    let mut actions = Vec::new();
+    for row in rows {
+        let (stage, pid, identity_fingerprint, signal, disposition) = row?;
+        let disposition = disposition.ok_or_else(|| {
+            StoreError::Corrupt(format!(
+                "cleanup attempt {attempt_id} still contains a PREPARED action"
+            ))
+        })?;
+        actions.push(CleanupAction {
+            stage: parse_cleanup_stage(&stage)?,
+            pid: u32::try_from(pid)
+                .map_err(|_| StoreError::Corrupt("cleanup action PID is invalid".to_owned()))?,
+            identity_fingerprint,
+            signal: parse_cleanup_signal(&signal)?,
+            disposition: parse_signal_disposition(&disposition)?,
+        });
+    }
+    Ok(actions)
+}
+
+fn artifact_actions_for_attempt(
+    transaction: &Transaction<'_>,
+    attempt_id: i64,
+) -> Result<Vec<ArtifactAction>, StoreError> {
+    let mut statement = transaction.prepare(
+        "SELECT kind, artifact_fingerprint, disposition
+         FROM cleanup_artifact_actions WHERE attempt_id = ?1 ORDER BY sequence",
+    )?;
+    let rows = statement.query_map(params![attempt_id], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, Option<String>>(2)?,
+        ))
+    })?;
+    let mut actions = Vec::new();
+    for row in rows {
+        let (kind, artifact_fingerprint, disposition) = row?;
+        let disposition = disposition.ok_or_else(|| {
+            StoreError::Corrupt(format!(
+                "cleanup attempt {attempt_id} still contains a PREPARED artifact action"
+            ))
+        })?;
+        if !valid_artifact_fingerprint(&artifact_fingerprint) {
+            return Err(StoreError::Corrupt(format!(
+                "cleanup attempt {attempt_id} contains an invalid artifact fingerprint"
+            )));
+        }
+        actions.push(ArtifactAction {
+            kind: parse_runtime_artifact_kind(&kind)?,
+            artifact_fingerprint,
+            disposition: parse_artifact_disposition(&disposition)?,
+        });
+    }
+    Ok(actions)
+}
+
+fn terminal_receipt_for_attempt(
+    transaction: &Transaction<'_>,
+    attempt_id: i64,
+) -> Result<CleanupReceipt, StoreError> {
+    let (payload_json, resources_json) = transaction
+        .query_row(
+            "SELECT events.payload_json, attempts.resources_json
+             FROM events
+             JOIN cleanup_attempts AS attempts ON attempts.id = events.attempt_id
+             WHERE events.attempt_id = ?1
+               AND events.state IN ('CLEARED', 'FAILED', 'REVIVED')
+             ORDER BY events.id DESC LIMIT 1",
+            params![attempt_id],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?)),
+        )
+        .optional()?
+        .ok_or_else(|| {
+            StoreError::Corrupt(format!(
+                "terminal cleanup attempt {attempt_id} has no terminal event"
+            ))
+        })?;
+    match serde_json::from_str::<EventPayload>(&payload_json)? {
+        EventPayload::Cleanup { mut receipt } => {
+            receipt.actions = actions_for_attempt(transaction, attempt_id)?;
+            receipt.artifact_actions = artifact_actions_for_attempt(transaction, attempt_id)?;
+            if let Some(resources_json) = resources_json {
+                if resources_json.len() > MAX_RESOURCE_RECEIPT_BYTES {
+                    return Err(StoreError::Corrupt(
+                        "persisted cleanup resource receipt exceeds its bound".to_owned(),
+                    ));
+                }
+                receipt.resources = serde_json::from_str(&resources_json)?;
+            }
+            Ok(receipt)
+        }
+        EventPayload::Observation { .. } => Err(StoreError::Corrupt(format!(
+            "terminal cleanup attempt {attempt_id} points to an observation"
+        ))),
+    }
+}
+
+fn protection_summary_transaction(
+    transaction: &Transaction<'_>,
+    incident_id: &str,
+) -> Result<Option<ProtectedIncidentSummary>, StoreError> {
+    transaction
+        .query_row(
+            "SELECT incident_id, protected_at_ms,
+                    last_exact_observed_at_ms, absence_since_ms
+             FROM incident_protections WHERE incident_id = ?1",
+            params![incident_id],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, Option<i64>>(2)?,
+                    row.get::<_, Option<i64>>(3)?,
+                ))
+            },
+        )
+        .optional()?
+        .map(
+            |(incident_id, protected_at, last_observed, absence_since)| {
+                projected_protection_summary(
+                    incident_id,
+                    protected_at,
+                    last_observed,
+                    absence_since,
+                )
+            },
+        )
+        .transpose()
+}
+
+fn projected_protection_summary(
+    incident_id: String,
+    protected_at: i64,
+    last_observed: Option<i64>,
+    absence_since: Option<i64>,
+) -> Result<ProtectedIncidentSummary, StoreError> {
+    Ok(ProtectedIncidentSummary {
+        incident_id: project_identifier(&incident_id, "redacted-incident"),
+        protected_at_unix_millis: parse_nonnegative_millis(
+            protected_at,
+            "incident protection timestamp",
+        )?,
+        last_exact_observed_at_unix_millis: last_observed
+            .map(|value| parse_nonnegative_millis(value, "last protected root observation"))
+            .transpose()?,
+        exact_absence_since_unix_millis: absence_since
+            .map(|value| parse_nonnegative_millis(value, "protected root absence timestamp"))
+            .transpose()?,
+    })
+}
+
+fn insert_retry_block(
+    transaction: &Transaction<'_>,
+    incident_id: &str,
+    tracking_key: &str,
+    blocked_at_ms: i64,
+    reason_id: Option<&str>,
+    source_attempt_id: i64,
+) -> Result<(), StoreError> {
+    transaction.execute(
+        "INSERT INTO cleanup_retry_blocks (
+             incident_id, tracking_key, blocked_at_ms, reason_id, source_attempt_id
+         ) VALUES (?1, ?2, ?3, ?4, ?5)
+         ON CONFLICT(incident_id) DO UPDATE SET
+             tracking_key = excluded.tracking_key,
+             blocked_at_ms = excluded.blocked_at_ms,
+             reason_id = excluded.reason_id,
+             source_attempt_id = excluded.source_attempt_id,
+             last_exact_observed_at_ms = NULL,
+             absence_since_ms = NULL",
+        params![
+            incident_id,
+            tracking_key,
+            blocked_at_ms,
+            reason_id,
+            source_attempt_id
+        ],
     )?;
     Ok(())
+}
+
+fn validate_enforcement_epoch(enforcement_epoch: &str) -> Result<(), StoreError> {
+    if enforcement_epoch.trim().is_empty() || enforcement_epoch.len() > 192 {
+        Err(StoreError::Invalid(
+            "managed arm requires a bounded non-empty enforcement epoch".to_owned(),
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+fn managed_arm_blocker(transaction: &Transaction<'_>) -> Result<Option<&'static str>, StoreError> {
+    let open_attempt = transaction
+        .query_row(
+            "SELECT 1 FROM cleanup_attempts WHERE completed_at_ms IS NULL LIMIT 1",
+            [],
+            |_| Ok(()),
+        )
+        .optional()?
+        .is_some();
+    if open_attempt {
+        return Ok(Some(
+            "managed arm is blocked by an incomplete cleanup attempt",
+        ));
+    }
+    persistent_enforcement_blocker(transaction)
+}
+
+fn persistent_enforcement_blocker(
+    connection: &Connection,
+) -> Result<Option<&'static str>, StoreError> {
+    let delivery_unknown = connection
+        .query_row(
+            "SELECT 1 FROM cleanup_retry_blocks AS block
+             WHERE EXISTS (
+                 SELECT 1 FROM cleanup_actions AS action
+                 WHERE action.attempt_id = block.source_attempt_id
+                   AND action.disposition = 'delivery_unknown'
+             ) OR EXISTS (
+                 SELECT 1 FROM cleanup_artifact_actions AS action
+                 WHERE action.attempt_id = block.source_attempt_id
+                   AND action.disposition = 'delivery_unknown'
+             )
+             LIMIT 1",
+            [],
+            |_| Ok(()),
+        )
+        .optional()?
+        .is_some();
+    if delivery_unknown {
+        return Ok(Some(
+            "managed arm is blocked by unresolved delivery-unknown cleanup",
+        ));
+    }
+    let interrupted_after_delivery = connection
+        .query_row(
+            "SELECT 1 FROM cleanup_retry_blocks AS block
+             WHERE EXISTS (
+                 SELECT 1 FROM cleanup_actions AS action
+                 WHERE action.attempt_id = block.source_attempt_id
+                   AND action.disposition = 'delivered'
+             ) OR EXISTS (
+                 SELECT 1 FROM cleanup_artifact_actions AS action
+                 WHERE action.attempt_id = block.source_attempt_id
+                   AND action.disposition = 'removed'
+             )
+             LIMIT 1",
+            [],
+            |_| Ok(()),
+        )
+        .optional()?
+        .is_some();
+    Ok(interrupted_after_delivery
+        .then_some("managed arm is blocked by cleanup interrupted after a delivered side effect"))
+}
+
+fn apply_managed_arm(
+    transaction: &Transaction<'_>,
+    enforcement_epoch: &str,
+    occurred_at: i64,
+) -> Result<(), StoreError> {
+    transaction.execute("DELETE FROM cooling_candidates", [])?;
+    transaction.execute(
+        "UPDATE managed_lifecycle
+         SET requested_enforce = 1, effective_enforce = 1,
+             armed_generation = activation_generation,
+             enforcement_epoch = ?1, ready = 1, draining = 0,
+             startup_phase = 'ready_enforce', updated_at_ms = ?2
+         WHERE singleton = 1",
+        params![enforcement_epoch, occurred_at],
+    )?;
+    Ok(())
+}
+
+fn apply_managed_report_only_ready(
+    transaction: &Transaction<'_>,
+    occurred_at: i64,
+    clear_requested_enforce: bool,
+) -> Result<(), StoreError> {
+    transaction.execute(
+        "UPDATE managed_lifecycle
+         SET requested_enforce = CASE WHEN ?1 THEN 0 ELSE requested_enforce END,
+             effective_enforce = 0, armed_generation = NULL,
+             enforcement_epoch = NULL, ready = 1, draining = 0,
+             startup_phase = 'ready_report_only', updated_at_ms = ?2
+         WHERE singleton = 1",
+        params![clear_requested_enforce, occurred_at],
+    )?;
+    Ok(())
+}
+
+fn managed_lifecycle_transaction(
+    transaction: &Transaction<'_>,
+) -> Result<Option<ManagedLifecycle>, StoreError> {
+    managed_lifecycle_connection(transaction)
+}
+
+fn managed_lifecycle_connection(
+    connection: &Connection,
+) -> Result<Option<ManagedLifecycle>, StoreError> {
+    let stored = connection
+        .query_row(
+            "SELECT activation_generation, instance_id,
+                    requested_enforce, effective_enforce, armed_generation,
+                    enforcement_epoch, ready, draining, startup_phase, updated_at_ms
+             FROM managed_lifecycle WHERE singleton = 1",
+            [],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, i64>(3)?,
+                    row.get::<_, Option<i64>>(4)?,
+                    row.get::<_, Option<String>>(5)?,
+                    row.get::<_, i64>(6)?,
+                    row.get::<_, i64>(7)?,
+                    row.get::<_, String>(8)?,
+                    row.get::<_, i64>(9)?,
+                ))
+            },
+        )
+        .optional()?;
+    stored
+        .map(
+            |(
+                generation,
+                instance_id,
+                requested_enforce,
+                effective_enforce,
+                armed_generation,
+                enforcement_epoch,
+                ready,
+                draining,
+                startup_phase,
+                updated_at,
+            )| {
+                let activation_generation = u64::try_from(generation).map_err(|_| {
+                    StoreError::Corrupt("managed activation generation is invalid".to_owned())
+                })?;
+                let armed_generation = armed_generation
+                    .map(|generation| {
+                        u64::try_from(generation).map_err(|_| {
+                            StoreError::Corrupt("managed armed generation is invalid".to_owned())
+                        })
+                    })
+                    .transpose()?;
+                let updated_at_unix_millis = u64::try_from(updated_at).map_err(|_| {
+                    StoreError::Corrupt("managed lifecycle timestamp is invalid".to_owned())
+                })?;
+                Ok(ManagedLifecycle {
+                    activation_generation,
+                    instance_id,
+                    requested_enforce: parse_sqlite_bool(requested_enforce, "requested_enforce")?,
+                    effective_enforce: parse_sqlite_bool(effective_enforce, "effective_enforce")?,
+                    armed_generation,
+                    enforcement_epoch,
+                    ready: parse_sqlite_bool(ready, "ready")?,
+                    draining: parse_sqlite_bool(draining, "draining")?,
+                    startup_phase: parse_managed_startup_phase(&startup_phase)?,
+                    updated_at_unix_millis,
+                })
+            },
+        )
+        .transpose()
+}
+
+fn validate_managed_identity(
+    activation_generation: u64,
+    instance_id: &str,
+) -> Result<(), StoreError> {
+    if activation_generation == 0 {
+        return Err(StoreError::Invalid(
+            "managed activation generation must be greater than zero".to_owned(),
+        ));
+    }
+    if instance_id.trim().is_empty()
+        || instance_id.len() > 192
+        || instance_id.chars().any(char::is_control)
+    {
+        return Err(StoreError::Invalid(
+            "managed instance ID must contain 1 to 192 printable bytes".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+fn require_exact_managed_identity(
+    lifecycle: &ManagedLifecycle,
+    activation_generation: u64,
+    instance_id: &str,
+) -> Result<(), StoreError> {
+    if lifecycle.activation_generation != activation_generation {
+        return Err(StoreError::Invalid(format!(
+            "managed activation generation mismatch: active {}, requested {}",
+            lifecycle.activation_generation, activation_generation
+        )));
+    }
+    if lifecycle.instance_id != instance_id {
+        return Err(StoreError::Invalid(
+            "managed instance ID does not match the active daemon".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+fn sqlite_generation(value: u64) -> Result<i64, StoreError> {
+    i64::try_from(value)
+        .map_err(|_| StoreError::Range("activation generation overflowed i64".to_owned()))
+}
+
+fn parse_sqlite_bool(value: i64, field: &str) -> Result<bool, StoreError> {
+    match value {
+        0 => Ok(false),
+        1 => Ok(true),
+        _ => Err(StoreError::Corrupt(format!(
+            "managed lifecycle field {field:?} is not boolean"
+        ))),
+    }
+}
+
+fn managed_startup_phase_name(phase: ManagedStartupPhase) -> &'static str {
+    match phase {
+        ManagedStartupPhase::Recovering => "recovering",
+        ManagedStartupPhase::FirstScanReportOnly => "first_scan_report_only",
+        ManagedStartupPhase::ReadyReportOnly => "ready_report_only",
+        ManagedStartupPhase::ReadyEnforce => "ready_enforce",
+        ManagedStartupPhase::Draining => "draining",
+        ManagedStartupPhase::Failed => "failed",
+    }
+}
+
+fn parse_managed_startup_phase(value: &str) -> Result<ManagedStartupPhase, StoreError> {
+    match value {
+        "recovering" => Ok(ManagedStartupPhase::Recovering),
+        "first_scan_report_only" => Ok(ManagedStartupPhase::FirstScanReportOnly),
+        "ready_report_only" => Ok(ManagedStartupPhase::ReadyReportOnly),
+        "ready_enforce" => Ok(ManagedStartupPhase::ReadyEnforce),
+        "draining" => Ok(ManagedStartupPhase::Draining),
+        "failed" => Ok(ManagedStartupPhase::Failed),
+        other => Err(StoreError::Corrupt(format!(
+            "unknown managed startup phase {other:?}"
+        ))),
+    }
+}
+
+fn sqlite_millis(value: u64, label: &str) -> Result<i64, StoreError> {
+    i64::try_from(value).map_err(|_| StoreError::Range(format!("{label} overflowed i64")))
+}
+
+fn parse_nonnegative_millis(value: i64, label: &str) -> Result<u64, StoreError> {
+    u64::try_from(value).map_err(|_| StoreError::Corrupt(format!("{label} is negative")))
+}
+
+fn project_identifier(value: &str, fallback: &str) -> String {
+    let valid = !value.is_empty()
+        && value.len() <= MAX_REDACTED_IDENTIFIER_CHARS
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'));
+    if valid {
+        value.to_owned()
+    } else {
+        fallback.to_owned()
+    }
+}
+
+fn valid_artifact_fingerprint(value: &str) -> bool {
+    value.starts_with("art-")
+        && value.len() <= MAX_REDACTED_IDENTIFIER_CHARS
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+}
+
+fn project_reason_id(value: Option<&str>) -> String {
+    let Some(value) = value else {
+        return "cleanup.unclassified_failure".to_owned();
+    };
+    let valid = !value.is_empty()
+        && value.len() <= MAX_REASON_ID_CHARS
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'));
+    if valid {
+        value.to_owned()
+    } else {
+        "cleanup.unclassified_failure".to_owned()
+    }
+}
+
+fn wall_continuity_is_plausible(
+    wall: i64,
+    previous_wall: i64,
+    continuous: i64,
+    previous_continuous: i64,
+    tolerance_millis: u64,
+) -> bool {
+    let Ok(wall_gap) = u64::try_from(wall - previous_wall) else {
+        return false;
+    };
+    let Ok(continuous_gap) = u64::try_from(continuous - previous_continuous) else {
+        return false;
+    };
+    wall_gap.abs_diff(continuous_gap) <= tolerance_millis
+}
+
+fn cleanup_stage_name(stage: CleanupStage) -> &'static str {
+    match stage {
+        CleanupStage::PrimaryTerm => "primary_term",
+        CleanupStage::MemberTerm => "member_term",
+        CleanupStage::ExactKill => "exact_kill",
+    }
+}
+
+fn parse_cleanup_stage(value: &str) -> Result<CleanupStage, StoreError> {
+    match value {
+        "primary_term" => Ok(CleanupStage::PrimaryTerm),
+        "member_term" => Ok(CleanupStage::MemberTerm),
+        "exact_kill" => Ok(CleanupStage::ExactKill),
+        other => Err(StoreError::Corrupt(format!(
+            "unknown cleanup stage {other:?}"
+        ))),
+    }
+}
+
+fn cleanup_signal_name(signal: CleanupSignal) -> &'static str {
+    match signal {
+        CleanupSignal::Term => "term",
+        CleanupSignal::Kill => "kill",
+    }
+}
+
+fn parse_cleanup_signal(value: &str) -> Result<CleanupSignal, StoreError> {
+    match value {
+        "term" => Ok(CleanupSignal::Term),
+        "kill" => Ok(CleanupSignal::Kill),
+        other => Err(StoreError::Corrupt(format!(
+            "unknown cleanup signal {other:?}"
+        ))),
+    }
+}
+
+fn signal_disposition_name(disposition: SignalDisposition) -> &'static str {
+    match disposition {
+        SignalDisposition::Delivered => "delivered",
+        SignalDisposition::AlreadyExited => "already_exited",
+        SignalDisposition::IdentityMismatch => "identity_mismatch",
+        SignalDisposition::Rejected => "rejected",
+        SignalDisposition::CancelledBeforeDelivery => "cancelled_before_delivery",
+        SignalDisposition::DeliveryUnknown => "delivery_unknown",
+    }
+}
+
+fn parse_signal_disposition(value: &str) -> Result<SignalDisposition, StoreError> {
+    match value {
+        "delivered" => Ok(SignalDisposition::Delivered),
+        "already_exited" => Ok(SignalDisposition::AlreadyExited),
+        "identity_mismatch" => Ok(SignalDisposition::IdentityMismatch),
+        "rejected" => Ok(SignalDisposition::Rejected),
+        "cancelled_before_delivery" => Ok(SignalDisposition::CancelledBeforeDelivery),
+        "delivery_unknown" => Ok(SignalDisposition::DeliveryUnknown),
+        other => Err(StoreError::Corrupt(format!(
+            "unknown signal disposition {other:?}"
+        ))),
+    }
+}
+
+fn runtime_artifact_kind_name(kind: RuntimeArtifactKind) -> &'static str {
+    match kind {
+        RuntimeArtifactKind::DevToolsActivePort => "dev_tools_active_port",
+    }
+}
+
+fn parse_runtime_artifact_kind(value: &str) -> Result<RuntimeArtifactKind, StoreError> {
+    match value {
+        "dev_tools_active_port" => Ok(RuntimeArtifactKind::DevToolsActivePort),
+        other => Err(StoreError::Corrupt(format!(
+            "unknown runtime artifact kind {other:?}"
+        ))),
+    }
+}
+
+fn artifact_disposition_name(disposition: ArtifactDisposition) -> &'static str {
+    match disposition {
+        ArtifactDisposition::Removed => "removed",
+        ArtifactDisposition::AlreadyAbsent => "already_absent",
+        ArtifactDisposition::IdentityMismatch => "identity_mismatch",
+        ArtifactDisposition::Referenced => "referenced",
+        ArtifactDisposition::Unsafe => "unsafe",
+        ArtifactDisposition::Rejected => "rejected",
+        ArtifactDisposition::CancelledBeforeDelivery => "cancelled_before_delivery",
+        ArtifactDisposition::DeliveryUnknown => "delivery_unknown",
+    }
+}
+
+fn parse_artifact_disposition(value: &str) -> Result<ArtifactDisposition, StoreError> {
+    match value {
+        "removed" => Ok(ArtifactDisposition::Removed),
+        "already_absent" => Ok(ArtifactDisposition::AlreadyAbsent),
+        "identity_mismatch" => Ok(ArtifactDisposition::IdentityMismatch),
+        "referenced" => Ok(ArtifactDisposition::Referenced),
+        "unsafe" => Ok(ArtifactDisposition::Unsafe),
+        "rejected" => Ok(ArtifactDisposition::Rejected),
+        "cancelled_before_delivery" => Ok(ArtifactDisposition::CancelledBeforeDelivery),
+        "delivery_unknown" => Ok(ArtifactDisposition::DeliveryUnknown),
+        other => Err(StoreError::Corrupt(format!(
+            "unknown artifact disposition {other:?}"
+        ))),
+    }
 }
 
 fn state_name(state: IncidentState) -> &'static str {

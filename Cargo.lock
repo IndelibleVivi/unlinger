@@ -642,6 +642,7 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "libc",
+ "rusqlite",
  "serde",
  "serde_json",
  "unlinger-core",
@@ -655,6 +656,7 @@ name = "unlinger-core"
 version = "0.1.0"
 dependencies = [
  "serde",
+ "serde_json",
 ]
 
 [[package]]

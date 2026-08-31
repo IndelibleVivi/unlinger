@@ -5,9 +5,9 @@ use serde::Serialize;
 use std::collections::BTreeSet;
 use std::error::Error;
 use std::fs::OpenOptions;
-use std::io::Write;
+use std::io::{Seek, SeekFrom, Write};
 #[cfg(unix)]
-use std::os::unix::fs::OpenOptionsExt;
+use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::PathBuf;
 use std::process::{Command, ExitCode};
 use std::thread;
@@ -20,6 +20,7 @@ use unlinger_macos::MacosSnapshotter;
 use unlinger_rules::{Analyzer, AnalyzerContext, RuleSet};
 
 const MAX_PAUSE_MILLIS: u64 = 30 * 24 * 60 * 60 * 1_000;
+const MAX_PRINT_ATTENTION_ITEMS: usize = 16;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -37,18 +38,24 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Commands {
-    /// Show daemon health, activity, pause state, and the latest reclaim.
+    /// Show daemon lifecycle, health, activity, recovery, and bounded attention state.
     Status(OutputArgs),
     /// List redacted local incident and cleanup events.
     History(HistoryArgs),
     /// Explain one redacted incident timeline.
     Explain(ExplainArgs),
-    /// Verify platform, process-inspection, rule, and daemon readiness.
-    Doctor(OutputArgs),
+    /// Verify source/platform checks and, by default, installed daemon readiness.
+    Doctor(DoctorArgs),
     /// Pause automatic cleanup while keeping observation and history live.
     Pause(PauseArgs),
     /// Resume automatic cleanup.
     Resume(OutputArgs),
+    /// Clear one durable failed/revived cleanup block and restart full cooling.
+    Retry(RetryArgs),
+    /// Protect one exact incident from automatic cleanup until explicitly unprotected.
+    Protect(IncidentProtectionArgs),
+    /// Remove the protection override from one exact incident.
+    Unprotect(IncidentProtectionArgs),
     /// Inspect current-user automation incidents without changing the machine.
     Scan(ScanArgs),
     /// Export one redacted incident timeline and daemon status.
@@ -69,7 +76,7 @@ enum ServiceCommand {
     Install(ServiceInstallArgs),
     /// Inspect installed files, launchd ownership, IPC identity, mode, and permissions.
     Status(OutputArgs),
-    /// Transactionally reload the LaunchAgent in report-only or enforce mode.
+    /// Change the managed daemon between report-only and enforce mode.
     SetMode(ServiceSetModeArgs),
     /// Unload the LaunchAgent and remove service binaries while preserving history and logs.
     Uninstall(OutputArgs),
@@ -107,13 +114,23 @@ struct ServiceInstallArgs {
 struct ServiceSetModeArgs {
     #[arg(value_enum)]
     mode: ServiceModeArgument,
-    /// Emit machine-readable JSON after verified reload.
+    /// Emit machine-readable JSON after the verified lifecycle transition.
     #[arg(long)]
     json: bool,
 }
 
 #[derive(Clone, Debug, Args)]
 struct OutputArgs {
+    /// Emit machine-readable JSON.
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Clone, Debug, Args)]
+struct DoctorArgs {
+    /// Check source/platform capability without requiring a running daemon.
+    #[arg(long)]
+    source_only: bool,
     /// Emit machine-readable JSON.
     #[arg(long)]
     json: bool,
@@ -148,6 +165,22 @@ struct PauseArgs {
 }
 
 #[derive(Clone, Debug, Args)]
+struct RetryArgs {
+    incident_id: String,
+    /// Emit machine-readable JSON.
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Clone, Debug, Args)]
+struct IncidentProtectionArgs {
+    incident_id: String,
+    /// Emit machine-readable JSON.
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Clone, Debug, Args)]
 struct ScanArgs {
     /// Mandatory acknowledgement that the local scan cannot send signals.
     #[arg(long)]
@@ -174,7 +207,14 @@ struct ExportDiagnosticsArgs {
 #[derive(Debug, Serialize)]
 struct DoctorReport {
     schema_version: u32,
+    /// Backward-compatible alias for `overall_healthy`.
     healthy: bool,
+    source_healthy: bool,
+    daemon_required: bool,
+    daemon_reachable: bool,
+    daemon_healthy: bool,
+    daemon_ready: bool,
+    overall_healthy: bool,
     platform: &'static str,
     product_version: Option<String>,
     supported_platform: bool,
@@ -184,9 +224,73 @@ struct DoctorReport {
     snapshot_elapsed_millis: u128,
     coverage: Option<SnapshotCoverage>,
     signature_packs: Vec<PackSummary>,
-    daemon_reachable: bool,
-    daemon_status: Option<DaemonStatus>,
+    daemon_status: Option<DoctorDaemonStatus>,
     errors: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct DoctorDaemonStatus {
+    managed: bool,
+    activation_generation: Option<u64>,
+    armed_generation: Option<u64>,
+    healthy: bool,
+    ready: bool,
+    startup_state: unlinger_daemon::StartupState,
+    requested_mode: unlinger_daemon::DaemonMode,
+    effective_mode: unlinger_daemon::DaemonMode,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    event_source_healthy: Option<bool>,
+    storage_recovery: Option<DoctorStorageRecovery>,
+    blocked_cleanup_count: usize,
+    protected_incident_count: usize,
+    attention_count: usize,
+}
+
+#[derive(Debug, Serialize)]
+struct DoctorStorageRecovery {
+    occurred_at_unix_millis: u64,
+    reason: unlinger_daemon::StorageRecoveryReason,
+    quarantined_sidecar_count: usize,
+}
+
+impl From<&DaemonStatus> for DoctorDaemonStatus {
+    fn from(status: &DaemonStatus) -> Self {
+        Self {
+            managed: status.managed,
+            activation_generation: status.activation_generation,
+            armed_generation: status.armed_generation,
+            healthy: status.healthy,
+            ready: daemon_status_ready(status),
+            startup_state: status.startup_state,
+            requested_mode: if status.lifecycle_schema_version == 0 {
+                status.mode
+            } else {
+                status.requested_mode
+            },
+            effective_mode: status.effective_mode(),
+            event_source_healthy: (status.lifecycle_schema_version != 0
+                || status.ipc_schema_version != 0)
+                .then_some(status.event_source_healthy),
+            storage_recovery: status.storage_recovery.as_ref().map(|recovery| {
+                DoctorStorageRecovery {
+                    occurred_at_unix_millis: recovery.occurred_at_unix_millis,
+                    reason: recovery.reason,
+                    quarantined_sidecar_count: recovery.quarantined_sidecar_count,
+                }
+            }),
+            blocked_cleanup_count: status.attention.blocked_cleanup_count,
+            protected_incident_count: status.protected_incident_count,
+            attention_count: status.attention.items.len().min(MAX_PRINT_ATTENTION_ITEMS),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct DoctorHealth {
+    daemon_reachable: bool,
+    daemon_healthy: bool,
+    daemon_ready: bool,
+    overall_healthy: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -205,6 +309,43 @@ struct ScanReport {
     first_coverage: SnapshotCoverage,
     second_coverage: Option<SnapshotCoverage>,
     incidents: Vec<IncidentReport>,
+}
+
+#[derive(Debug, Serialize)]
+struct IncidentProtectionReport {
+    schema_version: u32,
+    incident_id: String,
+    protected: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    protected_at_unix_millis: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    last_exact_observed_at_unix_millis: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    exact_absence_since_unix_millis: Option<u64>,
+}
+
+impl IncidentProtectionReport {
+    fn protected(protection: &unlinger_daemon::ProtectedIncidentSummary) -> Self {
+        Self {
+            schema_version: 1,
+            incident_id: protection.incident_id.clone(),
+            protected: true,
+            protected_at_unix_millis: Some(protection.protected_at_unix_millis),
+            last_exact_observed_at_unix_millis: protection.last_exact_observed_at_unix_millis,
+            exact_absence_since_unix_millis: protection.exact_absence_since_unix_millis,
+        }
+    }
+
+    fn unprotected(incident_id: String) -> Self {
+        Self {
+            schema_version: 1,
+            incident_id,
+            protected: false,
+            protected_at_unix_millis: None,
+            last_exact_observed_at_unix_millis: None,
+            exact_absence_since_unix_millis: None,
+        }
+    }
 }
 
 fn main() -> ExitCode {
@@ -227,9 +368,12 @@ fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
         Commands::Status(output) => status(&socket, output.json),
         Commands::History(arguments) => history(&socket, arguments),
         Commands::Explain(arguments) => explain(&socket, arguments),
-        Commands::Doctor(output) => doctor(&socket, output.json),
+        Commands::Doctor(arguments) => doctor(&socket, arguments),
         Commands::Pause(arguments) => pause(&socket, arguments),
         Commands::Resume(output) => resume(&socket, output.json),
+        Commands::Retry(arguments) => retry(&socket, arguments),
+        Commands::Protect(arguments) => protect(&socket, arguments),
+        Commands::Unprotect(arguments) => unprotect(&socket, arguments),
         Commands::Scan(arguments) => scan(arguments),
         Commands::ExportDiagnostics(arguments) => export_diagnostics(&socket, arguments),
         Commands::Service(arguments) => service_command(&paths, arguments),
@@ -280,38 +424,72 @@ fn print_service_status(
         println!("{}", serde_json::to_string_pretty(report)?);
         return Ok(());
     }
-    println!("Unlinger LaunchAgent");
-    println!("installed: {}", report.installed);
-    println!("loaded: {}", report.loaded);
-    println!("healthy: {}", report.healthy);
-    println!("mode: {:?}", report.expected_mode);
-    println!("launchd pid: {:?}", report.launchd_pid);
-    println!(
-        "pid identity: {}",
-        if report.pid_matches {
-            "matched"
-        } else {
-            "not matched"
-        }
-    );
-    println!(
-        "permissions: {}",
-        if report.permissions_ok {
-            "private"
-        } else {
-            "unsafe"
-        }
-    );
-    println!("daemon: {}", report.daemon_path.display());
-    println!("control CLI: {}", report.cli_path.display());
-    println!(
-        "history: {} (preserved on uninstall)",
-        report.database_path.display()
-    );
-    for error in &report.errors {
-        println!("error: {error}");
+    for line in service_status_lines(report) {
+        println!("{line}");
     }
     Ok(())
+}
+
+fn service_status_lines(report: &service::ServiceStatusReport) -> Vec<String> {
+    let mut lines = vec![
+        "Unlinger LaunchAgent".to_owned(),
+        format!("installed: {}", report.installed),
+        format!("loaded: {}", report.loaded),
+        format!("healthy: {}", report.healthy),
+        format!("desired mode: {:?}", report.expected_mode),
+        match report.active_generation {
+            Some(generation) => format!("active generation: {generation}"),
+            None => "active generation: legacy layout".to_owned(),
+        },
+        format!(
+            "launchd/IPC identity: {}",
+            if report.pid_matches {
+                "matched"
+            } else {
+                "not matched"
+            }
+        ),
+        format!(
+            "generation identity: {}",
+            if report.generation_matches {
+                "matched"
+            } else {
+                "not matched"
+            }
+        ),
+        format!(
+            "binary identity: {}",
+            if report.binary_matches {
+                "matched"
+            } else {
+                "not matched"
+            }
+        ),
+        format!(
+            "permissions: {}",
+            if report.permissions_ok {
+                "private"
+            } else {
+                "unsafe"
+            }
+        ),
+        "history and logs: private local data preserved on uninstall".to_owned(),
+    ];
+    if let Some(status) = &report.daemon_status {
+        lines.push("daemon runtime:".to_owned());
+        lines.extend(
+            daemon_status_lines(status)
+                .into_iter()
+                .map(|line| format!("  {line}")),
+        );
+    }
+    if !report.errors.is_empty() {
+        lines.push(format!(
+            "reported problems: {} (use --json for structured details)",
+            report.errors.len()
+        ));
+    }
+    lines
 }
 
 fn status(socket: &std::path::Path, json: bool) -> Result<(), Box<dyn Error>> {
@@ -422,6 +600,72 @@ fn resume(socket: &std::path::Path, json: bool) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+fn retry(socket: &std::path::Path, arguments: RetryArgs) -> Result<(), Box<dyn Error>> {
+    let payload = IpcClient::new(socket).request(IpcCommand::RetryFailedCleanup {
+        incident_id: arguments.incident_id.clone(),
+    })?;
+    let IpcPayload::RetryScheduled { incident_id } = payload else {
+        return Err("daemon returned the wrong payload for retry".into());
+    };
+    if arguments.json {
+        println!(
+            "{}",
+            serde_json::json!({
+                "incident_id": incident_id,
+                "retry_scheduled": true,
+                "cooling_reset": true
+            })
+        );
+    } else {
+        println!("Cleanup retry scheduled for {incident_id}.");
+        println!("The incident must pass the complete cooling and safety gates again.");
+    }
+    Ok(())
+}
+
+fn protect(
+    socket: &std::path::Path,
+    arguments: IncidentProtectionArgs,
+) -> Result<(), Box<dyn Error>> {
+    let payload = IpcClient::new(socket).request(IpcCommand::ProtectIncident {
+        incident_id: arguments.incident_id,
+    })?;
+    let IpcPayload::IncidentProtected { protection } = payload else {
+        return Err("daemon returned the wrong payload for protect".into());
+    };
+    let report = IncidentProtectionReport::protected(&protection);
+    if arguments.json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else {
+        println!("Exact incident protection is active.");
+        println!(
+            "protected at: Unix ms {}",
+            protection.protected_at_unix_millis
+        );
+        println!("Only an explicit unprotect command removes this override.");
+    }
+    Ok(())
+}
+
+fn unprotect(
+    socket: &std::path::Path,
+    arguments: IncidentProtectionArgs,
+) -> Result<(), Box<dyn Error>> {
+    let payload = IpcClient::new(socket).request(IpcCommand::UnprotectIncident {
+        incident_id: arguments.incident_id,
+    })?;
+    let IpcPayload::IncidentUnprotected { incident_id } = payload else {
+        return Err("daemon returned the wrong payload for unprotect".into());
+    };
+    let report = IncidentProtectionReport::unprotected(incident_id);
+    if arguments.json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else {
+        println!("Exact incident protection was removed.");
+    }
+    Ok(())
+}
+
 fn export_diagnostics(
     socket: &std::path::Path,
     arguments: ExportDiagnosticsArgs,
@@ -434,19 +678,7 @@ fn export_diagnostics(
     };
     let document = serde_json::to_vec_pretty(&bundle)?;
     if let Some(output) = arguments.output {
-        let mut options = OpenOptions::new();
-        options.write(true);
-        if arguments.force {
-            options.create(true).truncate(true);
-        } else {
-            options.create_new(true);
-        }
-        #[cfg(unix)]
-        options.mode(0o600);
-        let mut file = options.open(&output)?;
-        file.write_all(&document)?;
-        file.write_all(b"\n")?;
-        file.flush()?;
+        write_private_diagnostics(&output, &document, arguments.force)?;
         println!("Wrote redacted diagnostics to {}", output.display());
     } else {
         std::io::stdout().write_all(&document)?;
@@ -455,8 +687,94 @@ fn export_diagnostics(
     Ok(())
 }
 
-fn doctor(socket: &std::path::Path, json: bool) -> Result<(), Box<dyn Error>> {
-    let rules = RuleSet::embedded()?;
+fn write_private_diagnostics(
+    output: &std::path::Path,
+    document: &[u8],
+    force: bool,
+) -> Result<(), Box<dyn Error>> {
+    let mut options = OpenOptions::new();
+    options.read(true).write(true).mode(0o600);
+    if force {
+        options.create(true);
+    } else {
+        options.create_new(true);
+    }
+    #[cfg(target_os = "macos")]
+    options.custom_flags(libc::O_NOFOLLOW_ANY | libc::O_CLOEXEC);
+    #[cfg(all(unix, not(target_os = "macos")))]
+    options.custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+
+    let mut file = options.open(output)?;
+    let metadata = file.metadata()?;
+    #[cfg(unix)]
+    {
+        if !metadata.file_type().is_file() || metadata.uid() != unsafe { libc::geteuid() } {
+            return Err(format!(
+                "diagnostic output must be a regular file owned by the current user: {}",
+                output.display()
+            )
+            .into());
+        }
+        file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+    }
+    if force {
+        file.set_len(0)?;
+        file.seek(SeekFrom::Start(0))?;
+    }
+    file.write_all(document)?;
+    file.write_all(b"\n")?;
+    file.sync_all()?;
+    Ok(())
+}
+
+fn daemon_status_ready(status: &DaemonStatus) -> bool {
+    if status.managed {
+        status.ready
+            && !status.draining
+            && matches!(
+                status.startup_state,
+                unlinger_daemon::StartupState::ReadyReportOnly
+                    | unlinger_daemon::StartupState::ReadyEnforce
+            )
+    } else {
+        status.healthy && status.last_scan_at_unix_millis.is_some()
+    }
+}
+
+fn doctor_health(
+    source_healthy: bool,
+    daemon_required: bool,
+    daemon_status: Option<&DaemonStatus>,
+) -> DoctorHealth {
+    let daemon_reachable = daemon_status.is_some();
+    let daemon_healthy = daemon_status.is_some_and(|status| status.healthy);
+    let daemon_ready = daemon_status.is_some_and(daemon_status_ready);
+    DoctorHealth {
+        daemon_reachable,
+        daemon_healthy,
+        daemon_ready,
+        overall_healthy: source_healthy
+            && (!daemon_required || (daemon_reachable && daemon_healthy && daemon_ready)),
+    }
+}
+
+fn doctor(socket: &std::path::Path, arguments: DoctorArgs) -> Result<(), Box<dyn Error>> {
+    let mut errors = Vec::new();
+    let signature_packs = match RuleSet::embedded() {
+        Ok(rules) => rules
+            .packs()
+            .iter()
+            .map(|pack| PackSummary {
+                id: pack.id.clone(),
+                version: pack.version.clone(),
+                supported_versions: pack.supported_versions.clone(),
+            })
+            .collect(),
+        Err(_) => {
+            errors.push("embedded signature packs could not be loaded".to_owned());
+            Vec::new()
+        }
+    };
     let product_version = macos_product_version();
     let supported_platform = product_version
         .as_deref()
@@ -466,7 +784,6 @@ fn doctor(socket: &std::path::Path, json: bool) -> Result<(), Box<dyn Error>> {
     let started = Instant::now();
     let snapshot = MacosSnapshotter::new().capture();
     let elapsed = started.elapsed().as_millis();
-    let mut errors = Vec::new();
     if !supported_platform {
         errors.push("macOS 14 or later was not confirmed".to_owned());
     }
@@ -481,17 +798,37 @@ fn doctor(socket: &std::path::Path, json: bool) -> Result<(), Box<dyn Error>> {
     if !non_root_user {
         errors.push("Unlinger must run as a non-root per-user process".to_owned());
     }
-    let daemon_status = IpcClient::new(socket)
-        .request(IpcCommand::Status)
-        .ok()
+    let source_healthy = errors.is_empty();
+    let daemon_required = !arguments.source_only;
+    let daemon_status = daemon_required
+        .then(|| IpcClient::new(socket).request(IpcCommand::Status))
+        .and_then(Result::ok)
         .and_then(|payload| match payload {
             IpcPayload::Status(status) => Some(status),
             _ => None,
         });
-    let daemon_reachable = daemon_status.is_some();
+    let health = doctor_health(source_healthy, daemon_required, daemon_status.as_ref());
+    if daemon_required {
+        if !health.daemon_reachable {
+            errors.push("daemon is not reachable".to_owned());
+        } else {
+            if !health.daemon_healthy {
+                errors.push("daemon reports an unhealthy reconciliation engine".to_owned());
+            }
+            if !health.daemon_ready {
+                errors.push("daemon has not reached a ready startup state".to_owned());
+            }
+        }
+    }
     let report = DoctorReport {
-        schema_version: 1,
-        healthy: errors.is_empty(),
+        schema_version: 2,
+        healthy: health.overall_healthy,
+        source_healthy,
+        daemon_required,
+        daemon_reachable: health.daemon_reachable,
+        daemon_healthy: health.daemon_healthy,
+        daemon_ready: health.daemon_ready,
+        overall_healthy: health.overall_healthy,
         platform: "macOS",
         product_version,
         supported_platform,
@@ -500,25 +837,21 @@ fn doctor(socket: &std::path::Path, json: bool) -> Result<(), Box<dyn Error>> {
         native_snapshot_ok,
         snapshot_elapsed_millis: elapsed,
         coverage,
-        signature_packs: rules
-            .packs()
-            .iter()
-            .map(|pack| PackSummary {
-                id: pack.id.clone(),
-                version: pack.version.clone(),
-                supported_versions: pack.supported_versions.clone(),
-            })
-            .collect(),
-        daemon_reachable,
-        daemon_status,
+        signature_packs,
+        daemon_status: daemon_status.as_ref().map(DoctorDaemonStatus::from),
         errors,
     };
 
-    if json {
+    if arguments.json {
         println!("{}", serde_json::to_string_pretty(&report)?);
     } else {
         println!("Unlinger doctor");
-        println!("healthy: {}", report.healthy);
+        println!("source healthy: {}", report.source_healthy);
+        println!("daemon required: {}", report.daemon_required);
+        println!("daemon reachable: {}", report.daemon_reachable);
+        println!("daemon healthy: {}", report.daemon_healthy);
+        println!("daemon ready: {}", report.daemon_ready);
+        println!("overall healthy: {}", report.overall_healthy);
         println!(
             "platform: macOS {} ({})",
             report.product_version.as_deref().unwrap_or("unknown"),
@@ -556,22 +889,20 @@ fn doctor(socket: &std::path::Path, json: bool) -> Result<(), Box<dyn Error>> {
             );
         }
         println!("signature packs: {}", report.signature_packs.len());
-        println!(
-            "daemon: {}",
-            if report.daemon_reachable {
-                "reachable"
-            } else {
-                "not reachable (source checks still ran)"
-            }
-        );
         for error in &report.errors {
             println!("error: {error}");
         }
     }
-    if report.healthy {
+    doctor_result(&report)
+}
+
+fn doctor_result(report: &DoctorReport) -> Result<(), Box<dyn Error>> {
+    if report.overall_healthy {
         Ok(())
+    } else if report.daemon_required {
+        Err("doctor found one or more blocking source/platform/daemon readiness failures".into())
     } else {
-        Err("doctor found one or more blocking source/platform failures".into())
+        Err("source-only doctor found one or more blocking source/platform failures".into())
     }
 }
 
@@ -639,9 +970,31 @@ fn analyzer_for_snapshot(snapshot: &unlinger_core::Snapshot) -> Result<Analyzer,
 
 fn print_status(status: &DaemonStatus) {
     println!("Unlinger daemon");
-    println!("healthy: {}", status.healthy);
-    println!("mode: {:?}", status.mode);
-    println!(
+    for line in daemon_status_lines(status) {
+        println!("{line}");
+    }
+}
+
+fn daemon_status_lines(status: &DaemonStatus) -> Vec<String> {
+    let mut lines = vec![format!("healthy: {}", status.healthy)];
+    if status.managed {
+        lines.push(match status.activation_generation {
+            Some(generation) => format!("managed generation: {generation}"),
+            None => "managed generation: missing".to_owned(),
+        });
+        lines.push(format!("ready: {}", status.ready));
+        lines.push(format!("startup: {:?}", status.startup_state));
+        lines.push(format!("requested mode: {:?}", status.requested_mode));
+        lines.push(format!("effective mode: {:?}", status.effective_mode()));
+        lines.push(match status.armed_generation {
+            Some(generation) => format!("armed generation: {generation}"),
+            None => "armed generation: none".to_owned(),
+        });
+    } else {
+        lines.push("runtime: legacy or explicitly unmanaged".to_owned());
+        lines.push(format!("effective mode: {:?}", status.effective_mode()));
+    }
+    lines.push(format!(
         "activity: {}",
         if status.cleanup_in_progress {
             "cleanup"
@@ -650,27 +1003,76 @@ fn print_status(status: &DaemonStatus) {
         } else {
             "idle"
         }
-    );
+    ));
     if let Some(deadline) = status.paused_until_unix_millis {
-        println!("automatic cleanup: paused until Unix ms {deadline}");
+        lines.push(format!(
+            "automatic cleanup: paused until Unix ms {deadline}"
+        ));
     } else {
-        println!("automatic cleanup: not paused");
+        lines.push("automatic cleanup: not paused".to_owned());
     }
-    println!(
+    lines.push(
+        if status.lifecycle_schema_version == 0 && status.ipc_schema_version == 0 {
+            "event source: not reported by legacy daemon".to_owned()
+        } else if status.event_source_healthy {
+            "event source: healthy".to_owned()
+        } else {
+            "event source: degraded; periodic reconciliation remains active".to_owned()
+        },
+    );
+    if let Some(recovery) = &status.storage_recovery {
+        lines.push(format!(
+            "storage recovery: {:?} at Unix ms {}; {} sidecar(s) quarantined",
+            recovery.reason, recovery.occurred_at_unix_millis, recovery.quarantined_sidecar_count
+        ));
+    } else {
+        lines.push("storage recovery: none reported".to_owned());
+    }
+    lines.push(format!(
         "current incidents: {} confirmed, {} ambiguous",
         status.confirmed_incidents, status.ambiguous_incidents
-    );
+    ));
+    lines.push(format!(
+        "blocked cleanups: {}",
+        status.attention.blocked_cleanup_count
+    ));
+    lines.push(format!(
+        "protected incidents: {}",
+        status.protected_incident_count
+    ));
+    for item in status
+        .attention
+        .items
+        .iter()
+        .take(MAX_PRINT_ATTENTION_ITEMS)
+    {
+        let mut line = format!("attention: {:?} reason={}", item.kind, item.reason_id);
+        if let Some(state) = item.state {
+            line.push_str(&format!(" state={state:?}"));
+        }
+        if let Some(occurred_at) = item.occurred_at_unix_millis {
+            line.push_str(&format!(" at Unix ms {occurred_at}"));
+        }
+        lines.push(line);
+    }
+    if status.attention.items.len() > MAX_PRINT_ATTENTION_ITEMS {
+        lines.push(format!(
+            "attention items omitted: {}",
+            status.attention.items.len() - MAX_PRINT_ATTENTION_ITEMS
+        ));
+    }
     if let Some(reclaim) = &status.most_recent_reclaim {
-        println!(
-            "latest reclaim: {} {:?} at Unix ms {}",
-            reclaim.incident_id, reclaim.state, reclaim.occurred_at_unix_millis
-        );
+        lines.push(format!(
+            "latest reclaim: {:?} at Unix ms {}",
+            reclaim.state, reclaim.occurred_at_unix_millis
+        ));
     } else {
-        println!("latest reclaim: none recorded in retained history");
+        lines.push("latest reclaim: none recorded in retained history".to_owned());
     }
-    if let Some(error) = &status.last_error {
-        println!("last error: {error}");
+    if status.last_error.is_some() {
+        lines.push("last error: recorded; details withheld from human status output".to_owned());
     }
+    lines
 }
 
 fn print_history_line(event: &HistoryEvent) {
@@ -755,6 +1157,37 @@ fn macos_product_version() -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    #[cfg(unix)]
+    use std::os::unix::fs::{PermissionsExt, symlink};
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    static NEXT_TEMP_ID: AtomicU64 = AtomicU64::new(1);
+
+    struct TempDirectory(PathBuf);
+
+    impl TempDirectory {
+        fn new() -> Self {
+            let nonce = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos();
+            let path = std::env::temp_dir().join(format!(
+                "unlinger-diagnostics-{}-{nonce}-{}",
+                std::process::id(),
+                NEXT_TEMP_ID.fetch_add(1, Ordering::Relaxed)
+            ));
+            fs::create_dir(&path).expect("create temp directory");
+            Self(fs::canonicalize(path).expect("canonical temp directory"))
+        }
+    }
+
+    impl Drop for TempDirectory {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
 
     #[test]
     fn parses_bounded_human_pause_durations() {
@@ -780,5 +1213,317 @@ mod tests {
 
         assert_eq!(cli.socket, Some(PathBuf::from("/tmp/unlinger.sock")));
         assert!(matches!(cli.command, Commands::Status(_)));
+    }
+
+    #[test]
+    fn doctor_parser_distinguishes_default_readiness_from_source_only() {
+        let default = Cli::try_parse_from(["unlinger", "doctor"]).expect("default doctor");
+        let Commands::Doctor(default) = default.command else {
+            panic!("doctor command");
+        };
+        assert!(!default.source_only);
+
+        let source_only = Cli::try_parse_from(["unlinger", "doctor", "--source-only", "--json"])
+            .expect("source-only doctor");
+        let Commands::Doctor(source_only) = source_only.command else {
+            panic!("doctor command");
+        };
+        assert!(source_only.source_only);
+        assert!(source_only.json);
+    }
+
+    #[test]
+    fn protect_and_unprotect_parsers_require_one_exact_incident() {
+        let protect = Cli::try_parse_from(["unlinger", "protect", "incident-exact-1", "--json"])
+            .expect("protect command");
+        let Commands::Protect(protect) = protect.command else {
+            panic!("protect command");
+        };
+        assert_eq!(protect.incident_id, "incident-exact-1");
+        assert!(protect.json);
+
+        let unprotect = Cli::try_parse_from(["unlinger", "unprotect", "incident-exact-1"])
+            .expect("unprotect command");
+        let Commands::Unprotect(unprotect) = unprotect.command else {
+            panic!("unprotect command");
+        };
+        assert_eq!(unprotect.incident_id, "incident-exact-1");
+        assert!(!unprotect.json);
+
+        assert!(Cli::try_parse_from(["unlinger", "protect"]).is_err());
+        assert!(Cli::try_parse_from(["unlinger", "unprotect"]).is_err());
+    }
+
+    #[test]
+    fn protection_json_reports_exact_state_without_widening_scope() {
+        let protected = unlinger_daemon::ProtectedIncidentSummary {
+            incident_id: "incident-exact-1".to_owned(),
+            protected_at_unix_millis: 100,
+            last_exact_observed_at_unix_millis: Some(90),
+            exact_absence_since_unix_millis: None,
+        };
+
+        let protected_json = serde_json::to_value(IncidentProtectionReport::protected(&protected))
+            .expect("protected JSON");
+        assert_eq!(protected_json["schema_version"], 1);
+        assert_eq!(protected_json["incident_id"], "incident-exact-1");
+        assert_eq!(protected_json["protected"], true);
+        assert_eq!(protected_json["protected_at_unix_millis"], 100);
+        assert_eq!(protected_json["last_exact_observed_at_unix_millis"], 90);
+        assert!(
+            protected_json
+                .get("exact_absence_since_unix_millis")
+                .is_none()
+        );
+
+        let unprotected_json = serde_json::to_value(IncidentProtectionReport::unprotected(
+            "incident-exact-1".to_owned(),
+        ))
+        .expect("unprotected JSON");
+        assert_eq!(unprotected_json["incident_id"], "incident-exact-1");
+        assert_eq!(unprotected_json["protected"], false);
+        assert!(unprotected_json.get("protected_at_unix_millis").is_none());
+    }
+
+    #[test]
+    fn doctor_help_explains_default_readiness_and_source_only_mode() {
+        use clap::CommandFactory;
+
+        let mut command = Cli::command();
+        let doctor = command
+            .find_subcommand_mut("doctor")
+            .expect("doctor subcommand");
+        let help = doctor.render_long_help().to_string();
+
+        assert!(help.contains("by default, installed daemon readiness"));
+        assert!(help.contains("--source-only"));
+        assert!(help.contains("without requiring a running daemon"));
+    }
+
+    #[test]
+    fn default_doctor_marks_an_unreachable_daemon_unhealthy() {
+        let health = doctor_health(true, true, None);
+
+        assert!(!health.daemon_reachable);
+        assert!(!health.daemon_healthy);
+        assert!(!health.daemon_ready);
+        assert!(!health.overall_healthy);
+    }
+
+    #[test]
+    fn managed_doctor_requires_a_ready_startup_state() {
+        let mut status = DaemonStatus::new(unlinger_daemon::DaemonMode::ReportOnly, 42);
+        status.managed = true;
+        status.healthy = true;
+        status.startup_state = unlinger_daemon::StartupState::Recovering;
+
+        let recovering = doctor_health(true, true, Some(&status));
+        assert!(recovering.daemon_reachable);
+        assert!(recovering.daemon_healthy);
+        assert!(!recovering.daemon_ready);
+        assert!(!recovering.overall_healthy);
+
+        status.ready = true;
+        status.startup_state = unlinger_daemon::StartupState::ReadyReportOnly;
+        let ready = doctor_health(true, true, Some(&status));
+        assert!(ready.daemon_ready);
+        assert!(ready.overall_healthy);
+    }
+
+    #[test]
+    fn source_only_doctor_does_not_claim_daemon_readiness() {
+        let health = doctor_health(true, false, None);
+
+        assert!(!health.daemon_reachable);
+        assert!(!health.daemon_healthy);
+        assert!(!health.daemon_ready);
+        assert!(health.overall_healthy);
+    }
+
+    #[test]
+    fn doctor_json_keeps_source_and_daemon_health_distinct() {
+        let report = DoctorReport {
+            schema_version: 2,
+            healthy: false,
+            source_healthy: true,
+            daemon_required: true,
+            daemon_reachable: false,
+            daemon_healthy: false,
+            daemon_ready: false,
+            overall_healthy: false,
+            platform: "macOS",
+            product_version: Some("15.0".to_owned()),
+            supported_platform: true,
+            current_uid: 501,
+            non_root_user: true,
+            native_snapshot_ok: true,
+            snapshot_elapsed_millis: 5,
+            coverage: None,
+            signature_packs: Vec::new(),
+            daemon_status: None,
+            errors: vec!["daemon is not reachable".to_owned()],
+        };
+
+        let json = serde_json::to_value(&report).expect("doctor JSON");
+        assert_eq!(json["healthy"], false);
+        assert_eq!(json["source_healthy"], true);
+        assert_eq!(json["daemon_required"], true);
+        assert_eq!(json["daemon_reachable"], false);
+        assert_eq!(json["daemon_healthy"], false);
+        assert_eq!(json["daemon_ready"], false);
+        assert_eq!(json["overall_healthy"], false);
+        assert!(doctor_result(&report).is_err());
+    }
+
+    #[test]
+    fn human_status_is_bounded_and_omits_private_runtime_identifiers() {
+        let mut status = DaemonStatus::new(unlinger_daemon::DaemonMode::ReportOnly, 4242);
+        status.managed = true;
+        status.instance_id = "private-instance-id".to_owned();
+        status.activation_generation = Some(9);
+        status.ready = true;
+        status.startup_state = unlinger_daemon::StartupState::ReadyReportOnly;
+        status.healthy = true;
+        status.event_source_healthy = false;
+        status.last_event_source_error = Some("/Users/private/event-source".to_owned());
+        status.storage_recovery = Some(unlinger_daemon::StorageRecoveryStatus {
+            recovery_id: "private-recovery-id".to_owned(),
+            occurred_at_unix_millis: 123,
+            reason: unlinger_daemon::StorageRecoveryReason::IntegrityCheckFailed,
+            quarantined_sidecar_count: 2,
+        });
+        status.attention = unlinger_daemon::AttentionProjection {
+            blocked_cleanup_count: 23,
+            items: (0..20)
+                .map(|index| unlinger_daemon::AttentionItem {
+                    kind: unlinger_daemon::AttentionKind::CleanupFailed,
+                    reason_id: "cleanup.delivery_unknown".to_owned(),
+                    incident_id: Some(format!("private-incident-{index}")),
+                    state: Some(IncidentState::Failed),
+                    occurred_at_unix_millis: Some(200 + index),
+                })
+                .collect(),
+        };
+        status.protected_incident_count = 17;
+        status.protected_incidents = vec![unlinger_daemon::ProtectedIncidentSummary {
+            incident_id: "private-protected-incident".to_owned(),
+            protected_at_unix_millis: 300,
+            last_exact_observed_at_unix_millis: Some(290),
+            exact_absence_since_unix_millis: None,
+        }];
+
+        let lines = daemon_status_lines(&status);
+        let rendered = lines.join("\n");
+        assert!(rendered.contains("managed generation: 9"));
+        assert!(rendered.contains("startup: ReadyReportOnly"));
+        assert!(rendered.contains("effective mode: ReportOnly"));
+        assert!(rendered.contains("event source: degraded"));
+        assert!(rendered.contains("storage recovery: IntegrityCheckFailed"));
+        assert!(rendered.contains("blocked cleanups: 23"));
+        assert!(rendered.contains("protected incidents: 17"));
+        assert_eq!(
+            lines
+                .iter()
+                .filter(|line| line.starts_with("attention: "))
+                .count(),
+            16
+        );
+        assert!(!rendered.contains("private-instance-id"));
+        assert!(!rendered.contains("private-recovery-id"));
+        assert!(!rendered.contains("private-incident"));
+        assert!(!rendered.contains("private-protected-incident"));
+        assert!(!rendered.contains("/Users/private"));
+    }
+
+    #[test]
+    fn human_service_status_shows_generation_lifecycle_without_private_paths() {
+        let mut daemon = DaemonStatus::new(unlinger_daemon::DaemonMode::ReportOnly, 4242);
+        daemon.managed = true;
+        daemon.instance_id = "private-instance-id".to_owned();
+        daemon.activation_generation = Some(9);
+        daemon.ready = true;
+        daemon.startup_state = unlinger_daemon::StartupState::ReadyReportOnly;
+        daemon.healthy = true;
+        let private_root = PathBuf::from("/Users/private/Library/Application Support/Unlinger");
+        let report = service::ServiceStatusReport {
+            schema_version: 2,
+            label: "app.unlinger.daemon",
+            installed: true,
+            loaded: true,
+            healthy: true,
+            unmanaged_daemon: false,
+            expected_mode: Some(unlinger_daemon::DaemonMode::ReportOnly),
+            active_generation: Some(9),
+            launchd_pid: Some(4242),
+            daemon_status: Some(daemon),
+            pid_matches: true,
+            generation_matches: true,
+            binary_matches: true,
+            permissions_ok: true,
+            launch_agent_path: PathBuf::from("/Users/private/Library/LaunchAgents/private.plist"),
+            daemon_path: private_root.join("generations/9/unlingerd"),
+            cli_path: private_root.join("generations/9/unlinger"),
+            database_path: private_root.join("history.sqlite3"),
+            socket_path: private_root.join("unlingerd.sock"),
+            data_preserved: true,
+            errors: vec!["unsafe path /Users/private".to_owned()],
+        };
+
+        let rendered = service_status_lines(&report).join("\n");
+
+        assert!(rendered.contains("active generation: 9"));
+        assert!(rendered.contains("startup: ReadyReportOnly"));
+        assert!(rendered.contains("effective mode: ReportOnly"));
+        assert!(rendered.contains("reported problems: 1"));
+        assert!(!rendered.contains("4242"));
+        assert!(!rendered.contains("private-instance-id"));
+        assert!(!rendered.contains("/Users/private"));
+    }
+
+    #[test]
+    fn private_diagnostics_refuses_to_replace_without_force() {
+        let temp = TempDirectory::new();
+        let output = temp.0.join("diagnostics.json");
+        fs::write(&output, b"original").expect("seed output");
+
+        assert!(write_private_diagnostics(&output, b"replacement", false).is_err());
+        assert_eq!(fs::read(&output).expect("read output"), b"original");
+    }
+
+    #[test]
+    fn forced_private_diagnostics_replaces_and_tightens_the_exact_file() {
+        let temp = TempDirectory::new();
+        let output = temp.0.join("diagnostics.json");
+        fs::write(&output, b"longer original contents").expect("seed output");
+        fs::set_permissions(&output, fs::Permissions::from_mode(0o644))
+            .expect("loosen output mode");
+
+        write_private_diagnostics(&output, b"{}", true).expect("replace output");
+
+        assert_eq!(fs::read(&output).expect("read output"), b"{}\n");
+        assert_eq!(
+            fs::metadata(&output)
+                .expect("output metadata")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn forced_private_diagnostics_refuses_a_symlink_and_preserves_its_target() {
+        let temp = TempDirectory::new();
+        let target = temp.0.join("private-target");
+        let output = temp.0.join("diagnostics.json");
+        fs::write(&target, b"must remain untouched").expect("seed target");
+        symlink(&target, &output).expect("create diagnostic symlink");
+
+        assert!(write_private_diagnostics(&output, b"replacement", true).is_err());
+        assert_eq!(
+            fs::read(&target).expect("read target"),
+            b"must remain untouched"
+        );
     }
 }

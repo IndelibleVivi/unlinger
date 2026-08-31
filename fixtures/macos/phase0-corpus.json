@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "cases": [
     {
       "name": "abandoned agent-browser Chrome-for-Testing tree",
@@ -19,7 +19,11 @@
             "--headless=new",
             "--remote-debugging-pipe",
             "--user-data-dir=/private/tmp/agent-browser/session-a"
-          ]
+          ],
+          "app_bundle": {
+            "bundle_id": "com.google.chrome.for.testing",
+            "short_version": "151.0.7922.34"
+          }
         },
         {
           "pid": 101,
@@ -43,7 +47,7 @@
     },
     {
       "name": "active Playwright controller and browser",
-      "expected_state": "ACTIVE",
+      "expected_state": "PROTECTED",
       "expected_pack": "playwright",
       "second_observation": false,
       "processes": [
@@ -77,7 +81,11 @@
             "--headless",
             "--remote-debugging-pipe",
             "--user-data-dir=/var/folders/synthetic/playwright_chromiumdev_profile-a"
-          ]
+          ],
+          "app_bundle": {
+            "bundle_id": "com.google.chrome.for.testing",
+            "short_version": "151.0.7922.34"
+          }
         },
         {
           "pid": 202,
@@ -101,14 +109,18 @@
           "ppid": 1,
           "pgid": 300,
           "start": 3000000,
-          "name": "Chromium",
-          "exe": "/synthetic/ms-playwright/chromium/Chromium.app/Contents/MacOS/Chromium",
+          "name": "Google Chrome for Testing",
+          "exe": "/synthetic/ms-playwright/chromium/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
           "args": [
-            "Chromium",
+            "Google Chrome for Testing",
             "--headless=new",
             "--remote-debugging-pipe",
             "--user-data-dir=/var/folders/synthetic/playwright_chromiumdev_profile-b"
-          ]
+          ],
+          "app_bundle": {
+            "bundle_id": "com.google.chrome.for.testing",
+            "short_version": "151.0.7922.34"
+          }
         },
         {
           "pid": 301,
@@ -157,7 +169,11 @@
             "--headless=new",
             "--remote-debugging-pipe",
             "--user-data-dir=/Users/example/Library/Application Support/Puppeteer/persistent-login"
-          ]
+          ],
+          "app_bundle": {
+            "bundle_id": "com.google.chrome.for.testing",
+            "short_version": "151.0.7922.34"
+          }
         }
       ]
     },
@@ -207,7 +223,11 @@
             "Google Chrome for Testing",
             "--remote-debugging-port=9222",
             "--user-data-dir=/private/tmp/agent-browser/human-held"
-          ]
+          ],
+          "app_bundle": {
+            "bundle_id": "com.google.chrome.for.testing",
+            "short_version": "151.0.7922.34"
+          }
         }
       ]
     },
@@ -228,7 +248,11 @@
             "Google Chrome for Testing",
             "--remote-debugging-port=9333",
             "--user-data-dir=/private/tmp/manual-cdp/operator"
-          ]
+          ],
+          "app_bundle": {
+            "bundle_id": "com.google.chrome.for.testing",
+            "short_version": "151.0.7922.34"
+          }
         }
       ]
     },
@@ -250,7 +274,11 @@
             "--headless=new",
             "--remote-debugging-pipe",
             "--user-data-dir=/private/tmp/agent-browser/reused-pid"
-          ]
+          ],
+          "app_bundle": {
+            "bundle_id": "com.google.chrome.for.testing",
+            "short_version": "151.0.7922.34"
+          }
         }
       ],
       "second_processes": [
@@ -266,7 +294,11 @@
             "--headless=new",
             "--remote-debugging-pipe",
             "--user-data-dir=/private/tmp/agent-browser/reused-pid"
-          ]
+          ],
+          "app_bundle": {
+            "bundle_id": "com.google.chrome.for.testing",
+            "short_version": "151.0.7922.34"
+          }
         }
       ]
     }

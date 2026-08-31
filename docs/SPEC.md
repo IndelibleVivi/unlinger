@@ -345,7 +345,7 @@ Unlinger never uses broad `killall`, process-name-only `pkill`, or an unrestrict
 
 ### 7.4 Runtime artifact cleanup
 
-Version 0.1 may automatically remove only low-risk, framework-specific runtime metadata such as stale sockets, PID files, and `DevToolsActivePort` files after proving that no live process references them.
+Version 0.1 automatically removes only an exact `DevToolsActivePort` file admitted by the active signature pack, and only after proving its frozen file identity, safe parent, exclusive ownership, complete absence of live references, complete process-tree exit, and no revival. Socket, PID-file, lock-file, and other runtime-metadata cleanup remains part of the incident model but is not automatically admitted until a framework-specific canonical convention and the same ownership, reference, and race guarantees have field evidence.
 
 Temporary profile deletion is deferred. A later version may quarantine or delete canonical ephemeral profiles only after a longer delay and a separate safety gate. Standard profiles, persistent profiles, saved authentication state, cookies, and browser data are never deleted by default.
 
@@ -420,23 +420,25 @@ The daemon stores a compact local SQLite database containing:
 
 Default retention: 14 days or 10,000 events, whichever is smaller.
 
-A Unix-domain socket exposes read-mostly local IPC to the CLI and later UI. Mutating commands are limited to pause/resume, explicit protect/unprotect, retry failed cleanup, and diagnostic export.
+A Unix-domain socket exposes read-mostly local IPC to the CLI and later UI. Ordinary user mutations are limited to pause/resume, explicit protect/unprotect, retry failed cleanup, and diagnostic export. Generation- and instance-bound arm, disarm, and drain messages are an internal service lifecycle protocol; they are not ordinary UI authority.
 
 ### 8.5 Signature packs
 
-Each supported runtime has a versioned signature pack containing:
+Each supported runtime has a versioned signature pack that parameterizes one shared deterministic sessionizer and cleanup-safety algorithm. A pack contains:
 
 - controller and browser fingerprints;
 - profile and runtime-path conventions;
-- graph/sessionization rules;
+- graph/sessionization markers and parameters;
 - protection rules;
 - graceful close strategy;
 - artifact cleanup policy;
-- supported version range;
+- an exact, bounded, or observational version policy;
 - positive fixtures;
 - nearest counterexample fixtures.
 
 Version 0.1 ships rules inside the signed binary. Remote executable rule updates are out of scope. Later data-only updates must be signed and auditable.
+
+The first automatic-cleanup admission is intentionally narrower than the recognized family list: a controllerless Chrome-for-Testing browser root with bundle identifier `com.google.chrome.for.testing` at exact version `151.0.7922.34`, plus every ordinary hard gate. Controller anchors remain protected until their own product/version identity is verified. Broader versions or family shapes require a positive fixture and the nearest normal/manual counterexample before their pack policy may expand.
 
 ---
 
@@ -540,7 +542,7 @@ A later menu-bar app may project the same data. It must not turn the product int
 ### Completeness
 
 - At least 99% of supported deterministic incidents leave no surviving verified process-tree member after cleanup.
-- Canonical stale socket/PID artifacts are removed only after the tree is confirmed dead.
+- An admitted `DevToolsActivePort` file is removed only after the tree is confirmed dead and its exact file identity, ownership, references, parent, and final unlink race are revalidated. Socket/PID artifact admission remains evidence-gated.
 - Revival is detected and attributed rather than silently counted as success.
 
 ### Overhead

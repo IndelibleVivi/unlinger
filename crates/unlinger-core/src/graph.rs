@@ -171,6 +171,7 @@ mod tests {
             arguments: Some(vec![format!("p{pid}")]),
             resident_memory_bytes: 0,
             status: ProcessStatus::Sleeping,
+            runtime: Default::default(),
         }
     }
 

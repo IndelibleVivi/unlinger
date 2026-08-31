@@ -1,8 +1,18 @@
-schema_version = 1
+schema_version = 2
 id = "agent-browser"
-version = "0.1.0"
-supported_versions = "observational signatures; exact version range not yet field-proven"
+version = "0.2.0"
+supported_versions = "Chrome for Testing 151.0.7922.34 only; controller version remains observational"
+graceful_strategy = "os_term_only"
 controller_markers = ["agent-browser", "@vercel/agent-browser"]
 framework_markers = ["agent-browser", ".agent-browser"]
 ephemeral_profile_markers = ["agent-browser", ".agent-browser"]
 browser_executable_markers = ["chrome for testing", "chromium", "google chrome"]
+recorder_executable_basenames = ["ffmpeg"]
+
+[version_policy]
+mode = "exact_allowlist"
+bundle_id = "com.google.chrome.for.testing"
+versions = ["151.0.7922.34"]
+
+[artifact_policy]
+devtools_active_port = true

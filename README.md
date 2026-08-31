@@ -7,22 +7,24 @@ Unlinger is a local, zero-touch runtime-hygiene utility for abandoned browser-au
 
 ## Current state
 
-The repository now contains a macOS source candidate spanning the observation, deterministic cleanup, persistence, IPC, daemon, and CLI paths:
+The repository now contains a macOS source candidate spanning the observation, deterministic cleanup, persistence, IPC, daemon, CLI, and managed-service paths:
 
 - native current-user process snapshots through `libproc` and `sysctl`;
 - PID plus process-birth and executable-file identity;
-- process-graph reconstruction and framework-specific incident grouping;
-- embedded, versioned signature packs for agent-browser, Playwright, and Puppeteer;
-- hard protection gates, two-observation stability, and a durable 90-second abandonment grace;
-- frozen cleanup plans with fresh whole-incident revalidation before each exact signal stage;
-- controller/root TERM, member TERM, exact-survivor KILL, post-action scans, and bounded 15/60-second revival checks;
-- redacted SQLite timelines with terminal cleanup events stamped at completion and 14-day/10,000-event retention;
-- a 0600 local Unix-domain socket for status, history, explain, pause/resume, and diagnostic export;
-- a periodic daemon whose source default is report-only;
-- a transactional per-user LaunchAgent lifecycle with same-directory per-file promotion, launchd/IPC PID matching, first-scan health verification, explicit mode reload, and activation-failure rollback;
-- graceful SIGTERM handling that finishes an in-flight cleanup receipt, suppresses new cleanup after shutdown begins, and removes the exact owned socket.
+- one shared deterministic sessionizer parameterized by embedded schema-v2 packs for agent-browser, Playwright, and Puppeteer;
+- an exact automatic-eligibility point for Chrome for Testing `151.0.7922.34`, while unknown/mixed versions and every controller-bearing session fail closed as `PROTECTED`;
+- hard protection gates, a non-evidentiary 60-second minimum age, two-observation stability, and a durable 90-second abandonment grace;
+- frozen cleanup plans with durable PREPARED actions and fresh whole-incident revalidation before each exact signal stage;
+- controller/root TERM, member TERM, exact-survivor KILL, post-action scans, bounded 15/60-second revival checks, and restart-safe delivery-unknown retry lockout;
+- DAP-only runtime-artifact cleanup with a targeted Darwin pathname-reference query, a complete current-user argv pass, exact file/parent identity, an exclusive quarantine step, and a durable action journal; profiles and runtime directories are never deleted;
+- redacted SQLite v5 timelines, cooling/protection/retry/lifecycle state, terminal receipts stamped at completion, and 14-day/10,000-event retention;
+- a 0600 local newline-delimited JSON socket for status, history, explain, pause/resume, retry, exact incident protect/unprotect, and diagnostic export; clients use one 15-second attempt, each connection retains a 3-second I/O bound, and a bounded eight-worker server prevents one slow read from blocking later control traffic;
+- native process-exit, wake, and memory-pressure scheduling hints with a periodic fallback; every trigger still begins with a fresh snapshot and pressure never lowers a gate;
+- a report-only daemon default and generation/instance/epoch-bound signal authorization;
+- a transactional per-user LaunchAgent lifecycle with sealed immutable generations, exact launchd/IPC/binary checks, SQLite backup, report-only rollback, and same-generation fresh-epoch re-arm only after a signal-free first scan;
+- graceful SIGTERM handling that terminates the current cycle safely, preserves same-generation desired intent for launchd restart, and removes the exact owned socket; explicit service drain clears that intent.
 
-This is **an installed private dogfood candidate, not a product release**. An owner-approved per-user LaunchAgent is loaded in enforce mode on the first dogfood Mac after persistent report-only verification and an enforce → report-only → enforce rollback exercise. Owner-approved isolated Chrome-for-Testing runs have also exercised both the full production-timing path and the repeatable scoped Field Lab harness. Ambient operation has not yet encountered and reclaimed a real supported incident, and no multi-day, public-alpha, universal-binary, signed, notarized, or distribution claim exists. Wake/memory-pressure/exit events, low-risk runtime-artifact cleanup, the broader chaos/family matrix, and sustained dogfood remain open.
+This is **a private backend source candidate with generation 9 installed report-only, not a product release**. One owner-approved production-timing installed-generation harness has now passed end to end on the exact admitted Chrome-for-Testing point: one eight-member frozen tree produced nine journaled exact signal actions, zero survivors, both revival checks, an exact `DevToolsActivePort` removal, and roughly 90 MiB reclaimed. The same generation then restarted into a fresh daemon instance and enforcement epoch without duplicating the cleanup journal, preserved every pre-existing ordinary-Chrome root identity, and finished stably unarmed/report-only. This proves one controlled process/artifact/restart transaction on one host, not ambient or broad safety. Two artifact residuals remain known: a daemon crash after canonical-to-quarantine rename can strand the exact quarantined entry, and a same-UID swap remains possible between final pathname revalidation and `unlinkat`. Ambient operation has not encountered and reclaimed an ordinary real eligible incident, and no multi-day, public-alpha, universal-binary, signed, notarized, or distribution claim exists.
 
 ## Build and inspect
 
@@ -33,10 +35,12 @@ cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 
-cargo run -p unlinger-cli -- doctor
+cargo run -p unlinger-cli -- doctor --source-only
 cargo run -p unlinger-cli -- scan --dry-run
 cargo run -p unlinger-cli -- scan --dry-run --json
 ```
+
+The default `doctor` also requires a reachable, healthy, ready daemon. Use `--source-only` before installation or when intentionally validating source without claiming runtime readiness.
 
 Build a private release candidate, install it in report-only mode, and inspect the exact launchd/IPC boundary:
 
@@ -44,12 +48,9 @@ Build a private release candidate, install it in report-only mode, and inspect t
 cargo build --release --workspace
 target/release/unlinger service install --mode report-only
 target/release/unlinger service status
-
-target/release/unlinger service set-mode enforce
-target/release/unlinger service set-mode report-only
 ```
 
-`service install` copies both binaries into `~/Library/Application Support/Unlinger/bin/`, writes a private per-user LaunchAgent, bootstraps it, and returns only after launchd PID, IPC PID, declared mode, file permissions, and a completed first reconciliation scan agree. `service set-mode` reloads transactionally and restores the prior plist/service if activation fails. `service uninstall` unloads the agent and removes the managed plist/binaries while preserving local history and logs.
+`service install` publishes both binaries as a sealed generation under the private Application Support tree, writes a generation-bound per-user LaunchAgent, bootstraps it, and returns only after launchd PID, IPC PID, generation, executable identity, desired/effective mode, private permissions, readiness, and a completed first reconciliation scan agree. `service set-mode` uses exact generation/instance lifecycle IPC; failed arming is recovered to a proven report-only floor. `service uninstall` unloads the agent and removes managed service definitions/generations while preserving local history and logs. Enforce mode is an explicit field/dogfood action, not part of ordinary source verification.
 
 For source-only development, run the daemon in its safe default mode and use the local CLI from another terminal:
 
@@ -61,10 +62,15 @@ cargo run -p unlinger-cli -- history
 cargo run -p unlinger-cli -- explain <incident-id>
 cargo run -p unlinger-cli -- pause 2h
 cargo run -p unlinger-cli -- resume
+cargo run -p unlinger-cli -- retry <incident-id>
+cargo run -p unlinger-cli -- protect <incident-id>
+cargo run -p unlinger-cli -- unprotect <incident-id>
 cargo run -p unlinger-cli -- export-diagnostics <incident-id>
 ```
 
-`scan` always requires `--dry-run` and never sends signals. `unlingerd` still defaults to report-only when invoked directly. The currently installed dogfood LaunchAgent passes `--enforce` explicitly; this proves activation mechanics and protected-session coexistence, not multi-day false-positive acceptance or a released default for other machines.
+`scan` always requires `--dry-run` and never sends signals. Direct `unlingerd` invocation defaults to report-only. Managed LaunchAgents receive only `--managed --activation-generation`; the desired/effective mode and signal authority live in exact durable lifecycle state, not in a plist `--enforce` flag.
+
+IPC requests are single-shot. The client does not automatically resend after a timeout: for a mutation, a missing response means delivery is uncertain and the caller must read back the relevant state before deciding what to do next. A named cleanup retry clears only that incident's durable block and cooling candidate; it never signals immediately and must pass a fresh cooling window and every ordinary gate.
 
 Full command lines, executable paths, and profile paths exist only in transient classification memory. SQLite, IPC, CLI output, and diagnostic exports use redacted typed records that omit signal targets and session identifiers.
 
@@ -75,6 +81,7 @@ Full command lines, executable paths, and profile paths exist only in transient 
 - [Safety model](docs/SAFETY.md)
 - [Signature packs](docs/SIGNATURES.md)
 - [Privacy](docs/PRIVACY.md)
+- [Local IPC contract](docs/IPC.md)
 - [Field Lab](docs/FIELDLAB.md)
 - [Implementation plan](docs/IMPLEMENTATION_PLAN.md)
 - [Current state](docs/current-state.md)

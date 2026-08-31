@@ -1,18 +1,65 @@
 #[cfg(target_os = "macos")]
+mod artifacts;
+
+#[cfg(target_os = "macos")]
+mod events;
+
+#[cfg(target_os = "macos")]
+mod version;
+
+#[cfg(target_os = "macos")]
+fn parse_procargs2(buffer: &[u8]) -> Option<Vec<String>> {
+    let argc_bytes: [u8; std::mem::size_of::<libc::c_int>()] = buffer
+        .get(..std::mem::size_of::<libc::c_int>())?
+        .try_into()
+        .ok()?;
+    let argc = libc::c_int::from_ne_bytes(argc_bytes);
+    if argc < 0 {
+        return None;
+    }
+    let argc = usize::try_from(argc).ok()?;
+    let mut cursor = std::mem::size_of::<libc::c_int>();
+
+    // KERN_PROCARGS2 starts with argc and the executable path, followed by
+    // NUL padding before argv[0]. Once argv begins, every NUL terminates one
+    // argument; consecutive NULs therefore represent legitimate empty argv
+    // entries and must not be collapsed into padding.
+    cursor += buffer.get(cursor..)?.iter().position(|byte| *byte == 0)? + 1;
+    while buffer.get(cursor).is_some_and(|byte| *byte == 0) {
+        cursor += 1;
+    }
+
+    let mut arguments = Vec::with_capacity(argc);
+    while arguments.len() < argc && cursor < buffer.len() {
+        let tail = buffer.get(cursor..)?;
+        let end = tail.iter().position(|byte| *byte == 0)?;
+        arguments.push(String::from_utf8_lossy(&tail[..end]).into_owned());
+        cursor += end + 1;
+    }
+    (arguments.len() == argc).then_some(arguments)
+}
+
+#[cfg(target_os = "macos")]
 mod platform {
-    use libproc::libproc::proc_pid::{pidinfo, pidpath};
+    use crate::parse_procargs2;
+    use libproc::libproc::file_info::{ListFDs, ProcFDType, pidfdinfo};
+    use libproc::libproc::net_info::{SocketFDInfo, SocketInfoKind, TcpSIState};
+    use libproc::libproc::proc_pid::{listpidinfo, pidinfo, pidpath};
     use libproc::libproc::task_info::TaskAllInfo;
     use libproc::processes::{ProcFilter, pids_by_type};
     use std::error::Error;
     use std::ffi::c_void;
     use std::fmt::{Display, Formatter};
-    use std::fs;
+    use std::fs::OpenOptions;
+    use std::io::Read;
     use std::mem::size_of;
-    use std::os::unix::fs::MetadataExt;
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+    use std::path::Path;
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
     use unlinger_core::{
-        CleanupRuntime, CleanupSignal, ExecutableIdentity, ProcessIdentity, ProcessRecord,
-        ProcessStatus, RuntimeFailure, SignalDisposition, Snapshot, SnapshotCoverage,
+        CleanupRuntime, CleanupSignal, ClockSample, ExecutableIdentity, ProcessIdentity,
+        ProcessRecord, ProcessRuntimeFacts, ProcessStatus, RuntimeFailure, SignalDisposition,
+        Snapshot, SnapshotCoverage, WaitOutcome, fingerprint_parts,
     };
 
     const CTL_KERN: libc::c_int = 1;
@@ -60,15 +107,13 @@ mod platform {
             let pids = pids_by_type(ProcFilter::ByUID { uid: current_uid })
                 .map_err(|error| SnapshotError::ProcessList(error.to_string()))?;
             let argmax = kernel_argmax()?;
-            let mut coverage = SnapshotCoverage {
-                listed_processes: pids.len(),
-                ..SnapshotCoverage::default()
-            };
+            let mut coverage = SnapshotCoverage::default();
             let mut processes = Vec::with_capacity(pids.len());
 
             for pid in pids {
-                match read_process(pid, argmax) {
+                match read_live_process(pid, argmax) {
                     Ok(process) => {
+                        coverage.listed_processes += 1;
                         coverage.inspected_processes += 1;
                         if process.arguments.is_none() {
                             coverage.arguments_unavailable += 1;
@@ -76,14 +121,21 @@ mod platform {
                         if !process.executable.is_complete() {
                             coverage.executable_identity_unavailable += 1;
                         }
+                        if !process.runtime.descriptor_facts_complete {
+                            coverage.descriptor_facts_unavailable += 1;
+                        }
                         processes.push(process);
                     }
-                    Err(()) => coverage.unreadable_processes += 1,
+                    Err(ProcessReadFailure::GoneOrZombie) => {}
+                    Err(ProcessReadFailure::Unreadable) => {
+                        coverage.listed_processes += 1;
+                        coverage.unreadable_processes += 1;
+                    }
                 }
             }
             processes.sort_by_key(ProcessRecord::pid);
 
-            let observed_at_unix_millis = current_unix_millis()?;
+            let observed_at_unix_millis = current_clock_sample()?.wall_unix_millis;
 
             Ok(Snapshot {
                 observed_at_unix_millis,
@@ -95,10 +147,10 @@ mod platform {
 
         pub fn lookup(&self, pid: u32) -> Result<Option<ProcessRecord>, SnapshotError> {
             let argmax = kernel_argmax()?;
-            match read_process(pid, argmax) {
+            match read_live_process(pid, argmax) {
                 Ok(process) => Ok(Some(process)),
-                Err(()) if !process_exists(pid) => Ok(None),
-                Err(()) => Err(SnapshotError::ProcessLookup(format!(
+                Err(ProcessReadFailure::GoneOrZombie) => Ok(None),
+                Err(ProcessReadFailure::Unreadable) => Err(SnapshotError::ProcessLookup(format!(
                     "native metadata unavailable for live pid {pid}"
                 ))),
             }
@@ -126,8 +178,14 @@ mod platform {
                 .map_err(|error| RuntimeFailure::new(error.to_string()))
         }
 
-        fn now_unix_millis(&self) -> Result<u64, RuntimeFailure> {
-            current_unix_millis().map_err(|error| RuntimeFailure::new(error.to_string()))
+        fn lookup_process(&mut self, pid: u32) -> Result<Option<ProcessRecord>, RuntimeFailure> {
+            self.snapshotter
+                .lookup(pid)
+                .map_err(|error| RuntimeFailure::new(error.to_string()))
+        }
+
+        fn clock_sample(&self) -> Result<ClockSample, RuntimeFailure> {
+            current_clock_sample().map_err(|error| RuntimeFailure::new(error.to_string()))
         }
 
         fn signal_exact(
@@ -167,9 +225,56 @@ mod platform {
             }
         }
 
-        fn wait(&mut self, duration: std::time::Duration) {
-            std::thread::sleep(duration);
+        fn wait_until(
+            &mut self,
+            duration: Duration,
+            should_stop: &mut dyn FnMut() -> bool,
+        ) -> Result<WaitOutcome, RuntimeFailure> {
+            if should_stop() {
+                return Ok(WaitOutcome::Interrupted);
+            }
+            let duration_nanos = u64::try_from(duration.as_nanos())
+                .map_err(|_| RuntimeFailure::new("wait duration overflowed u64 nanoseconds"))?;
+            let started =
+                continuous_nanos().map_err(|error| RuntimeFailure::new(error.to_string()))?;
+            let deadline = started
+                .checked_add(duration_nanos)
+                .ok_or_else(|| RuntimeFailure::new("wait deadline overflowed u64 nanoseconds"))?;
+            loop {
+                if should_stop() {
+                    return Ok(WaitOutcome::Interrupted);
+                }
+                let now =
+                    continuous_nanos().map_err(|error| RuntimeFailure::new(error.to_string()))?;
+                if now >= deadline {
+                    return Ok(WaitOutcome::DeadlineReached);
+                }
+                let remaining = Duration::from_nanos(deadline - now);
+                std::thread::sleep(remaining.min(Duration::from_millis(100)));
+            }
         }
+
+        fn freeze_artifact(
+            &mut self,
+            candidate: &unlinger_core::RuntimeArtifactCandidate,
+        ) -> Result<unlinger_core::ArtifactFreeze, RuntimeFailure> {
+            crate::artifacts::freeze(candidate)
+        }
+
+        fn remove_artifact_exact(
+            &mut self,
+            artifact: &unlinger_core::FrozenRuntimeArtifact,
+        ) -> unlinger_core::ArtifactDisposition {
+            crate::artifacts::remove_exact(artifact)
+        }
+    }
+
+    fn current_clock_sample() -> Result<ClockSample, SnapshotError> {
+        Ok(ClockSample {
+            wall_unix_millis: current_unix_millis()?,
+            continuous_millis: continuous_nanos()? / 1_000_000,
+            boot_session_fingerprint: boot_session_fingerprint()?,
+        })
     }
 
     fn current_unix_millis() -> Result<u64, SnapshotError> {
@@ -181,13 +286,211 @@ mod platform {
             .map_err(|_| SnapshotError::Clock("wall-clock milliseconds overflowed u64".to_owned()))
     }
 
+    fn continuous_nanos() -> Result<u64, SnapshotError> {
+        let mut value = libc::timespec {
+            tv_sec: 0,
+            tv_nsec: 0,
+        };
+        if unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC_RAW, &raw mut value) } != 0 {
+            return Err(SnapshotError::Clock(format!(
+                "continuous clock unavailable: {}",
+                std::io::Error::last_os_error()
+            )));
+        }
+        if value.tv_sec < 0 || !(0..1_000_000_000).contains(&value.tv_nsec) {
+            return Err(SnapshotError::Clock(
+                "continuous clock returned an invalid timespec".to_owned(),
+            ));
+        }
+        let seconds = u64::try_from(value.tv_sec)
+            .map_err(|_| SnapshotError::Clock("continuous seconds overflowed u64".to_owned()))?;
+        let nanos = u64::try_from(value.tv_nsec)
+            .map_err(|_| SnapshotError::Clock("continuous nanoseconds were negative".to_owned()))?;
+        seconds
+            .checked_mul(1_000_000_000)
+            .and_then(|total| total.checked_add(nanos))
+            .ok_or_else(|| SnapshotError::Clock("continuous nanoseconds overflowed u64".to_owned()))
+    }
+
+    fn boot_session_fingerprint() -> Result<String, SnapshotError> {
+        let raw = boot_session_uuid().or_else(|_| boot_time_identity())?;
+        Ok(fingerprint_parts([
+            b"unlinger.boot-session.v1".as_slice(),
+            raw.as_slice(),
+        ]))
+    }
+
+    fn boot_session_uuid() -> Result<Vec<u8>, SnapshotError> {
+        let name = b"kern.bootsessionuuid\0";
+        let mut size = 0_usize;
+        if unsafe {
+            libc::sysctlbyname(
+                name.as_ptr().cast(),
+                std::ptr::null_mut(),
+                &raw mut size,
+                std::ptr::null_mut(),
+                0,
+            )
+        } != 0
+            || size <= 1
+        {
+            return Err(SnapshotError::Sysctl(format!(
+                "kern.bootsessionuuid size unavailable: {}",
+                std::io::Error::last_os_error()
+            )));
+        }
+        let mut value = vec![0_u8; size];
+        if unsafe {
+            libc::sysctlbyname(
+                name.as_ptr().cast(),
+                value.as_mut_ptr().cast::<c_void>(),
+                &raw mut size,
+                std::ptr::null_mut(),
+                0,
+            )
+        } != 0
+        {
+            return Err(SnapshotError::Sysctl(format!(
+                "kern.bootsessionuuid unavailable: {}",
+                std::io::Error::last_os_error()
+            )));
+        }
+        value.truncate(size);
+        while value.last() == Some(&0) {
+            value.pop();
+        }
+        if value.is_empty() {
+            Err(SnapshotError::Sysctl(
+                "kern.bootsessionuuid was empty".to_owned(),
+            ))
+        } else {
+            Ok(value)
+        }
+    }
+
+    fn boot_time_identity() -> Result<Vec<u8>, SnapshotError> {
+        let mut mib = [CTL_KERN, libc::KERN_BOOTTIME];
+        let mut boot_time = libc::timeval {
+            tv_sec: 0,
+            tv_usec: 0,
+        };
+        let mut size = size_of::<libc::timeval>();
+        if unsafe {
+            libc::sysctl(
+                mib.as_mut_ptr(),
+                mib.len() as libc::c_uint,
+                (&raw mut boot_time).cast::<c_void>(),
+                &raw mut size,
+                std::ptr::null_mut(),
+                0,
+            )
+        } != 0
+            || size != size_of::<libc::timeval>()
+        {
+            return Err(SnapshotError::Sysctl(format!(
+                "kern.boottime unavailable: {}",
+                std::io::Error::last_os_error()
+            )));
+        }
+        if boot_time.tv_sec <= 0 || boot_time.tv_usec < 0 {
+            return Err(SnapshotError::Sysctl(
+                "kern.boottime returned an invalid timeval".to_owned(),
+            ));
+        }
+        Ok(format!("{}:{}", boot_time.tv_sec, boot_time.tv_usec).into_bytes())
+    }
+
+    enum ProcessReadFailure {
+        GoneOrZombie,
+        Unreadable,
+    }
+
+    fn read_live_process(pid: u32, argmax: usize) -> Result<ProcessRecord, ProcessReadFailure> {
+        match read_process(pid, argmax) {
+            Ok(process) if process.status == ProcessStatus::Zombie => {
+                Err(ProcessReadFailure::GoneOrZombie)
+            }
+            Ok(process) => Ok(process),
+            Err(()) => match kern_process_status(pid) {
+                Some(STATUS_ZOMBIE) => Err(ProcessReadFailure::GoneOrZombie),
+                Some(_) => Err(ProcessReadFailure::Unreadable),
+                None if !process_exists(pid) => Err(ProcessReadFailure::GoneOrZombie),
+                None => Err(ProcessReadFailure::Unreadable),
+            },
+        }
+    }
+
+    /// Layout prefix from Darwin's documented `extern_proc`. `kinfo_proc`
+    /// begins with this structure, and only `p_stat` is read.
+    #[repr(C)]
+    struct ExternProcStatusPrefix {
+        p_un: [*mut c_void; 2],
+        p_vmspace: *mut c_void,
+        p_sigacts: *mut c_void,
+        p_flag: libc::c_int,
+        p_stat: libc::c_char,
+    }
+
+    fn kern_process_status(pid: u32) -> Option<u32> {
+        let pid = libc::c_int::try_from(pid).ok()?;
+        let mut mib = [CTL_KERN, libc::KERN_PROC, libc::KERN_PROC_PID, pid];
+        let mut size = 0_usize;
+        if unsafe {
+            libc::sysctl(
+                mib.as_mut_ptr(),
+                mib.len() as libc::c_uint,
+                std::ptr::null_mut(),
+                &raw mut size,
+                std::ptr::null_mut(),
+                0,
+            )
+        } != 0
+            || size == 0
+        {
+            return None;
+        }
+
+        let mut bytes = vec![0_u8; size];
+        if unsafe {
+            libc::sysctl(
+                mib.as_mut_ptr(),
+                mib.len() as libc::c_uint,
+                bytes.as_mut_ptr().cast::<c_void>(),
+                &raw mut size,
+                std::ptr::null_mut(),
+                0,
+            )
+        } != 0
+        {
+            return None;
+        }
+
+        let status_offset = std::mem::offset_of!(ExternProcStatusPrefix, p_stat);
+        bytes
+            .get(..size)?
+            .get(status_offset)
+            .copied()
+            .map(u32::from)
+    }
+
+    pub(crate) fn is_confirmed_zombie(pid: u32) -> bool {
+        kern_process_status(pid) == Some(STATUS_ZOMBIE)
+    }
+
     fn read_process(pid: u32, argmax: usize) -> Result<ProcessRecord, ()> {
         let pid_i32 = i32::try_from(pid).map_err(|_| ())?;
         let info = pidinfo::<TaskAllInfo>(pid_i32, 0).map_err(|_| ())?;
         let path = pidpath(pid_i32).ok().filter(|path| !path.is_empty());
         let executable = path
             .as_deref()
-            .and_then(|path| fs::metadata(path).ok())
+            .and_then(|path| {
+                OpenOptions::new()
+                    .read(true)
+                    .custom_flags(libc::O_NOFOLLOW_ANY | libc::O_CLOEXEC)
+                    .open(path)
+                    .ok()
+            })
+            .and_then(|file| file.metadata().ok())
             .map_or_else(ExecutableIdentity::default, |metadata| ExecutableIdentity {
                 device: Some(metadata.dev()),
                 inode: Some(metadata.ino()),
@@ -207,6 +510,11 @@ mod platform {
             .or_else(|| decode_c_chars(&info.pbsd.pbi_comm))
             .unwrap_or_else(|| format!("pid-{pid}"));
         let tty_device = (!matches!(info.pbsd.e_tdev, 0 | u32::MAX)).then_some(info.pbsd.e_tdev);
+        let arguments = process_arguments(pid_i32, argmax).ok();
+        let mut runtime = process_runtime_facts(pid_i32, info.pbsd.pbi_nfiles, &arguments);
+        runtime.app_bundle = path
+            .as_deref()
+            .and_then(|path| crate::version::collect_app_bundle_version(Path::new(path)));
 
         Ok(ProcessRecord {
             identity: ProcessIdentity {
@@ -222,7 +530,7 @@ mod platform {
             name,
             executable_path: path,
             executable,
-            arguments: process_arguments(pid_i32, argmax).ok(),
+            arguments,
             resident_memory_bytes: info.ptinfo.pti_resident_size,
             status: match info.pbsd.pbi_status {
                 STATUS_RUN => ProcessStatus::Running,
@@ -231,7 +539,134 @@ mod platform {
                 STATUS_ZOMBIE => ProcessStatus::Zombie,
                 other => ProcessStatus::Other(other),
             },
+            runtime: ProcessRuntimeFacts {
+                cpu_total_nanos: info
+                    .ptinfo
+                    .pti_total_user
+                    .saturating_add(info.ptinfo.pti_total_system),
+                ..runtime
+            },
         })
+    }
+
+    fn process_runtime_facts(
+        pid: i32,
+        declared_file_count: u32,
+        arguments: &Option<Vec<String>>,
+    ) -> ProcessRuntimeFacts {
+        let Ok(max_len) = usize::try_from(declared_file_count) else {
+            return ProcessRuntimeFacts::default();
+        };
+        let Ok(fds) = listpidinfo::<ListFDs>(pid, max_len) else {
+            return ProcessRuntimeFacts::default();
+        };
+        let mut facts = ProcessRuntimeFacts {
+            open_file_descriptors: fds.len(),
+            descriptor_facts_complete: true,
+            ..ProcessRuntimeFacts::default()
+        };
+        for fd in fds {
+            let ProcFDType::Socket = ProcFDType::from(fd.proc_fdtype) else {
+                continue;
+            };
+            let Ok(socket) = pidfdinfo::<SocketFDInfo>(pid, fd.proc_fd) else {
+                facts.descriptor_facts_complete = false;
+                continue;
+            };
+            match SocketInfoKind::from(socket.psi.soi_kind) {
+                SocketInfoKind::Tcp => {
+                    let tcp = unsafe { socket.psi.soi_proto.pri_tcp };
+                    let Some(port) = network_port(tcp.tcpsi_ini.insi_lport) else {
+                        facts.descriptor_facts_complete = false;
+                        continue;
+                    };
+                    match TcpSIState::from(tcp.tcpsi_state) {
+                        TcpSIState::Listen => facts.tcp_listening_ports.push(port),
+                        TcpSIState::Established => {
+                            facts.tcp_established_local_ports.push(port);
+                        }
+                        _ => {}
+                    }
+                }
+                SocketInfoKind::Un => {
+                    let unix = unsafe { socket.psi.soi_proto.pri_un };
+                    if unix.unsi_conn_so != 0 {
+                        facts.connected_unix_sockets += 1;
+                    }
+                }
+                _ => {}
+            }
+        }
+        facts.tcp_listening_ports.sort_unstable();
+        facts.tcp_listening_ports.dedup();
+        facts.tcp_established_local_ports.sort_unstable();
+        facts.tcp_established_local_ports.dedup();
+
+        let has_debug_port = arguments
+            .as_ref()
+            .is_some_and(|arguments| has_flag(arguments, "--remote-debugging-port"));
+        let requested_debug_port = arguments
+            .as_ref()
+            .and_then(|arguments| debug_port(arguments));
+        facts.debug_transport_facts_complete =
+            facts.descriptor_facts_complete && (!has_debug_port || requested_debug_port.is_some());
+        if let Some(port) = requested_debug_port {
+            facts.attached_debug_transport = facts.descriptor_facts_complete
+                && facts.tcp_established_local_ports.contains(&port);
+        }
+        facts
+    }
+
+    fn network_port(raw: libc::c_int) -> Option<u16> {
+        let narrowed = u16::try_from(raw & i32::from(u16::MAX)).ok()?;
+        Some(u16::from_be(narrowed))
+    }
+
+    fn debug_port(arguments: &[String]) -> Option<u16> {
+        let value = flag_value(arguments, "--remote-debugging-port")?;
+        let configured = value.parse::<u16>().ok()?;
+        if configured != 0 {
+            return Some(configured);
+        }
+        let profile = Path::new(flag_value(arguments, "--user-data-dir")?);
+        if !profile.is_absolute() {
+            return None;
+        }
+        read_devtools_active_port(&profile.join("DevToolsActivePort"))
+    }
+
+    fn read_devtools_active_port(path: &Path) -> Option<u16> {
+        let file = OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NOFOLLOW_ANY | libc::O_CLOEXEC)
+            .open(path)
+            .ok()?;
+        let metadata = file.metadata().ok()?;
+        if !metadata.file_type().is_file() || metadata.uid() != unsafe { libc::geteuid() } {
+            return None;
+        }
+        let mut bytes = Vec::new();
+        file.take(64).read_to_end(&mut bytes).ok()?;
+        let first_line = bytes.split(|byte| *byte == b'\n').next()?;
+        std::str::from_utf8(first_line).ok()?.parse::<u16>().ok()
+    }
+
+    fn has_flag(arguments: &[String], name: &str) -> bool {
+        arguments
+            .iter()
+            .any(|argument| argument == name || argument.starts_with(&format!("{name}=")))
+    }
+
+    fn flag_value<'a>(arguments: &'a [String], name: &str) -> Option<&'a str> {
+        for (index, argument) in arguments.iter().enumerate() {
+            if argument == name {
+                return arguments.get(index + 1).map(String::as_str);
+            }
+            if let Some(value) = argument.strip_prefix(&format!("{name}=")) {
+                return Some(value);
+            }
+        }
+        None
     }
 
     fn process_exists(pid: u32) -> bool {
@@ -312,35 +747,6 @@ mod platform {
             .ok_or_else(|| SnapshotError::Sysctl(format!("malformed KERN_PROCARGS2 for pid {pid}")))
     }
 
-    fn parse_procargs2(buffer: &[u8]) -> Option<Vec<String>> {
-        let argc_bytes: [u8; size_of::<libc::c_int>()] =
-            buffer.get(..size_of::<libc::c_int>())?.try_into().ok()?;
-        let argc = libc::c_int::from_ne_bytes(argc_bytes);
-        if argc < 0 {
-            return None;
-        }
-        let argc = usize::try_from(argc).ok()?;
-        let mut cursor = size_of::<libc::c_int>();
-
-        cursor += buffer.get(cursor..)?.iter().position(|byte| *byte == 0)? + 1;
-        while buffer.get(cursor).is_some_and(|byte| *byte == 0) {
-            cursor += 1;
-        }
-
-        let mut arguments = Vec::with_capacity(argc);
-        while arguments.len() < argc && cursor < buffer.len() {
-            let tail = buffer.get(cursor..)?;
-            let end = tail.iter().position(|byte| *byte == 0)?;
-            let value = String::from_utf8_lossy(&tail[..end]).into_owned();
-            arguments.push(value);
-            cursor += end + 1;
-            while buffer.get(cursor).is_some_and(|byte| *byte == 0) {
-                cursor += 1;
-            }
-        }
-        (arguments.len() == argc).then_some(arguments)
-    }
-
     fn decode_c_chars<const N: usize>(bytes: &[libc::c_char; N]) -> Option<String> {
         let bytes = bytes.iter().map(|byte| *byte as u8).collect::<Vec<_>>();
         let end = bytes
@@ -353,6 +759,107 @@ mod platform {
     #[cfg(test)]
     mod tests {
         use super::*;
+        use std::time::Instant;
+
+        struct OwnedZombie {
+            controller_pid: libc::pid_t,
+            zombie_pid: libc::pid_t,
+        }
+
+        extern "C" fn retain_exited_child(_: libc::c_int) {}
+
+        impl OwnedZombie {
+            fn spawn() -> Self {
+                let mut pipe = [-1; 2];
+                assert_eq!(unsafe { libc::pipe(pipe.as_mut_ptr()) }, 0);
+                let controller_pid = unsafe { libc::fork() };
+                assert!(controller_pid >= 0, "fork an owned zombie controller");
+                if controller_pid == 0 {
+                    unsafe {
+                        libc::close(pipe[0]);
+                        let mut action = std::mem::zeroed::<libc::sigaction>();
+                        action.sa_sigaction = retain_exited_child as *const () as usize;
+                        libc::sigemptyset(&raw mut action.sa_mask);
+                        action.sa_flags = 0;
+                        if libc::sigaction(libc::SIGCHLD, &raw const action, std::ptr::null_mut())
+                            != 0
+                        {
+                            libc::_exit(126);
+                        }
+                        let zombie_pid = libc::fork();
+                        if zombie_pid == 0 {
+                            libc::_exit(0);
+                        }
+                        let bytes = zombie_pid.to_ne_bytes();
+                        let _ = libc::write(pipe[1], bytes.as_ptr().cast(), bytes.len());
+                        libc::close(pipe[1]);
+                        loop {
+                            libc::pause();
+                        }
+                    }
+                }
+                unsafe { libc::close(pipe[1]) };
+                let mut bytes = [0_u8; size_of::<libc::pid_t>()];
+                let mut offset = 0;
+                while offset < bytes.len() {
+                    let read = unsafe {
+                        libc::read(
+                            pipe[0],
+                            bytes[offset..].as_mut_ptr().cast(),
+                            bytes.len() - offset,
+                        )
+                    };
+                    assert!(read > 0, "read owned zombie PID from controller");
+                    offset += usize::try_from(read).expect("positive pipe read length");
+                }
+                unsafe { libc::close(pipe[0]) };
+                let zombie_pid = libc::pid_t::from_ne_bytes(bytes);
+                assert!(zombie_pid > 0, "controller forked an owned zombie");
+                Self {
+                    controller_pid,
+                    zombie_pid,
+                }
+            }
+
+            fn pid(&self) -> u32 {
+                u32::try_from(self.zombie_pid).expect("owned zombie PID")
+            }
+
+            fn wait_until_zombie(&self) {
+                let deadline = Instant::now() + Duration::from_secs(2);
+                loop {
+                    let kern_status = kern_process_status(self.pid());
+                    if kern_status == Some(STATUS_ZOMBIE) {
+                        return;
+                    }
+                    if Instant::now() >= deadline {
+                        let task_status = i32::try_from(self.pid())
+                            .ok()
+                            .and_then(|pid| pidinfo::<TaskAllInfo>(pid, 0).ok())
+                            .map(|info| info.pbsd.pbi_status);
+                        panic!(
+                            "owned child never reached zombie state: kern_status={kern_status:?}, task_status={task_status:?}, process_exists={}",
+                            process_exists(self.pid())
+                        );
+                    }
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+            }
+        }
+
+        impl Drop for OwnedZombie {
+            fn drop(&mut self) {
+                let mut status = 0;
+                unsafe {
+                    libc::kill(self.controller_pid, libc::SIGKILL);
+                    libc::waitpid(self.controller_pid, &raw mut status, 0);
+                }
+                let deadline = Instant::now() + Duration::from_secs(2);
+                while process_exists(self.pid()) && Instant::now() < deadline {
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+            }
+        }
 
         #[test]
         fn parses_procargs2_without_environment_tail() {
@@ -374,8 +881,114 @@ mod platform {
             bytes.extend_from_slice(b"/bin/tool\0\0tool\0");
             assert_eq!(parse_procargs2(&bytes), None);
         }
+
+        #[test]
+        fn clock_sample_is_continuous_and_redacts_the_boot_identity() {
+            let first = current_clock_sample().expect("first clock sample");
+            let second = current_clock_sample().expect("second clock sample");
+
+            assert!(second.continuous_millis >= first.continuous_millis);
+            assert_eq!(
+                second.boot_session_fingerprint,
+                first.boot_session_fingerprint
+            );
+            assert_eq!(first.boot_session_fingerprint.len(), 16);
+            assert!(
+                first
+                    .boot_session_fingerprint
+                    .bytes()
+                    .all(|byte| byte.is_ascii_hexdigit())
+            );
+        }
+
+        #[test]
+        fn wait_observes_a_drain_request_without_sleeping() {
+            let mut runtime = MacosRuntime::new();
+            let mut stop = || true;
+
+            assert_eq!(
+                runtime
+                    .wait_until(Duration::from_secs(60), &mut stop)
+                    .expect("interruptible wait"),
+                WaitOutcome::Interrupted
+            );
+        }
+
+        #[test]
+        fn a_confirmed_zombie_is_not_projected_as_a_live_unreadable_process() {
+            use libproc::libproc::bsd_info::BSDInfo;
+
+            let child = OwnedZombie::spawn();
+            child.wait_until_zombie();
+            let pid = i32::try_from(child.pid()).expect("owned zombie pid fits i32");
+
+            if let Ok(info) = pidinfo::<TaskAllInfo>(pid, 0) {
+                assert_eq!(info.pbsd.pbi_status, STATUS_ZOMBIE);
+            }
+            if let Ok(info) = pidinfo::<BSDInfo>(pid, 0) {
+                assert_eq!(info.pbi_status, STATUS_ZOMBIE);
+            }
+            assert!(process_exists(child.pid()));
+
+            assert!(
+                MacosSnapshotter::new()
+                    .lookup(child.pid())
+                    .expect("lookup owned zombie")
+                    .is_none()
+            );
+            assert!(matches!(
+                read_live_process(child.pid(), kernel_argmax().expect("kernel argmax")),
+                Err(ProcessReadFailure::GoneOrZombie)
+            ));
+
+            let snapshot = MacosSnapshotter::new()
+                .capture()
+                .expect("capture live table");
+            assert!(
+                snapshot
+                    .processes
+                    .iter()
+                    .all(|process| process.pid() != child.pid())
+            );
+            assert_eq!(
+                snapshot.coverage.listed_processes,
+                snapshot.coverage.inspected_processes + snapshot.coverage.unreadable_processes
+            );
+            assert_eq!(
+                snapshot.processes.len(),
+                snapshot.coverage.inspected_processes
+            );
+        }
+
+        #[test]
+        fn captures_transient_cpu_and_debug_socket_facts() {
+            use std::io::{Read, Write};
+            use std::net::{TcpListener, TcpStream};
+
+            let listener = TcpListener::bind("127.0.0.1:0").expect("bind listener");
+            let port = listener.local_addr().expect("listener address").port();
+            let mut client = TcpStream::connect(("127.0.0.1", port)).expect("connect client");
+            let (mut server, _) = listener.accept().expect("accept client");
+            client.write_all(b"x").expect("write client byte");
+            let mut byte = [0_u8; 1];
+            server.read_exact(&mut byte).expect("read client byte");
+
+            let process = MacosSnapshotter::new()
+                .lookup(std::process::id())
+                .expect("lookup current process")
+                .expect("current process exists");
+
+            assert!(process.runtime.cpu_total_nanos > 0);
+            assert!(process.runtime.descriptor_facts_complete);
+            assert!(process.runtime.open_file_descriptors >= 3);
+            assert!(process.runtime.tcp_listening_ports.contains(&port));
+            assert!(process.runtime.tcp_established_local_ports.contains(&port));
+        }
     }
 }
+
+#[cfg(target_os = "macos")]
+pub use events::{EventMonitorError, MacosEventMonitor, MemoryPressureLevel, RuntimeEvent};
 
 #[cfg(target_os = "macos")]
 pub use platform::{MacosRuntime, MacosSnapshotter, SnapshotError};

@@ -1,8 +1,18 @@
-schema_version = 1
+schema_version = 2
 id = "playwright"
-version = "0.1.0"
-supported_versions = "observational signatures for Playwright CLI and MCP; exact version range not yet field-proven"
+version = "0.2.0"
+supported_versions = "Chrome for Testing 151.0.7922.34 only; Playwright controller version remains observational"
+graceful_strategy = "os_term_only"
 controller_markers = ["playwright", "@playwright/mcp", "playwright-mcp"]
 framework_markers = ["playwright", "@playwright/mcp", "ms-playwright"]
 ephemeral_profile_markers = ["playwright_chromiumdev_profile", "playwright-artifacts", "ms-playwright"]
 browser_executable_markers = ["chrome for testing", "chromium", "google chrome"]
+recorder_executable_basenames = ["ffmpeg"]
+
+[version_policy]
+mode = "exact_allowlist"
+bundle_id = "com.google.chrome.for.testing"
+versions = ["151.0.7922.34"]
+
+[artifact_policy]
+devtools_active_port = true

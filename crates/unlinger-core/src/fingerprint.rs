@@ -18,6 +18,18 @@ pub fn fingerprint_parts<'a>(parts: impl IntoIterator<Item = &'a [u8]>) -> Strin
 }
 
 #[must_use]
+pub fn fingerprint_process_identity(identity: &ProcessIdentity) -> String {
+    let row = format!(
+        "{}:{}:{}:{}",
+        identity.pid,
+        identity.started_at_unix_micros,
+        identity.executable_device.unwrap_or_default(),
+        identity.executable_inode.unwrap_or_default()
+    );
+    fingerprint_parts([row.as_bytes()])
+}
+
+#[must_use]
 pub fn fingerprint_process_set<'a>(
     identities: impl IntoIterator<Item = &'a ProcessIdentity>,
 ) -> String {
@@ -59,5 +71,39 @@ mod tests {
             fingerprint_process_set([&a, &b]),
             fingerprint_process_set([&b, &a])
         );
+    }
+
+    #[test]
+    fn process_identity_fingerprint_covers_every_exact_identity_field() {
+        let baseline = ProcessIdentity {
+            pid: 10,
+            started_at_unix_micros: 20,
+            executable_device: Some(30),
+            executable_inode: Some(40),
+        };
+
+        for changed in [
+            ProcessIdentity {
+                pid: 11,
+                ..baseline.clone()
+            },
+            ProcessIdentity {
+                started_at_unix_micros: 21,
+                ..baseline.clone()
+            },
+            ProcessIdentity {
+                executable_device: Some(31),
+                ..baseline.clone()
+            },
+            ProcessIdentity {
+                executable_inode: Some(41),
+                ..baseline.clone()
+            },
+        ] {
+            assert_ne!(
+                fingerprint_process_identity(&baseline),
+                fingerprint_process_identity(&changed)
+            );
+        }
     }
 }

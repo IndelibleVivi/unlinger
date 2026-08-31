@@ -4,60 +4,96 @@ This is the current private working diagram. It distinguishes implemented source
 
 ```mermaid
 flowchart LR
-    subgraph SERVICE[Per-user service lifecycle]
+    subgraph SERVICE[Per-user service source candidate]
         SVC[unlinger service<br/>install status set-mode uninstall]
-        FILES[Staged private files<br/>per-file rename + transaction lock]
-        LAUNCHD[launchd LaunchAgent<br/>PID owner + restart boundary]
-        SVC --> FILES --> LAUNCHD
+        TX[Durable install transaction<br/>SQLite backup + report-only recovery]
+        GEN[Sealed immutable generation<br/>CLI + daemon + manifest]
+        LAUNCHD[launchd LaunchAgent<br/>exact PID and binary owner]
+        SVC --> TX --> GEN --> LAUNCHD
+    end
+
+    subgraph TRIG[Scheduling hints]
+        PERIODIC[60 s periodic fallback]
+        EXIT[Watched process exit]
+        WAKE[System wake]
+        PRESSURE[Memory pressure]
+        SCHED[Coalescing scheduler]
+        PERIODIC --> SCHED
+        EXIT --> SCHED
+        WAKE --> SCHED
+        PRESSURE -->|urgency only| SCHED
     end
 
     subgraph OS[macOS current-user boundary]
-        PT[Process table]
+        PT[Process table + exact zombie status]
+        BUNDLE[Exact app-bundle version]
         SIG[Exact same-user process signals]
+        DAP[Targeted pathname-reference proof<br/>+ exact DevToolsActivePort unlink]
     end
 
     subgraph OBS[Observation and authorization]
-        SNAP[unlinger-macos<br/>libproc identity + sysctl argv]
-        GRAPH[unlinger-core<br/>graph + incident model]
-        RULES[unlinger-rules<br/>sessionization + protections]
+        SNAP[Fresh unlinger-macos snapshot]
+        GRAPH[unlinger-core identity graph]
+        PACKS[Schema-v2 TOML packs]
+        SESSION[Shared deterministic Rust sessionizer]
+        GATES[Hard protections<br/>exact CfT point + age 60 s]
         COOL[SQLite cooling ledger<br/>durable 90 s abandonment grace]
-        GATES[Hard gate ledger<br/>two observations + exact identity]
     end
 
-    subgraph MODE[Daemon activation boundary]
-        DAEMON[unlingerd<br/>startup + periodic sweeps]
-        REPORT[Report-only default]
+    subgraph MODE[Daemon and enforcement]
+        DAEMON[unlingerd]
+        FIRST[First scan always report-only]
+        LIFE[Durable requested/effective mode<br/>generation + instance + epoch]
+        REPORT[Redacted report-only projection]
         PLAN[Frozen cleanup plan]
-        RECHECK[Fresh incident revalidation]
+        RECHECK[Fresh exact revalidation]
+        PREP[Durable PREPARED signal row]
         EXEC[Primary TERM → member TERM<br/>→ exact-survivor KILL]
         REVIVE[Post-scan + bounded<br/>15/60 s revival checks]
+        APREP[Durable PREPARED artifact row]
     end
 
-    subgraph LOCAL[Local observability]
-        STORE[Redacted SQLite timeline<br/>14 d or 10,000 events]
-        IPC[0600 Unix socket]
-        CLI[CLI<br/>status history explain<br/>pause resume diagnostics]
+    subgraph LOCAL[Owner-private state and control]
+        STORE[SQLite v5 timeline + journals<br/>14 d or 10,000 events]
+        IPC[0600 newline-delimited JSON socket<br/>bounded eight-worker server]
+        ORDINARY[Ordinary CLI/UI contract<br/>status history explain controls]
+        INTERNAL[Service-only lifecycle controls<br/>exact generation + instance]
     end
 
-    LAUNCHD --> DAEMON --> SNAP
-    PT --> SNAP --> GRAPH
-    RULES --> GRAPH
-    GRAPH --> COOL --> GATES
-    GATES -->|all modes| REPORT
-    REPORT --> STORE
-    GATES -->|explicit enforce mode only| PLAN
-    PLAN --> RECHECK
-    RECHECK -->|all current facts still pass| EXEC
-    EXEC --> SIG
-    SIG --> REVIVE
-    REVIVE --> STORE
-    STORE --> IPC --> CLI
-    CLI -->|pause / resume only| MODE
-    CLI --> SVC
+    LAUNCHD --> DAEMON --> FIRST --> SCHED
+    PT --> SNAP
+    BUNDLE --> SNAP
+    SCHED --> SNAP --> GRAPH --> SESSION
+    PACKS --> SESSION --> GATES --> COOL
+    COOL --> REPORT --> STORE
+    STORE --> LIFE --> DAEMON
+    COOL -->|confirmed + effective enforce| PLAN --> RECHECK --> PREP
+    PREP --> STORE
+    PREP -->|after durable commit| EXEC
+    EXEC --> SIG --> REVIVE
+    REVIVE -->|tree gone, no revival, exact DAP candidate| APREP
+    APREP --> STORE
+    APREP -->|after durable commit| DAP --> STORE
+    STORE --> IPC --> ORDINARY
+    SVC --> INTERNAL --> IPC
 ```
 
-`unlingerd` defaults to report-only when invoked directly. The first owner-approved dogfood LaunchAgent is installed with an explicit enforce argument after report-only persistence and mode rollback were verified. The service CLI stages binaries and plist files beside their destinations, validates the candidate, gracefully unloads the prior exact launchd process, promotes each file with a same-directory rename inside one rollback-capable transaction, and accepts the new service only when launchd PID, IPC PID, declared mode, private permissions, and a completed first scan agree. A failed activation removes the candidate and restores the prior files/service. This is activation-failure rollback, not yet a versioned or power-loss-atomic distribution update.
+`unlingerd` defaults to report-only when invoked directly. Managed source boots name a sealed generation and never receive `--enforce` in the plist. Every managed process begins with a signal-free report-only recovery/first-scan phase. A same-generation restart may carry durable enforce intent only for that exact generation; after recovery and a fresh first scan, it creates a new enforcement epoch and resets cooling before effective enforcement resumes. An open cleanup attempt or delivery-unknown retry block clears that intent and leaves the generation durably report-only. A new generation, explicit `Disarm`, explicit `BeginDrain`, or failed managed startup also clears it. Ordinary SIGTERM/SIGINT performs a clean process exit without pretending to be the service manager's explicit drain transaction.
 
-The daemon currently provides launchd-owned startup and periodic reconciliation. Process-exit dispatch sources, wake and memory-pressure triggers, runtime-artifact cleanup, universal packaging, signing/notarization, and post-acceptance distribution update rollback remain outside the implemented source path.
+The service CLI builds a new immutable generation, validates its files and manifest, records a durable transaction, drains the exact prior service, validates and backs up SQLite state, selects the candidate, and accepts it only when launchd PID, IPC PID, generation, executable, private permissions, lifecycle identity, and effective mode agree. Ready report-only acceptance is stable rather than momentary: `scan_in_progress` and `cleanup_in_progress` must both be false. Crash/failure recovery restores a report-only floor. If lifecycle IPC is unavailable during that bounded recovery, the emergency path first proves the exact manifest/plist/binary/process identity, waits for launchd and the captured daemon identity to disappear, clears enforce intent through an exact-generation offline store API, and accepts only a runtime-proven ReadyReportOnly replacement.
 
-Raw arguments, executable paths, frozen target identities, and the session fingerprint terminate inside transient observation/enforcement memory. The persistence boundary accepts only typed redacted observation records and cleanup receipts; IPC and diagnostics project those same records.
+`Failed` is terminal for one managed daemon instance. A later successful observation cannot reinterpret it as a first scan or turn it into ReadyReportOnly. An exact `Disarm` may retry the durable fail-close while preserving `Failed`, unhealthy, and not-ready; transaction recovery may then send exact `BeginDrain`, validate the resulting draining identity, boot out the captured process, and start a fresh report-only instance. Arm also checks the volatile lifecycle phase, so stale durable ReadyEnforce state cannot reopen a live signal gate after an in-memory fail-close. Generation 9 has passed this transactional report-only recovery boundary and one full managed process/artifact/restart transaction, then returned to stable report-only. Universal packaging, signing/notarization, release update/rollback, sustained dogfood, and broader field evidence remain open.
+
+The scheduler uses native Dispatch process-exit sources, IOKit wake notifications, and Dispatch memory-pressure events as coalesced hints. Every hint causes a fresh full snapshot; it never authorizes cleanup or weakens a gate. A source failure is surfaced as degraded status and periodic reconciliation remains active. Pressure does not alter the 60-second candidate-age gate, exact browser version policy, durable abandonment grace, or cleanup threshold. The sustained-pressure notification threshold is deliberately unresolved, so aggregate ambiguous count is not a notification signal.
+
+The sessionizer is one deterministic Rust algorithm parameterized by schema-v2 pack data. Current packs automatically admit only browser roots whose exact app-bundle facts match `com.google.chrome.for.testing` version `151.0.7922.34`; any controller-bearing candidate is protected because controller version is not yet verified. Pack markers rank and reconstruct candidates but cannot introduce an alternate graph traversal or signal strategy.
+
+Runtime-artifact cleanup is DAP-only in the 0.1 source candidate. The engine freezes at most one `DevToolsActivePort` identity before signaling, waits for the exact tree and revival window to clear, completes the targeted pathname-reference and current-user argv proof, writes a PREPARED artifact action, and then uses exact parent/file identities plus an exclusive same-directory quarantine before unlink. It never deletes a profile or directory; sockets and PID files are not yet automatically eligible.
+
+The macOS adapter no longer walks every file descriptor of every same-UID process to prove DAP absence. That approach cannot be complete for an ordinary daemon because unrelated protected Apple agents may deny descriptor metadata and ordinary close/reuse churn can invalidate an enumerated FD. Instead it brackets Darwin's targeted `proc_listpidspath(PROC_ALL_PIDS, exact_path)` query with exact frozen parent/file validation, treats only a negative return as lookup failure, and performs a complete current-user `KERN_PROCARGS2` argv pass. It queries the canonical pathname before quarantine and the actual quarantine pathname after the atomic rename, so an already-open inode remains discoverable under its new name. Any incomplete metadata, arguments, targeted query, or path identity fails closed.
+
+This is not a claim that the final deletion race is fully closed. Two known P2 residuals remain: daemon death after the canonical-to-quarantine rename can strand the exact private quarantine entry, and a same-UID actor can still attempt a swap between the final `fstatat` pathname check and `unlinkat`. One controlled generation-9 field run produced a successful live DAP-removal receipt with the current path; that point result does not resolve either race or authorize broader artifact eligibility.
+
+Ordinary IPC commands and service lifecycle controls share the owner-private socket but not the same authority surface. Status, history, explain, pause/resume, retry, exact-incident protect/unprotect, and diagnostics form the ordinary contract. `Arm`, `Disarm`, and `BeginDrain` are internal service controls bound to the exact activation generation and daemon instance. Every request uses one connection and one response. The default and service clients make one 15-second attempt; up to eight accepted connections are served concurrently, each with a 3-second read/write bound. Slow history or a partial peer therefore cannot head-of-line block all later control traffic. A timed-out mutation is uncertain delivery and is never automatically resent; the owner or service transaction must read back exact state. The managed field harness polls only read-only exact-incident `Explain` on a separate worker so native absence sampling is independent. Raw arguments, executable/profile paths, frozen target identities, and session fingerprints terminate inside transient observation/enforcement memory. SQLite, IPC, CLI, and diagnostics retain or project only typed redacted records.
+
+macOS can leave an exited child visible in the process table as a zombie while `kill(pid, 0)` still reports that the PID exists. Snapshot and exact lookup therefore use `KERN_PROC_PID` status as the fallback authority: a confirmed `SZOMB` is treated as gone, excluded from live incidents, and not counted as unreadable coverage. Other read failures still fail closed.

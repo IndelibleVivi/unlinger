@@ -9,24 +9,27 @@
 
 ## Current hard boundary
 
-The ordinary daemon source default is report-only. The project owner explicitly authorized the first current-user LaunchAgent and ambient enforcement dogfood on 2026-08-30; the installed dogfood service is expected to remain loaded in enforce mode unless the owner changes that boundary.
+The repository contains an enforcement engine, but the ordinary daemon default and the installed dogfood service are report-only. Source and synthetic verification do not authorize ambient activation.
 
-- Do not treat this one-host authorization as permission to activate another host, widen eligibility, delete runtime artifacts, or claim multi-day/release acceptance.
 - Inspect `unlinger service status` before replacing or reloading the active service. Use the transactional service CLI rather than manual binary/plist copying or ad hoc `launchctl` mutation unless diagnosing that lifecycle itself.
-- Future uninstall, pause of dogfood, or mode changes still require an applicable owner request. Preserve the active service while doing source-only work.
+- Do not run `unlingerd --enforce` against ordinary machine state, enable ambient enforcement, uninstall the service, or change the installed mode without an applicable owner-approved field boundary. Preserve the active report-only service while doing source-only work.
 - Tests may signal only a process they create and retain exact ownership of; the macOS integration test uses an isolated `/bin/sleep` child.
 - `crates/unlinger-daemon/tests/cft_fieldlab.rs` is an ignored, explicit owner-approved live path. It requires a Chrome-for-Testing app bundle, refuses ordinary Chrome, scopes every signal to exact identities admitted from its unique profile tree, and retains its profile for inspection. Its fast timing profile proves mechanics only; set `UNLINGER_FIELDLAB_FULL_TIMING=1` for the production 90/15/60 timing contract.
-- No current source path deletes browser profiles or runtime directories.
-- A future activation must retain all deterministic gates, durable abandonment grace, frozen-plan revalidation, exact identity signals, terminal receipts, and bounded revival behavior.
+- `crates/unlinger-daemon/tests/managed_cft_fieldlab.rs` is the installed-generation acceptance path. It additionally exercises exact managed lifecycle identity, fresh-epoch re-arm after a same-generation restart, retry suppression, and final report-only containment. Run it only with its explicit acknowledgement environment and an exact active-generation CLI path.
+- Automatic artifact cleanup is limited to an exact admitted `DevToolsActivePort` file. Live-reference proof uses Darwin's targeted `proc_listpidspath` query for the exact canonical/quarantine pathname plus a complete current-user argv pass; it must fail closed on any incomplete query or identity check. No source path deletes browser profiles or runtime directories.
+- The artifact path still has two known P2 residuals: a crash after canonical-to-quarantine rename may strand the exact quarantine entry, and the final pathname revalidation-to-`unlinkat` interval retains a same-UID swap TOCTOU. One controlled managed field run removed the admitted DAP successfully; do not turn that point result into broad artifact acceptance or widen eligibility while these boundaries remain.
+- Managed `Failed` is terminal for that daemon instance. `Disarm` may durably remove any stale signal authority but must not rehabilitate it; replacement proceeds only through exact generation/instance validation, `BeginDrain`, captured-process bootout, and a fresh report-only restart. A ready report-only service acceptance also requires a stable quiescent projection: no scan or cleanup in progress.
+- IPC clients make one bounded attempt. The ordinary/default and service clients use a 15-second I/O timeout; each accepted server connection uses 3 seconds and the daemon serves at most eight connections concurrently. Never automatically resend a timed-out mutation or lifecycle command, because its delivery may already have committed; read back exact state instead. The managed field harness is the narrow exception only for read-only exact-incident `Explain`: it polls on a separate worker and may retry `not_found`, unavailable, or transient local I/O within its overall deadline while native identity sampling continues.
+- A future activation must retain all deterministic gates, durable abandonment grace, frozen-plan revalidation, exact identity signals, terminal receipts, bounded revival behavior, durable action journaling, restart recovery, generation-bound arming, fresh enforcement-epoch cooling, and report-only rollback.
 
 ## Canonical paths
 
-- `crates/unlinger-core`: platform-independent identity, graph, incident states, frozen cleanup plans, and cleanup executor.
+- `crates/unlinger-core`: platform-independent identity, graph, incident states, frozen cleanup plans, artifact plans, and cleanup executor.
 - `crates/unlinger-rules`: embedded signature packs, sessionization, protection rules, deterministic classification, and pre-signal/revival revalidation.
-- `crates/unlinger-macos`: macOS `libproc`/`sysctl` snapshots and exact-identity signal adapter. `/bin/ps`, process-name kills, and broad PGID kills are not production paths.
-- `crates/unlinger-daemon`: durable cooling grace, scheduler, SQLite history, retention, blocking local IPC, control state, reconciliation engine, graceful shutdown, and canonical per-user paths.
-- `crates/unlinger-cli`: status, history, explain, doctor, pause/resume, dry-run scan, redacted diagnostic export, and transactional LaunchAgent install/status/set-mode/uninstall.
-- `rules/*.toml`: canonical source for embedded signature packs. Every eligibility expansion requires a positive fixture and the nearest normal/manual counterexample.
+- `crates/unlinger-macos`: macOS `libproc`/`sysctl` snapshots, transient app-version facts, native process-exit/wake/pressure sources, exact-identity signal adapter, and exact runtime-artifact adapter. A PID confirmed as `SZOMB` through `KERN_PROC_PID` is gone for live-identity purposes rather than an unreadable live process. `/bin/ps`, process-name kills, and broad PGID kills are not production paths.
+- `crates/unlinger-daemon`: durable cooling grace, native-hint/periodic scheduler, SQLite history/action journals, retention, local IPC, managed lifecycle state, and reconciliation engine.
+- `crates/unlinger-cli`: status, history, explain, doctor, pause/resume, retry, protect/unprotect, dry-run scan, redacted diagnostic export, and transactional LaunchAgent lifecycle.
+- `rules/*.toml`: canonical source for embedded signature packs. The shared deterministic Rust sessionizer is parameterized by pack data; packs do not replace safety logic. Every eligibility expansion requires a positive fixture and the nearest normal/manual counterexample.
 - `fixtures/macos`: synthetic or deliberately redacted topology only. Never add page contents, credentials, real usernames, repository paths, private profile identifiers, or raw private command lines.
 
 ## Safety and privacy
@@ -47,7 +50,7 @@ Run the narrow relevant command first, then the workspace checks before a source
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
-cargo run -p unlinger-cli -- doctor --json
+cargo run -p unlinger-cli -- doctor --source-only --json
 cargo run -p unlinger-cli -- scan --dry-run --json
 ```
 
@@ -55,15 +58,21 @@ Daemon/IPC tests must use an explicit temporary database and socket and must rem
 
 Do not treat a clean build, synthetic fixture suite, owned-child signal test, or short activation receipt as evidence that ambient auto-clean is multi-day field-safe, broadly dogfood-proven, signed, or released.
 
-The live CfT harness is excluded from ordinary workspace tests. Run it only inside an explicit owner-approved field boundary:
+The live CfT harnesses are excluded from ordinary workspace tests. Run one only inside its explicit owner-approved field boundary:
 
 ```bash
 UNLINGER_FIELDLAB_CFT_APP="/path/to/Google Chrome for Testing.app" \
   cargo test -p unlinger-daemon --test cft_fieldlab -- --ignored --nocapture --test-threads=1
+
+UNLINGER_FIELDLAB_MANAGED_ACK=I_ACCEPT_INSTALLED_CFT_SIGNALING \
+UNLINGER_FIELDLAB_FULL_TIMING=1 \
+UNLINGER_FIELDLAB_CFT_APP="/path/to/Google Chrome for Testing.app" \
+UNLINGER_FIELDLAB_MANAGED_CLI="/path/to/active/generation/unlinger" \
+  cargo test -p unlinger-daemon --test managed_cft_fieldlab -- --ignored --nocapture --test-threads=1
 ```
 
 ## Documentation and publication triggers
 
-Update `README.md` for user-visible commands, defaults, platform support, privacy boundaries, or activation claims. Update this file when canonical paths or hard gates move. Update `docs/current-state.md` whenever source, candidate, installed, activated, field-verified, remote, or release status changes. Update `docs/SAFETY.md`, `docs/SIGNATURES.md`, and `docs/PRIVACY.md` with their corresponding contracts.
+Update `README.md` for user-visible commands, defaults, platform support, privacy boundaries, or activation claims. Update this file when canonical paths or hard gates move. Update `docs/current-state.md` whenever source, candidate, installed, activated, field-verified, remote, or release status changes. Update `docs/IPC.md`, `docs/SAFETY.md`, `docs/SIGNATURES.md`, and `docs/PRIVACY.md` with their corresponding contracts.
 
 The private repository may receive source-safe English working documentation. Before any public visibility change, complete an owner-approved license/rights decision, bilingual reader documentation, a publication-grade architecture diagram, field evidence, and a tracked-file privacy/provenance scan. No repository license may be added by habit.

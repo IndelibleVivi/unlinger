@@ -6,13 +6,14 @@ use std::error::Error;
 use std::ffi::OsStr;
 use std::fs;
 use std::io;
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use unlinger_core::{
-    CleanupPolicy, CleanupRuntime, CleanupSignal, IncidentState, ProcessGraph, ProcessIdentity,
-    ProcessRecord, RuntimeFailure, SignalDisposition, Snapshot,
+    CleanupPolicy, CleanupRuntime, CleanupSignal, ClockSample, IncidentState, ProcessGraph,
+    ProcessIdentity, ProcessRecord, RuntimeFailure, SignalDisposition, Snapshot, WaitOutcome,
 };
 use unlinger_daemon::{
     ControlPlane, DaemonMode, DaemonStatus, EngineConfig, HistoryStore, ReconciliationEngine,
@@ -93,7 +94,7 @@ fn run_fieldlab() -> Result<(), Box<dyn Error>> {
     let control = ControlPlane::new(
         store,
         DaemonStatus::new(DaemonMode::Enforce, std::process::id()),
-    );
+    )?;
     let timing = TimingProfile::from_environment();
     let runtime = ScopedRuntime::new(profile.clone());
     let mut engine = ReconciliationEngine::new(
@@ -106,7 +107,7 @@ fn run_fieldlab() -> Result<(), Box<dyn Error>> {
 
     let mut terminal_receipt = None;
     for cycle_index in 0..timing.max_cycles {
-        let now = engine.runtime().now_unix_millis()?;
+        let now = engine.runtime().clock_sample()?.wall_unix_millis;
         let cycle = engine.run_cycle_at(now)?;
         if cycle.cleanup_receipts.len() > 1 {
             return Err(field_error(
@@ -199,6 +200,7 @@ fn create_profile() -> Result<PathBuf, Box<dyn Error>> {
         std::process::id()
     ));
     fs::create_dir(&profile)?;
+    fs::set_permissions(&profile, fs::Permissions::from_mode(0o700))?;
     Ok(profile)
 }
 
@@ -370,8 +372,12 @@ impl CleanupRuntime for ScopedRuntime {
         Ok(snapshot)
     }
 
-    fn now_unix_millis(&self) -> Result<u64, RuntimeFailure> {
-        self.inner.now_unix_millis()
+    fn lookup_process(&mut self, pid: u32) -> Result<Option<ProcessRecord>, RuntimeFailure> {
+        self.inner.lookup_process(pid)
+    }
+
+    fn clock_sample(&self) -> Result<ClockSample, RuntimeFailure> {
+        self.inner.clock_sample()
     }
 
     fn signal_exact(
@@ -393,8 +399,12 @@ impl CleanupRuntime for ScopedRuntime {
         disposition
     }
 
-    fn wait(&mut self, duration: Duration) {
-        self.inner.wait(duration);
+    fn wait_until(
+        &mut self,
+        duration: Duration,
+        should_stop: &mut dyn FnMut() -> bool,
+    ) -> Result<WaitOutcome, RuntimeFailure> {
+        self.inner.wait_until(duration, should_stop)
     }
 }
 

@@ -1,4 +1,4 @@
-use crate::{IncidentState, ProcessIdentity};
+use crate::{IncidentState, ProcessIdentity, RuntimeArtifactCandidate};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
@@ -80,7 +80,9 @@ pub struct ProcessRoleCount {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct IncidentReport {
     pub incident_id: String,
+    #[serde(skip_serializing, default)]
     pub tracking_key: String,
+    #[serde(skip_serializing, default)]
     pub session_fingerprint: String,
     pub signature_pack: String,
     pub signature_version: String,
@@ -94,6 +96,8 @@ pub struct IncidentReport {
     pub gates: GateLedger,
     #[serde(skip_serializing, default)]
     pub targets: Vec<ProcessTarget>,
+    #[serde(skip, default)]
+    pub runtime_artifacts: Vec<RuntimeArtifactCandidate>,
 }
 
 #[cfg(test)]
@@ -115,5 +119,41 @@ mod tests {
 
         gates.process_identity_unchanged = false;
         assert!(!gates.cleanup_eligible());
+    }
+
+    #[test]
+    fn incident_json_omits_internal_tracking_and_session_identifiers() {
+        let report = IncidentReport {
+            incident_id: "inc-redacted".to_owned(),
+            tracking_key: "trk-private-internal".to_owned(),
+            session_fingerprint: "ses-private-internal".to_owned(),
+            signature_pack: "playwright".to_owned(),
+            signature_version: "0.1.0".to_owned(),
+            state: IncidentState::Ambiguous,
+            root: RootSummary {
+                pid: 42,
+                started_at_unix_micros: 1,
+                executable_basename: "browser".to_owned(),
+                identity_fingerprint: "identity-redacted".to_owned(),
+            },
+            member_count: 1,
+            resident_memory_bytes: 1,
+            member_fingerprint: "members-redacted".to_owned(),
+            roles: Vec::new(),
+            evidence: Vec::new(),
+            gates: GateLedger::default(),
+            targets: Vec::new(),
+            runtime_artifacts: Vec::new(),
+        };
+
+        let json = serde_json::to_string(&report).expect("incident JSON");
+        assert!(!json.contains("trk-private-internal"));
+        assert!(!json.contains("ses-private-internal"));
+        assert!(!json.contains("tracking_key"));
+        assert!(!json.contains("session_fingerprint"));
+
+        let decoded: IncidentReport = serde_json::from_str(&json).expect("backward decode");
+        assert!(decoded.tracking_key.is_empty());
+        assert!(decoded.session_fingerprint.is_empty());
     }
 }
