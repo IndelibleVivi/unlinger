@@ -4,6 +4,7 @@ import AppKit
 /// `scripts/make-menubar-icon.swift`: black-with-alpha PNGs at @1x/@2x/@3x,
 /// tinted by the system (auto light/dark menu bar). Falls back to nil — and
 /// the caller falls back to an SF Symbol — if the assets are missing.
+@MainActor
 public enum MenuBarIcon {
     public static let image: NSImage? = {
         var reps: [NSImageRep] = []
