@@ -4,9 +4,9 @@
 
 **Programme:** Unlinger 0.1
 
-**Source:** private pre-v0.1 schema-v3 candidate; rollback-hardening and direct-AppKit lifetime follow-up under final verification
+**Source:** private pre-v0.1 schema-v3 candidate; rollback-hardening and direct-AppKit lifetime follow-up verified
 
-**Remote:** private origin `main` is currently `1e89235`; the rollback-hardening and direct-AppKit lifetime follow-up is local until its final gate, explicit commit and push complete.
+**Remote:** rollback-hardening/direct-AppKit implementation head `188e65ab96532067a52e272f94cb658dc7dbe830` is on private origin `main`; exact-head `backend` run `33513920375` is green. This current-state reconciliation follows as documentation-only truth.
 
 **Installed runtime:** generation 12, schema-v3/v6 capable, healthy at a stable report-only floor; acceptance lease retains generation 9/v5
 
@@ -75,7 +75,7 @@ The level-2 source gate passed on 2026-09-01:
 - the tracked candidate/diff scan found no Faye-specific absolute path, attached-audit filename or identifier, secret-shaped addition, whitespace error or generated build payload; generic `/Users/example` and `/Users/private` strings remain only in synthetic fixtures and redaction/path tests; and
 - a separate read-only installed-status check found generation 9 healthy, ready, v1/v5, quiescent, report-only and unarmed with exact PID/generation/binary/permission agreement. It did not reload, migrate or otherwise mutate the installed service.
 
-The private GitHub `backend` workflow passed at rollback-lease head `ea7c5bd` (run `33482121339`), scan-race fix head `9d9d765` (run `33483324021`), the prior installed-state docs head `68085ba` (run `33484218771`), and AppKit menu/window implementation head `4eb70eb` (run `33500090371`) on macOS: formatting, strict clippy, workspace tests, release workspace build, native frontend tests and native frontend bundle. The first AppKit run `33499759687` correctly failed because two host tests constructed `NSStatusItem`/`NSWindow` before initializing `NSApplication`; `4eb70eb` fixed that test precondition rather than skipping the hosts.
+The private GitHub `backend` workflow passed at rollback-lease head `ea7c5bd` (run `33482121339`), scan-race fix head `9d9d765` (run `33483324021`), the prior installed-state docs head `68085ba` (run `33484218771`), AppKit menu/window implementation head `4eb70eb` (run `33500090371`), and rollback-hardening/direct-AppKit lifetime head `188e65a` (run `33513920375`) on macOS: formatting, strict clippy, workspace tests, release workspace build, native frontend tests and native frontend bundle. The first AppKit run `33499759687` correctly failed because two host tests constructed `NSStatusItem`/`NSWindow` before initializing `NSApplication`; `4eb70eb` fixed that test precondition rather than skipping the hosts.
 
 The reproducible commands were:
 
