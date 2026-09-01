@@ -6,7 +6,7 @@
 
 **Source:** private pre-v0.1 schema-v3 candidate; installed report-only integration verified
 
-**Remote:** private origin `main` baseline `68085ba90662d90a24c3f15901f146ee70bbcd9a`; exact-head `backend` run `33484218771` is green. The installed AppKit navigation/window correction is local pending push and current-head CI.
+**Remote:** AppKit menu/window implementation head `4eb70eb7c067f85e28604ec010756d26972c3b9b` is on private origin `main`; exact-head `backend` run `33500090371` is green. This current-state reconciliation follows as documentation-only truth.
 
 **Installed runtime:** generation 12, schema-v3/v6 capable, healthy at a stable report-only floor; acceptance lease retains generation 9/v5
 
@@ -71,7 +71,7 @@ The level-2 source gate passed on 2026-09-01:
 - the tracked candidate/diff scan found no Faye-specific absolute path, attached-audit filename or identifier, secret-shaped addition, whitespace error or generated build payload; generic `/Users/example` and `/Users/private` strings remain only in synthetic fixtures and redaction/path tests; and
 - a separate read-only installed-status check found generation 9 healthy, ready, v1/v5, quiescent, report-only and unarmed with exact PID/generation/binary/permission agreement. It did not reload, migrate or otherwise mutate the installed service.
 
-The private GitHub `backend` workflow passed at both rollback-lease head `ea7c5bd` (run `33482121339`) and the scan-race fix head `9d9d765` (run `33483324021`) on macOS: formatting, strict clippy, workspace tests, release workspace build, native frontend tests and native frontend bundle.
+The private GitHub `backend` workflow passed at rollback-lease head `ea7c5bd` (run `33482121339`), scan-race fix head `9d9d765` (run `33483324021`), the prior installed-state docs head `68085ba` (run `33484218771`), and AppKit menu/window implementation head `4eb70eb` (run `33500090371`) on macOS: formatting, strict clippy, workspace tests, release workspace build, native frontend tests and native frontend bundle. The first AppKit run `33499759687` correctly failed because two host tests constructed `NSStatusItem`/`NSWindow` before initializing `NSApplication`; `4eb70eb` fixed that test precondition rather than skipping the hosts.
 
 The reproducible commands were:
 
