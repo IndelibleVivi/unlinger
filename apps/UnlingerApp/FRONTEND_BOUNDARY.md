@@ -51,6 +51,6 @@ Click routing复用 shared `AppRouter` 和 compact `WindowGroup`，进入 exact 
 
 ## Live boundary
 
-Active generation-9 database属于安装服务。Source v3使用 SQLite v6，不能被 generation-9 binary rollback打开；在 acceptance-scoped rollback lease实现前不得 install/reload/arm/change mode或复用 active database。
+Active generation-9 database属于安装服务。Source v3使用 SQLite v6，不能被 generation-9 binary直接打开。Service source现已提供 acceptance-scoped prior manifest/plist/v5 DB lease、explicit accept/rollback和exact report-only restart；只有 [`../../docs/INSTALLED_DOGFOOD.md`](../../docs/INSTALLED_DOGFOOD.md) 的owner-authorized lane可以复用active database，且必须先完成generation-9真实rollback/open、全程不arm。
 
-使用 [`scripts/pre-v0.1-smoke.sh`](scripts/pre-v0.1-smoke.sh) 获得可重复的 isolated report-only integration。Owner-only CfT harness、ambient enforcement与 installed lane不属于 frontend source validation。
+使用 [`scripts/pre-v0.1-smoke.sh`](scripts/pre-v0.1-smoke.sh) 获得可重复的 isolated report-only integration。Owner-only CfT harness、ambient enforcement与 installed dogfood proof仍不属于 frontend source validation。

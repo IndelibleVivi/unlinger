@@ -22,11 +22,11 @@ The repository contains a macOS pre-v0.1 source candidate spanning observation, 
 - a 0600 local newline-delimited JSON socket with frontend schema v3 and a schema-v1 CLI/service compatibility lane; v3 omits process/service identities, exposes exact readiness, roster freshness, typed outcomes, capabilities and durable mutation reconciliation, and cannot encode lifecycle commands; historical v2 is rejected rather than silently downgraded;
 - native process-exit, wake, and memory-pressure scheduling hints with a periodic fallback; every trigger still begins with a fresh snapshot and pressure never lowers a gate;
 - a report-only daemon default and generation/instance/epoch-bound signal authorization;
-- a transactional per-user LaunchAgent lifecycle with sealed immutable generations, exact launchd/IPC/binary checks, SQLite backup, report-only rollback, and same-generation fresh-epoch re-arm only after a signal-free first scan;
+- a transactional per-user LaunchAgent lifecycle with sealed immutable generations, exact launchd/IPC/binary checks, an acceptance-scoped SQLite rollback lease, explicit candidate accept/rollback, and same-generation fresh-epoch re-arm only after a signal-free first scan;
 - graceful SIGTERM handling that terminates the current cycle safely, preserves same-generation desired intent for launchd restart, and removes the exact owned socket; explicit service drain clears that intent.
 - a SwiftPM native menu-bar client under `apps/UnlingerApp`, with strict v3 DTOs, bilingual copy, canonical-fixture previews/tests, crash-durable pre-send mutation journal, stale-safe refresh/detail state, capability-gated ordinary actions, bounded deduplicated local notifications, shared click routing, menu-client-only launch at login, and a private ad-hoc-signed `.app` bundler.
 
-The current allowed claim is **pre-v0.1 source candidate — isolated report-only verified**. Installed generation 9 remains v1-only, report-only and unarmed; the v3 App/source daemon is not installed or integrated with it. Source SQLite v6 cannot be opened by the generation-9 v5 binary, while the current service transaction has no post-install acceptance rollback lease, so installed v3 work is deliberately blocked rather than risk the active rollback floor.
+The current allowed claim is **pre-v0.1 source candidate — isolated report-only verified**. Source now contains an acceptance-scoped service rollback lease: a ready candidate remains report-only and retains the prior manifest, plist and SQLite snapshot until explicit `accept-candidate` or `rollback-candidate`. Installed generation 9 remains v1-only, report-only and unarmed until the exact-head candidate passes the real rollback/open and installed App acceptance runbook; source implementation alone does not advance the claim.
 
 Historical field evidence remains narrower than the source surface: one owner-approved production-timing generation-9 harness passed on the exact admitted Chrome-for-Testing point, with one eight-member tree, nine exact signal actions, zero survivors, both revival checks, one exact `DevToolsActivePort` removal, restart without journal duplication, ordinary-Chrome preservation, and final report-only containment. This is one controlled point—not ambient or broad support. A crash after canonical-to-quarantine rename may still strand the exact quarantine entry, and the final revalidation-to-`unlinkat` interval retains a same-UID swap TOCTOU. Multi-day dogfood, an ambient real eligible incident, narrow enforce acceptance for this candidate, Intel/universal, signing/notarization/distribution and public alpha remain open.
 
@@ -57,7 +57,7 @@ scripts/pre-v0.1-smoke.sh
 
 The smoke script creates and owns one temporary database/socket/lock, keeps the daemon report-only, verifies v3 reads and durable receipts across restart, checks private modes and no IP listener, and removes only that exact temporary root. It never touches the installed service. See [`apps/UnlingerApp/README.md`](apps/UnlingerApp/README.md).
 
-Do not install/reload this source candidate or point it at the active database. Installed v3 integration requires an acceptance-scoped rollback lease that preserves the prior generation manifest/plist and v5 database until explicit acceptance, plus a real rollback/open test using the generation-9 binary.
+Do not improvise an installed migration or bypass the service CLI. The owner-authorized installed report-only lane is defined in [`docs/INSTALLED_DOGFOOD.md`](docs/INSTALLED_DOGFOOD.md): exact-head CI first, candidate install without arm, installed App/restart checks, a real rollback/open using the generation-9 binary, then candidate reinstall with the second rollback lease retained for dogfood.
 
 For source-only development, run the daemon in its safe default mode and use the local CLI from another terminal:
 
@@ -90,6 +90,7 @@ Full command lines, executable paths, and profile paths exist only in transient 
 - [Privacy](docs/PRIVACY.md)
 - [Local IPC contract](docs/IPC.md)
 - [Pre-v0.1 acceptance levels](docs/PRE_V0_1_ACCEPTANCE.md)
+- [Installed report-only dogfood runbook](docs/INSTALLED_DOGFOOD.md)
 - [Support truth](docs/SUPPORT.md)
 - [Machine-readable support matrix](docs/support-matrix.v1.json)
 - [Native frontend](apps/UnlingerApp/README.md)

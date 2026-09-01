@@ -4,13 +4,13 @@
 
 **Programme:** Unlinger 0.1
 
-**Source:** private pre-v0.1 schema-v3 candidate; isolated report-only verified
+**Source:** private pre-v0.1 schema-v3 candidate; isolated report-only verified; acceptance rollback lease implemented locally
 
-**Remote:** private origin `main`; this tranche is pushed and the current exact-head backend CI is green
+**Remote:** private origin `main`; the prior source tranche is green, while the rollback-lease diff is local and awaiting push/exact-head CI
 
 **Installed runtime:** generation 9, v1-only, last verified healthy at a stable report-only floor
 
-**Activation:** unarmed; this tranche does not install, reload, arm, change mode, or run an owner-only signal harness
+**Activation:** unarmed; owner authorized the installed report-only runbook, but no installation has occurred at this source checkpoint
 
 **Highest claim currently permitted:** **pre-v0.1 source candidate — isolated report-only verified** (acceptance level 2)
 
@@ -36,11 +36,13 @@ The native App under `apps/UnlingerApp` now has:
 
 Notifications are best-effort local projections over bounded polling. They have no sound, are quiet in foreground, use public-safe route data, and never treat an App mutation response fault as a backend cleanup event. Runtime remains local-only with no account, telemetry, cloud sync or normal-operation network behavior.
 
-## Installed blocker
+The service source now extends its durable install transaction through `CandidateReadyReportOnly`, `AcceptanceInProgress` and `Accepted`. A ready candidate retains the prior manifest, report-only plist and SQLite snapshot; install, uninstall and mode changes remain blocked until explicit `accept-candidate` or `rollback-candidate`. `restart-report-only` restarts only the exact active generation at the report-only floor and preserves a pending lease. Focused CLI tests cover phase disposition, rollback-material retention, invalid backup projection, install-time enforce rejection and command parsing.
 
-Installed generation 9 uses schema-v1 IPC and a SQLite-v5-capable binary. Source v3 migrates isolated/copied databases to v6, which generation 9 cannot reopen. The current service install transaction removes its database rollback backup after candidate-ready, before a later App acceptance window could finish. Therefore a failed installed-v3 acceptance could not truthfully restore generation 9 and its database.
+## Installed gate
 
-Installed v3 integration remains closed until an acceptance-scoped rollback lease retains the prior manifest, plist and v5 database through explicit accept/rollback, and a real test proves the generation-9 binary opens the restored database and returns healthy ReadyReportOnly. Source and isolated tests must not open the active database with the v6 binary.
+Installed generation 9 uses schema-v1 IPC and a SQLite-v5-capable binary. Source v3 migrates the active database to v6, which generation 9 cannot reopen directly. The source rollback lease now preserves a SQLite-consistent v5 snapshot and exact prior generation through the post-ready App acceptance window.
+
+Installed v3 integration remains unproved until the owner-authorized [`INSTALLED_DOGFOOD.md`](INSTALLED_DOGFOOD.md) lane passes exact-head CI, installs without arm, exercises the lease, proves the generation-9 CLI/daemon opens the restored v5 database and returns healthy ReadyReportOnly, then reinstalls the same candidate and completes packaged App/daemon restart reconciliation. The second rollback lease remains pending during initial dogfood.
 
 ## Safety and field truth
 
@@ -55,7 +57,7 @@ Historical generation-9 evidence proves one owner-approved managed full-timing P
 The level-2 source gate passed on 2026-09-01:
 
 - `cargo fmt --all -- --check`, strict workspace clippy and the release workspace build passed;
-- `cargo test --workspace` passed 268 tests; the two owner-only live CfT tests remained ignored;
+- `cargo test --workspace` passed 272 tests; the two owner-only live CfT tests remained ignored;
 - source-only doctor inspected 408/408 listed processes with zero unreadable, argument-unavailable or descriptor-unavailable entries, 17 executable-identity-unavailable entries, `healthy: true` and no errors;
 - dry-run inspected the same 408/408 snapshot with the same complete readable/argument/descriptor coverage, 17 executable-identity-unavailable entries and no incident;
 - `swift test` passed 62 tests in 11 suites;
@@ -85,8 +87,8 @@ Owner-only `cft_fieldlab` and `managed_cft_fieldlab` remained ignored and were n
 
 ## Open gates
 
-- acceptance-scoped installed rollback lease and real generation-9 database rollback/open proof;
-- installed v3 daemon/App integration without arm;
+- exact-head acceptance-lease CI plus real generation-9 database rollback/open proof;
+- installed v3 daemon/App integration and restart reconciliation without arm;
 - multi-day report-only dogfood and an ambient real eligible incident;
 - separately owner-authorized narrow enforcement acceptance for a future candidate;
 - resolution or explicit product acceptance of both artifact P2 residuals;

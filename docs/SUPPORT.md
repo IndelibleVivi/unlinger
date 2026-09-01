@@ -42,9 +42,9 @@ The controlled DAP result is one exact point. It does not establish broad artifa
 | Native App source protocol | schema v3 only |
 | Schema v2 | historical fixtures retained; superseded before installation; current server returns typed `unsupported_schema` |
 | Installed generation 9 | v1-only, report-only, unarmed |
-| Installed App/v3 integration | not performed |
+| Installed App/v3 integration | not yet performed; owner-authorized report-only runbook pending |
 
-Source SQLite schema v6 is intentionally isolated from the installed generation-9 database. Generation 9 cannot open a v6 store, and the current service transaction does not retain a post-install acceptance rollback lease. Installed v3 integration therefore remains blocked until a prior-generation manifest/plist/database lease and a real v5 rollback/open test exist.
+Source SQLite schema v6 is incompatible with the generation-9 binary. The service source now implements the prior-generation manifest/plist/database lease, explicit accept/rollback and exact report-only restart. Installed v3 integration remains unproved until the real v5 rollback/open and packaged App/restart runbook passes without arm.
 
 ## Acceptance meaning
 

@@ -699,7 +699,7 @@ The goal is not to imitate another project's UI or wording. The fieldlab identif
 - Windows backend using native process identity and optional Job Object integration;
 - carefully admitted non-browser automation families.
 
-Pre-v0.1 source, isolated, installed, enforcement, private acceptance, public-alpha, and public-release claims are defined separately in [`PRE_V0_1_ACCEPTANCE.md`](PRE_V0_1_ACCEPTANCE.md). The current source SQLite-v6 candidate must not enter the installed generation-9 lane until an acceptance-scoped v5 rollback lease and real old-binary open test exist.
+Pre-v0.1 source, isolated, installed, enforcement, private acceptance, public-alpha, and public-release claims are defined separately in [`PRE_V0_1_ACCEPTANCE.md`](PRE_V0_1_ACCEPTANCE.md). The source SQLite-v6 candidate may enter the owner-authorized installed report-only lane only with the acceptance-scoped v5 rollback lease active; level 3 still requires a real generation-9 rollback/open and packaged App/restart acceptance before any installed claim.
 
 ---
 

@@ -18,9 +18,9 @@ use unlinger_daemon::{
 };
 use unlinger_macos::MacosSnapshotter;
 
-const SERVICE_SCHEMA_VERSION: u32 = 2;
+const SERVICE_SCHEMA_VERSION: u32 = 3;
 const SERVICE_MANIFEST_SCHEMA_VERSION: u32 = 1;
-const SERVICE_TRANSACTION_SCHEMA_VERSION: u32 = 1;
+const SERVICE_TRANSACTION_SCHEMA_VERSION: u32 = 2;
 const SERVICE_START_TIMEOUT: Duration = Duration::from_secs(120);
 const SERVICE_STOP_TIMEOUT: Duration = Duration::from_secs(125);
 const SERVICE_POLL_INTERVAL: Duration = Duration::from_millis(200);
@@ -56,7 +56,19 @@ pub struct ServiceStatusReport {
     pub database_path: PathBuf,
     pub socket_path: PathBuf,
     pub data_preserved: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub acceptance: Option<ServiceAcceptanceReport>,
     pub errors: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct ServiceAcceptanceReport {
+    pub phase: &'static str,
+    pub candidate_generation: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prior_generation: Option<u64>,
+    pub rollback_available: bool,
+    pub database_backup_present: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -107,6 +119,53 @@ enum TransactionPhase {
     PriorDrained,
     DatabaseBackedUp,
     CandidateSelected,
+    CandidateReadyReportOnly,
+    AcceptanceInProgress,
+    Accepted,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TransactionRecoveryDisposition {
+    RollbackPrior,
+    HoldForExplicitDecision,
+    FinalizeAccepted,
+}
+
+fn transaction_recovery_disposition(phase: TransactionPhase) -> TransactionRecoveryDisposition {
+    match phase {
+        TransactionPhase::Prepared
+        | TransactionPhase::CandidateDurable
+        | TransactionPhase::PriorDrained
+        | TransactionPhase::DatabaseBackedUp
+        | TransactionPhase::CandidateSelected
+        | TransactionPhase::AcceptanceInProgress => TransactionRecoveryDisposition::RollbackPrior,
+        TransactionPhase::CandidateReadyReportOnly => {
+            TransactionRecoveryDisposition::HoldForExplicitDecision
+        }
+        TransactionPhase::Accepted => TransactionRecoveryDisposition::FinalizeAccepted,
+    }
+}
+
+fn transaction_phase_name(phase: TransactionPhase) -> &'static str {
+    match phase {
+        TransactionPhase::Prepared => "prepared",
+        TransactionPhase::CandidateDurable => "candidate_durable",
+        TransactionPhase::PriorDrained => "prior_drained",
+        TransactionPhase::DatabaseBackedUp => "database_backed_up",
+        TransactionPhase::CandidateSelected => "candidate_selected",
+        TransactionPhase::CandidateReadyReportOnly => "candidate_ready_report_only",
+        TransactionPhase::AcceptanceInProgress => "acceptance_in_progress",
+        TransactionPhase::Accepted => "accepted",
+    }
+}
+
+fn candidate_database_may_have_changed(phase: TransactionPhase) -> bool {
+    matches!(
+        phase,
+        TransactionPhase::CandidateSelected
+            | TransactionPhase::CandidateReadyReportOnly
+            | TransactionPhase::AcceptanceInProgress
+    )
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -266,6 +325,7 @@ pub fn install(
     source_daemon: &Path,
     mode: DaemonMode,
 ) -> Result<ServiceStatusReport, ServiceError> {
+    validate_acceptance_install_mode(mode)?;
     let uid = mutation_uid()?;
     prepare_install_directories(paths)?;
     let _lock = ServiceLock::acquire(&paths.service_lock)?;
@@ -344,11 +404,8 @@ pub fn install(
         drop(daemon_lock.take());
         bootstrap(uid, &paths.launch_agent)?;
         wait_for_generation_ready(paths, uid, generation_number, SERVICE_START_TIMEOUT)?;
-
-        // This removal is the install linearization point. Before it, crash recovery
-        // restores the prior generation at the report-only floor. After it, the new
-        // generation is a proven report-only installation.
-        remove_file_durable(&layout.transaction)?;
+        transaction.phase = TransactionPhase::CandidateReadyReportOnly;
+        persist_transaction(&layout, &transaction)?;
         Ok::<(), ServiceError>(())
     })();
     drop(daemon_lock.take());
@@ -365,16 +422,164 @@ pub fn install(
         };
     }
 
-    remove_file_durable(&layout.database_backup).map_err(|error| {
+    wait_for_mode(paths, uid, DaemonMode::ReportOnly, SERVICE_START_TIMEOUT)
+}
+
+fn validate_acceptance_install_mode(mode: DaemonMode) -> Result<(), ServiceError> {
+    if mode == DaemonMode::Enforce {
+        return Err(ServiceError::new(
+            "candidate installation is report-only; install first, verify the candidate, then explicitly accept or roll it back",
+        ));
+    }
+    Ok(())
+}
+
+pub fn accept_candidate(paths: &LocalPaths) -> Result<ServiceStatusReport, ServiceError> {
+    let uid = mutation_uid()?;
+    prepare_install_directories(paths)?;
+    let _lock = ServiceLock::acquire(&paths.service_lock)?;
+    let layout = ServiceLayout::new(paths);
+    let Some(mut transaction) = read_optional_transaction(&layout.transaction)? else {
+        return Err(ServiceError::new("there is no candidate acceptance lease"));
+    };
+    match transaction.phase {
+        TransactionPhase::CandidateReadyReportOnly => {}
+        TransactionPhase::Accepted => {
+            finalize_accepted_lease(paths, &layout, &transaction)?;
+            return status(paths);
+        }
+        _ => {
+            recover_incomplete_install(paths, &layout, uid)?;
+            return Err(ServiceError::new(
+                "the incomplete candidate transaction was rolled back instead of accepted",
+            ));
+        }
+    }
+    validate_candidate_acceptance_state(paths, &layout, &transaction)?;
+    transaction.phase = TransactionPhase::AcceptanceInProgress;
+    persist_transaction(&layout, &transaction)?;
+
+    let acceptance_commit = (|| {
+        validate_candidate_acceptance_state(paths, &layout, &transaction)?;
+        transaction.phase = TransactionPhase::Accepted;
+        persist_transaction(&layout, &transaction)
+    })();
+    if let Err(error) = acceptance_commit {
+        let recovery = recover_incomplete_install(paths, &layout, uid);
+        return match recovery {
+            Ok(()) => {
+                let report = status(paths)?;
+                if generation_runtime_is_ready_report_only(
+                    &report,
+                    transaction.candidate_generation,
+                ) {
+                    Ok(report)
+                } else {
+                    Err(ServiceError::new(format!(
+                        "candidate acceptance failed: {error}; prior service restored report-only"
+                    )))
+                }
+            }
+            Err(recovery_error) => Err(ServiceError::new(format!(
+                "candidate acceptance failed: {error}; report-only recovery failed: {recovery_error}"
+            ))),
+        };
+    }
+    finalize_accepted_lease(paths, &layout, &transaction).map_err(|error| {
         ServiceError::new(format!(
-            "candidate is installed report-only, but obsolete rollback backup cleanup failed: {error}"
+            "candidate acceptance is durable, but rollback-material cleanup is incomplete: {error}"
         ))
     })?;
-    remove_legacy_binaries(paths)?;
-    if mode == DaemonMode::Enforce {
-        set_mode_locked(paths, &layout, DaemonMode::Enforce)?;
+    status(paths)
+}
+
+pub fn rollback_candidate(paths: &LocalPaths) -> Result<ServiceStatusReport, ServiceError> {
+    let uid = mutation_uid()?;
+    prepare_install_directories(paths)?;
+    let _lock = ServiceLock::acquire(&paths.service_lock)?;
+    let layout = ServiceLayout::new(paths);
+    let Some(transaction) = read_optional_transaction(&layout.transaction)? else {
+        return Err(ServiceError::new("there is no candidate acceptance lease"));
+    };
+    if transaction.phase == TransactionPhase::Accepted {
+        finalize_accepted_lease(paths, &layout, &transaction)?;
+        return Err(ServiceError::new(
+            "candidate acceptance is already durable; rollback material has been retired",
+        ));
     }
-    wait_for_mode(paths, uid, mode, SERVICE_START_TIMEOUT)
+    rollback_install_transaction(paths, &layout, uid, transaction)?;
+    status(paths)
+}
+
+pub fn restart_report_only(paths: &LocalPaths) -> Result<ServiceStatusReport, ServiceError> {
+    let uid = mutation_uid()?;
+    prepare_install_directories(paths)?;
+    let _lock = ServiceLock::acquire(&paths.service_lock)?;
+    let layout = ServiceLayout::new(paths);
+    if let Some(transaction) = read_optional_transaction(&layout.transaction)? {
+        match transaction.phase {
+            TransactionPhase::CandidateReadyReportOnly => {
+                validate_candidate_acceptance_state(paths, &layout, &transaction)?;
+            }
+            TransactionPhase::Accepted => {
+                finalize_accepted_lease(paths, &layout, &transaction)?;
+            }
+            _ => {
+                recover_incomplete_install(paths, &layout, uid)?;
+                return Err(ServiceError::new(
+                    "the incomplete candidate transaction was rolled back before restart",
+                ));
+            }
+        }
+    }
+    let manifest = read_optional_manifest(&layout.active_manifest)?
+        .ok_or_else(|| ServiceError::new("managed service manifest is missing"))?;
+    if manifest.desired_mode != DaemonMode::ReportOnly {
+        return Err(ServiceError::new(
+            "restart-report-only refuses a service whose desired mode is enforce",
+        ));
+    }
+    emergency_restart_generation_report_only(
+        paths,
+        &layout,
+        uid,
+        manifest.active_generation,
+        "explicit report-only acceptance restart",
+    )?;
+    wait_for_generation_ready(
+        paths,
+        uid,
+        manifest.active_generation,
+        SERVICE_START_TIMEOUT,
+    )
+}
+
+fn validate_candidate_acceptance_state(
+    paths: &LocalPaths,
+    layout: &ServiceLayout,
+    transaction: &InstallTransaction,
+) -> Result<ServiceStatusReport, ServiceError> {
+    let acceptance = inspect_acceptance_lease(paths, layout)?
+        .ok_or_else(|| ServiceError::new("candidate acceptance lease disappeared"))?;
+    if acceptance.candidate_generation != transaction.candidate_generation
+        || acceptance.phase != transaction_phase_name(transaction.phase)
+        || !acceptance.rollback_available
+    {
+        return Err(ServiceError::new(
+            "candidate rollback material is incomplete or inconsistent",
+        ));
+    }
+    let report = status(paths)?;
+    if !report.healthy
+        || report.expected_mode != Some(DaemonMode::ReportOnly)
+        || !generation_runtime_is_ready_report_only(&report, transaction.candidate_generation)
+    {
+        return Err(ServiceError::new(format!(
+            "generation {} is not a stable, quiescent report-only candidate",
+            transaction.candidate_generation
+        )));
+    }
+    Ok(report)
 }
 
 pub fn set_mode(paths: &LocalPaths, mode: DaemonMode) -> Result<ServiceStatusReport, ServiceError> {
@@ -423,6 +628,13 @@ pub fn status(paths: &LocalPaths) -> Result<ServiceStatusReport, ServiceError> {
     let layout = ServiceLayout::new(paths);
     let active_manifest = match read_optional_manifest(&layout.active_manifest) {
         Ok(manifest) => manifest,
+        Err(error) => {
+            errors.push(error.to_string());
+            None
+        }
+    };
+    let acceptance = match inspect_acceptance_lease(paths, &layout) {
+        Ok(acceptance) => acceptance,
         Err(error) => {
             errors.push(error.to_string());
             None
@@ -561,8 +773,47 @@ pub fn status(paths: &LocalPaths) -> Result<ServiceStatusReport, ServiceError> {
         database_path: paths.database.clone(),
         socket_path,
         data_preserved: true,
+        acceptance,
         errors,
     })
+}
+
+fn inspect_acceptance_lease(
+    paths: &LocalPaths,
+    layout: &ServiceLayout,
+) -> Result<Option<ServiceAcceptanceReport>, ServiceError> {
+    let Some(transaction) = read_optional_transaction(&layout.transaction)? else {
+        return Ok(None);
+    };
+    let database_backup_present = path_entry_exists(&layout.database_backup)?;
+    let rollback_database_available = if transaction.database_backed_up {
+        database_backup_present && validate_sqlite_database(&layout.database_backup).is_ok()
+    } else {
+        !database_backup_present
+    };
+    let rollback_plist_available = match transaction.prior_plist.as_deref() {
+        Some(plist) => {
+            validate_report_only_rollback_plist(paths, layout, &transaction, plist).is_ok()
+        }
+        None => transaction.prior_manifest.is_none() && !transaction.prior_was_loaded,
+    };
+    let rollback_generation_available = transaction.prior_manifest.as_ref().map_or_else(
+        || transaction.prior_plist.is_none() || paths.daemon_binary.is_file(),
+        |manifest| validate_generation(&layout.generation(manifest.active_generation)).is_ok(),
+    );
+    Ok(Some(ServiceAcceptanceReport {
+        phase: transaction_phase_name(transaction.phase),
+        candidate_generation: transaction.candidate_generation,
+        prior_generation: transaction
+            .prior_manifest
+            .as_ref()
+            .map(|manifest| manifest.active_generation),
+        rollback_available: transaction.phase != TransactionPhase::Accepted
+            && rollback_database_available
+            && rollback_plist_available
+            && rollback_generation_available,
+        database_backup_present,
+    }))
 }
 
 pub fn launch_agent_plist(paths: &LocalPaths, generation: &GenerationPaths) -> String {
@@ -1866,10 +2117,35 @@ fn recover_incomplete_install(
         remove_file_durable(&layout.database_backup_pending)?;
         return Ok(());
     };
+    match transaction_recovery_disposition(transaction.phase) {
+        TransactionRecoveryDisposition::HoldForExplicitDecision => Err(ServiceError::new(format!(
+            "generation {} is ready report-only with rollback retained; use service accept-candidate or service rollback-candidate",
+            transaction.candidate_generation
+        ))),
+        TransactionRecoveryDisposition::FinalizeAccepted => {
+            finalize_accepted_lease(paths, layout, &transaction)
+        }
+        TransactionRecoveryDisposition::RollbackPrior => {
+            rollback_install_transaction(paths, layout, uid, transaction)
+        }
+    }
+}
+
+fn rollback_install_transaction(
+    paths: &LocalPaths,
+    layout: &ServiceLayout,
+    uid: u32,
+    transaction: InstallTransaction,
+) -> Result<(), ServiceError> {
     let launchd = launchd_state(uid)?;
     if launchd.loaded {
         match (launchd.pid, transaction.phase) {
-            (Some(pid), TransactionPhase::CandidateSelected) => {
+            (
+                Some(pid),
+                TransactionPhase::CandidateSelected
+                | TransactionPhase::CandidateReadyReportOnly
+                | TransactionPhase::AcceptanceInProgress,
+            ) => {
                 let daemon_status = ipc_status_for_launchd(paths, Some(pid));
                 if let Ok(Some(status)) = daemon_status {
                     validate_managed_identity(&status, transaction.candidate_generation)?;
@@ -1907,7 +2183,12 @@ fn recover_incomplete_install(
                 })?;
                 quiesce_loaded_service(paths, uid, launchd, Some(&status))?;
             }
-            (None, TransactionPhase::CandidateSelected) => {
+            (
+                None,
+                TransactionPhase::CandidateSelected
+                | TransactionPhase::CandidateReadyReportOnly
+                | TransactionPhase::AcceptanceInProgress,
+            ) => {
                 validate_exact_generation_selection(
                     paths,
                     layout,
@@ -1917,7 +2198,7 @@ fn recover_incomplete_install(
             }
             (None, _) => bootout_and_wait(uid, None)?,
         }
-    } else if transaction.phase == TransactionPhase::CandidateSelected {
+    } else if candidate_database_may_have_changed(transaction.phase) {
         validate_exact_generation_selection(paths, layout, transaction.candidate_generation)?;
     }
     let mut daemon_lock = Some(prove_daemon_offline(paths, SERVICE_STOP_TIMEOUT)?);
@@ -1935,7 +2216,7 @@ fn recover_incomplete_install(
 
     remove_file_durable(&layout.database_backup_pending)?;
 
-    if transaction.phase == TransactionPhase::CandidateSelected {
+    if candidate_database_may_have_changed(transaction.phase) {
         if transaction.database_backed_up {
             restore_database_backup_files(paths, layout, transaction.candidate_generation)?;
         } else {
@@ -2057,6 +2338,22 @@ fn persist_transaction(
     transaction: &InstallTransaction,
 ) -> Result<(), ServiceError> {
     write_json_atomic(&layout.transaction, transaction, 0o600)
+}
+
+fn finalize_accepted_lease(
+    paths: &LocalPaths,
+    layout: &ServiceLayout,
+    transaction: &InstallTransaction,
+) -> Result<(), ServiceError> {
+    if transaction.phase != TransactionPhase::Accepted {
+        return Err(ServiceError::new(
+            "candidate is not durably accepted; rollback material must be retained",
+        ));
+    }
+    remove_legacy_binaries(paths)?;
+    remove_file_durable(&layout.database_backup)?;
+    remove_file_durable(&layout.database_backup_pending)?;
+    remove_file_durable(&layout.transaction)
 }
 
 fn create_generation(
@@ -3269,6 +3566,7 @@ mod tests {
             database_path: paths.database.clone(),
             socket_path: paths.socket.clone(),
             data_preserved: true,
+            acceptance: None,
             errors: Vec::new(),
         };
 
@@ -3385,6 +3683,7 @@ mod tests {
             database_path: paths.database.clone(),
             socket_path: paths.socket.clone(),
             data_preserved: true,
+            acceptance: None,
             errors: vec!["desired mode has not been published yet".to_owned()],
         };
 
@@ -4101,5 +4400,145 @@ app.unlinger.daemon = {
                 .contains("outside the managed history path")
         );
         assert!(outside.is_file());
+    }
+
+    #[test]
+    fn acceptance_phases_hold_or_restore_until_acceptance_is_durable() {
+        assert_eq!(
+            transaction_recovery_disposition(TransactionPhase::Prepared),
+            TransactionRecoveryDisposition::RollbackPrior
+        );
+        assert_eq!(
+            transaction_recovery_disposition(TransactionPhase::CandidateSelected),
+            TransactionRecoveryDisposition::RollbackPrior
+        );
+        assert_eq!(
+            transaction_recovery_disposition(TransactionPhase::CandidateReadyReportOnly),
+            TransactionRecoveryDisposition::HoldForExplicitDecision
+        );
+        assert_eq!(
+            transaction_recovery_disposition(TransactionPhase::AcceptanceInProgress),
+            TransactionRecoveryDisposition::RollbackPrior
+        );
+        assert_eq!(
+            transaction_recovery_disposition(TransactionPhase::Accepted),
+            TransactionRecoveryDisposition::FinalizeAccepted
+        );
+        assert!(!candidate_database_may_have_changed(
+            TransactionPhase::DatabaseBackedUp
+        ));
+        assert!(candidate_database_may_have_changed(
+            TransactionPhase::CandidateSelected
+        ));
+        assert!(candidate_database_may_have_changed(
+            TransactionPhase::CandidateReadyReportOnly
+        ));
+        assert!(candidate_database_may_have_changed(
+            TransactionPhase::AcceptanceInProgress
+        ));
+        assert!(!candidate_database_may_have_changed(
+            TransactionPhase::Accepted
+        ));
+    }
+
+    #[test]
+    fn rollback_material_survives_ready_candidate_and_only_accepted_can_delete_it() {
+        let temp = TempDirectory::new();
+        let paths = LocalPaths::from_home(&temp.0).expect("paths");
+        prepare_install_directories(&paths).expect("directories");
+        let layout = ServiceLayout::new(&paths);
+        let prior = rusqlite::Connection::open(&paths.database).expect("prior database");
+        prior
+            .execute_batch("PRAGMA user_version = 5; CREATE TABLE prior_marker(value TEXT);")
+            .expect("prior schema");
+        drop(prior);
+        assert!(backup_database(&paths.database, &layout).expect("backup"));
+
+        let mut transaction = InstallTransaction::new(
+            10,
+            Some(ActiveServiceManifest::new(9, DaemonMode::ReportOnly)),
+            Some("prior plist".to_owned()),
+            true,
+        );
+        transaction.database_backed_up = true;
+        transaction.phase = TransactionPhase::CandidateReadyReportOnly;
+        persist_transaction(&layout, &transaction).expect("persist ready lease");
+
+        let error = finalize_accepted_lease(&paths, &layout, &transaction)
+            .expect_err("ready candidate cannot delete rollback material");
+        assert!(error.to_string().contains("not durably accepted"));
+        assert!(layout.transaction.is_file());
+        assert!(layout.database_backup.is_file());
+
+        transaction.phase = TransactionPhase::Accepted;
+        persist_transaction(&layout, &transaction).expect("persist accepted");
+        finalize_accepted_lease(&paths, &layout, &transaction).expect("finalize accepted lease");
+        assert!(!layout.transaction.exists());
+        assert!(!layout.database_backup.exists());
+    }
+
+    #[test]
+    fn acceptance_status_requires_a_valid_database_and_prior_generation() {
+        let temp = TempDirectory::new();
+        let paths = LocalPaths::from_home(&temp.0).expect("paths");
+        prepare_install_directories(&paths).expect("directories");
+        let layout = ServiceLayout::new(&paths);
+        let prior_generation = layout.generation(9);
+        fs::create_dir(&prior_generation.directory).expect("prior generation directory");
+        fs::write(&prior_generation.daemon, b"prior daemon").expect("prior daemon");
+        fs::write(&prior_generation.cli, b"prior cli").expect("prior cli");
+        write_json_atomic(
+            &prior_generation.manifest,
+            &GenerationManifest::new(9),
+            0o600,
+        )
+        .expect("prior generation manifest");
+
+        let prior = rusqlite::Connection::open(&paths.database).expect("prior database");
+        prior
+            .execute_batch("PRAGMA user_version = 5; CREATE TABLE prior_marker(value TEXT);")
+            .expect("prior schema");
+        drop(prior);
+        assert!(backup_database(&paths.database, &layout).expect("backup"));
+
+        let mut transaction = InstallTransaction::new(
+            10,
+            Some(ActiveServiceManifest::new(9, DaemonMode::ReportOnly)),
+            Some(launch_agent_plist(&paths, &prior_generation)),
+            true,
+        );
+        transaction.database_backed_up = true;
+        transaction.phase = TransactionPhase::CandidateReadyReportOnly;
+        persist_transaction(&layout, &transaction).expect("persist ready lease");
+
+        let acceptance = inspect_acceptance_lease(&paths, &layout)
+            .expect("inspect lease")
+            .expect("acceptance report");
+        assert!(acceptance.rollback_available);
+        assert!(acceptance.database_backup_present);
+
+        transaction.phase = TransactionPhase::Accepted;
+        persist_transaction(&layout, &transaction).expect("persist accepted lease");
+        let acceptance = inspect_acceptance_lease(&paths, &layout)
+            .expect("inspect accepted lease")
+            .expect("acceptance report");
+        assert!(!acceptance.rollback_available);
+
+        transaction.phase = TransactionPhase::CandidateReadyReportOnly;
+        persist_transaction(&layout, &transaction).expect("restore ready lease");
+
+        fs::write(&layout.database_backup, b"not sqlite").expect("corrupt backup");
+        let acceptance = inspect_acceptance_lease(&paths, &layout)
+            .expect("inspect corrupt lease")
+            .expect("acceptance report");
+        assert!(!acceptance.rollback_available);
+    }
+
+    #[test]
+    fn candidate_acceptance_install_rejects_enforcement_before_mutation() {
+        validate_acceptance_install_mode(DaemonMode::ReportOnly).expect("report-only accepted");
+        let error = validate_acceptance_install_mode(DaemonMode::Enforce)
+            .expect_err("enforcement install must be refused");
+        assert!(error.to_string().contains("report-only"));
     }
 }

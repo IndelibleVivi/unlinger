@@ -2,7 +2,7 @@
 
 This document separates source, runtime, field, and release truth. A higher level includes all earlier requirements; passing a source suite never silently advances installation, enforcement, dogfood, or publication.
 
-The current tranche targets levels 1 and 2. Level 3 was present in the original programme but is deliberately gated for this tranche because source SQLite v6 cannot be rolled back safely to the installed generation-9 v5 binary after post-install App acceptance. Levels 4–7 remain future owner-authorized work.
+Levels 1 and 2 are verified. The owner has now authorized work toward level 3 inside the exact report-only runbook; this does not authorize enforcement. Levels 4–7 remain separate future owner decisions.
 
 ## Claim levels
 
@@ -25,8 +25,8 @@ The current tranche targets levels 1 and 2. Level 3 was present in the original 
 - An ad-hoc-signed private bundle is not Developer ID signing or notarization.
 - A private remote or pushed commit is not a release.
 
-## Current blocker for level 3
+## Current gate for level 3
 
-The source daemon migrates copied/isolated stores to SQLite schema v6. Installed generation 9 understands schema v5 only. The present service install transaction deletes its database backup when the candidate first becomes ready, before a later App acceptance window can complete. Until an acceptance-scoped rollback lease is implemented and proven with the generation-9 binary, this tranche must not install, reload, arm, change the mode of, or point the new daemon at the active service database.
+The source daemon migrates stores to SQLite schema v6 while installed generation 9 understands schema v5 only. Source now implements an acceptance-scoped lease that retains the prior manifest, report-only plist and SQLite snapshot after candidate readiness. It blocks install, uninstall and mode changes until explicit accept or rollback, and provides an exact `restart-report-only` acceptance path.
 
-Skipping level 3 is a correct fail-closed result, not a partial claim. The strongest permissible result for this tranche is level 2.
+Level 3 remains unproved until [`INSTALLED_DOGFOOD.md`](INSTALLED_DOGFOOD.md) actually restores generation 9 and its v5 database, the exact old CLI/daemon returns healthy ReadyReportOnly, the same exact-head candidate is reinstalled, and the packaged v3 App passes installed/restart reconciliation. Until then the strongest permissible claim remains level 2.

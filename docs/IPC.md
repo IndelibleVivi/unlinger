@@ -221,7 +221,7 @@ V1 may expose bounded internal diagnostic identities needed by CLI/service trans
 
 Source server accepts schemas 1 and 3. Installed generation 9 accepts only schema 1 and returns a trusted schema-v1 `unsupported_schema` envelope to a v3 request. The App renders this as incompatible and does nothing else.
 
-Source stores migrate isolated/copied SQLite databases to v6. Generation 9 supports v5 and cannot reopen a v6 database. The current service install transaction does not retain an acceptance-scoped database rollback lease after candidate-ready. Therefore this tranche never points source v3 at the active database and does not install, reload, arm, change mode or claim installed v3 integration.
+Source stores migrate SQLite databases to v6. Generation 9 supports v5 and cannot reopen a v6 database. The service source now retains the prior v5 snapshot and exact generation identity after candidate readiness, blocks mode/install/uninstall mutations during that lease, and exposes explicit report-only restart, accept and rollback commands. This does not itself prove installed v3 integration: the real generation-9 rollback/open and packaged App/restart runbook remain required, and the lane never arms.
 
 ## Verification anchors
 

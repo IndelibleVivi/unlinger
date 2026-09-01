@@ -76,6 +76,12 @@ enum ServiceCommand {
     Install(ServiceInstallArgs),
     /// Inspect installed files, launchd ownership, IPC identity, mode, and permissions.
     Status(OutputArgs),
+    /// Durably accept a verified report-only candidate and retire its rollback lease.
+    AcceptCandidate(OutputArgs),
+    /// Restore the prior report-only generation and its SQLite snapshot.
+    RollbackCandidate(OutputArgs),
+    /// Restart the exact active generation at the report-only floor.
+    RestartReportOnly(OutputArgs),
     /// Change the managed daemon between report-only and enforce mode.
     SetMode(ServiceSetModeArgs),
     /// Unload the LaunchAgent and remove service binaries while preserving history and logs.
@@ -398,6 +404,18 @@ fn service_command(paths: &LocalPaths, arguments: ServiceArgs) -> Result<(), Box
             let report = service::status(paths)?;
             print_service_status(&report, output.json)?;
         }
+        ServiceCommand::AcceptCandidate(output) => {
+            let report = service::accept_candidate(paths)?;
+            print_service_status(&report, output.json)?;
+        }
+        ServiceCommand::RollbackCandidate(output) => {
+            let report = service::rollback_candidate(paths)?;
+            print_service_status(&report, output.json)?;
+        }
+        ServiceCommand::RestartReportOnly(output) => {
+            let report = service::restart_report_only(paths)?;
+            print_service_status(&report, output.json)?;
+        }
         ServiceCommand::SetMode(arguments) => {
             let report = service::set_mode(paths, arguments.mode.into())?;
             print_service_status(&report, arguments.json)?;
@@ -482,6 +500,17 @@ fn service_status_lines(report: &service::ServiceStatusReport) -> Vec<String> {
                 .into_iter()
                 .map(|line| format!("  {line}")),
         );
+    }
+    if let Some(acceptance) = &report.acceptance {
+        lines.push("candidate acceptance:".to_owned());
+        lines.push(format!("  phase: {}", acceptance.phase));
+        lines.push(format!(
+            "  rollback available: {}",
+            acceptance.rollback_available
+        ));
+        if let Some(prior) = acceptance.prior_generation {
+            lines.push(format!("  rollback generation: {prior}"));
+        }
     }
     if !report.errors.is_empty() {
         lines.push(format!(
@@ -1233,6 +1262,39 @@ mod tests {
     }
 
     #[test]
+    fn service_candidate_commands_are_explicit_and_report_only() {
+        let accept = Cli::try_parse_from(["unlinger", "service", "accept-candidate", "--json"])
+            .expect("accept candidate command");
+        let Commands::Service(accept) = accept.command else {
+            panic!("service command");
+        };
+        assert!(matches!(
+            accept.command,
+            ServiceCommand::AcceptCandidate(OutputArgs { json: true })
+        ));
+
+        let rollback = Cli::try_parse_from(["unlinger", "service", "rollback-candidate", "--json"])
+            .expect("rollback candidate command");
+        let Commands::Service(rollback) = rollback.command else {
+            panic!("service command");
+        };
+        assert!(matches!(
+            rollback.command,
+            ServiceCommand::RollbackCandidate(OutputArgs { json: true })
+        ));
+
+        let restart = Cli::try_parse_from(["unlinger", "service", "restart-report-only", "--json"])
+            .expect("restart report-only command");
+        let Commands::Service(restart) = restart.command else {
+            panic!("service command");
+        };
+        assert!(matches!(
+            restart.command,
+            ServiceCommand::RestartReportOnly(OutputArgs { json: true })
+        ));
+    }
+
+    #[test]
     fn protect_and_unprotect_parsers_require_one_exact_incident() {
         let protect = Cli::try_parse_from(["unlinger", "protect", "incident-exact-1", "--json"])
             .expect("protect command");
@@ -1449,7 +1511,7 @@ mod tests {
         daemon.healthy = true;
         let private_root = PathBuf::from("/Users/private/Library/Application Support/Unlinger");
         let report = service::ServiceStatusReport {
-            schema_version: 2,
+            schema_version: 3,
             label: "app.unlinger.daemon",
             installed: true,
             loaded: true,
@@ -1469,6 +1531,13 @@ mod tests {
             database_path: private_root.join("history.sqlite3"),
             socket_path: private_root.join("unlingerd.sock"),
             data_preserved: true,
+            acceptance: Some(service::ServiceAcceptanceReport {
+                phase: "candidate_ready_report_only",
+                candidate_generation: 10,
+                prior_generation: Some(9),
+                rollback_available: true,
+                database_backup_present: true,
+            }),
             errors: vec!["unsafe path /Users/private".to_owned()],
         };
 
@@ -1477,6 +1546,8 @@ mod tests {
         assert!(rendered.contains("active generation: 9"));
         assert!(rendered.contains("startup: ReadyReportOnly"));
         assert!(rendered.contains("effective mode: ReportOnly"));
+        assert!(rendered.contains("phase: candidate_ready_report_only"));
+        assert!(rendered.contains("rollback generation: 9"));
         assert!(rendered.contains("reported problems: 1"));
         assert!(!rendered.contains("4242"));
         assert!(!rendered.contains("private-instance-id"));

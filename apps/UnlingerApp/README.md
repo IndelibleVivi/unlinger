@@ -50,6 +50,6 @@ For manual source-only UI work, `scripts/demo-window.sh` runs an isolated report
 
 ## Installed boundary
 
-Installed generation 9 remains v1-only, report-only and unarmed. Do not point this v3 source daemon at its database: source SQLite v6 cannot be opened by the generation-9 v5 binary, and the current service transaction has no post-install acceptance rollback lease. Installed v3/App integration is therefore deliberately not performed in this tranche.
+Installed generation 9 remains v1-only, report-only and unarmed until the owner-authorized installed runbook begins. Service source now retains generation 9's manifest/plist/v5 database through explicit candidate accept/rollback and provides an exact report-only restart. The App may enter the installed lane only through [`../../docs/INSTALLED_DOGFOOD.md`](../../docs/INSTALLED_DOGFOOD.md), including a real generation-9 rollback/open before the candidate is reinstalled for dogfood.
 
-The strongest current claim is **pre-v0.1 source candidate — isolated report-only verified**. It is not an installed v3 candidate, an ambient-enforcement acceptance, or a public release.
+Until that runbook passes, the strongest claim remains **pre-v0.1 source candidate — isolated report-only verified**. It is not an ambient-enforcement acceptance or a public release.
