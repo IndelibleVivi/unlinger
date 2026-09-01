@@ -25,7 +25,7 @@
 | APP-03 | basic private usability | Settings/About, App and connected daemon versions, explicit quit semantics, `SMAppService.mainApp` menu-client login item with typed failures | ad-hoc login-item behavior may depend on macOS bundle policy; owner observation | source implemented |
 | DIST-01 | transactional install/update/rollback and release | generation 9 historically installed through sealed immutable generations and remains report-only; source release build/bundle gates exist | acceptance-scoped v5 rollback lease, installed v3 acceptance, universal, signing/notarization, packaging/update | installed v3 blocked; release open |
 | PRIV-01 | local/private and truthful publication boundary | no runtime account/network/telemetry; redacted IPC/store; owner-private App state; public-safe notification routes; private continuity outside Git | repeat the boundary review before any future visibility change | implemented; tracked candidate/diff scan verified |
-| TEST-01 | executable pre-v0.1 contract | Rust migration/policy/IPC fixtures; Swift transport/state/detail/notification/settings tests; active v3 fixture bundle gate; isolated report-only smoke script | remote exact-head CI | local full gate verified: Rust 268 passed/2 owner-only ignored; Swift 62; isolated smoke 6 + restart 6 |
+| TEST-01 | executable pre-v0.1 contract | Rust migration/policy/IPC fixtures; Swift transport/state/detail/notification/settings tests; active v3 fixture bundle gate; isolated report-only smoke script | owner-only live/installed/release gates remain separate | local full gate verified: Rust 268 passed/2 owner-only ignored; Swift 62; isolated smoke 6 + restart 6; exact-head macOS CI green |
 
 ## Pre-v0.1 tranche dependency order
 
@@ -35,7 +35,7 @@
 4. **Strict Swift transport/state — implemented:** exact DTOs, phase-aware uncertainty, pre-send journal, status-only restart reconciliation and concurrency generations.
 5. **UI/notifications/usability — implemented:** truthful readiness/freshness/detail/export, stable identity, bounded notifications/routing and menu-client login item.
 6. **Contracts/support — implemented:** active v3 docs/fixtures, acceptance levels, support matrix and installed blocker.
-7. **Source + isolated gate — verified locally:** full Rust/Swift/build/bundle/doctor/dry-run passed; the same isolated report-only database passed six live-socket tests before and after daemon restart.
+7. **Source + isolated gate — verified locally and at remote exact head:** full Rust/Swift/build/bundle/doctor/dry-run passed; the same isolated report-only database passed six live-socket tests before and after daemon restart; macOS CI repeated the repository format/lint/test/release/frontend/bundle gate.
 8. **Installed v3 lane — deliberately closed:** first implement an acceptance-scoped rollback lease and prove a real generation-9 v5 database rollback/open. Never arm in that lane.
 
 ## Scope/order notes

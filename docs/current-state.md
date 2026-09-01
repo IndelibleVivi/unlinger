@@ -6,7 +6,7 @@
 
 **Source:** private pre-v0.1 schema-v3 candidate; isolated report-only verified
 
-**Remote:** private origin configured; this tranche not yet pushed
+**Remote:** private origin `main`; this tranche is pushed and the current exact-head backend CI is green
 
 **Installed runtime:** generation 9, v1-only, last verified healthy at a stable report-only floor
 
@@ -63,6 +63,8 @@ The level-2 source gate passed on 2026-09-01:
 - the isolated smoke passed six live-socket tests, restarted the source daemon over the same private temporary SQLite database, then passed the same six tests again. It verified effective report-only mode, durable receipt replay and owner-private temp/database/socket/lock modes, and removed only its owned temporary root; and
 - the tracked candidate/diff scan found no Faye-specific absolute path, attached-audit filename or identifier, secret-shaped addition, whitespace error or generated build payload; generic `/Users/example` and `/Users/private` strings remain only in synthetic fixtures and redaction/path tests; and
 - a separate read-only installed-status check found generation 9 healthy, ready, v1/v5, quiescent, report-only and unarmed with exact PID/generation/binary/permission agreement. It did not reload, migrate or otherwise mutate the installed service.
+
+The private GitHub `backend` workflow also passed at the pushed exact head on macOS: formatting, strict clippy, workspace tests, release workspace build, native frontend tests and native frontend bundle.
 
 The reproducible commands were:
 
