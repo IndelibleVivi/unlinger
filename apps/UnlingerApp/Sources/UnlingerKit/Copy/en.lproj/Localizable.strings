@@ -61,6 +61,10 @@
 "history.empty" = "No recorded events yet.";
 "history.section" = "Recent events";
 
+/* Navigation */
+"navigation.back" = "Back";
+"navigation.open_window" = "Open Unlinger Window";
+
 /* Outcomes */
 "outcome.cleared" = "Cleared";
 "outcome.cleared_with_residue" = "Cleared, leftover kept";

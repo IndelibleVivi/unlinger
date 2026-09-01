@@ -5,44 +5,82 @@ import SwiftUI
 public struct MenuPopover: View {
     @Environment(AppState.self) private var state
     @Environment(AppRouter.self) private var router
+    private let allowsWindowPresentation: Bool
 
-    public init() {}
+    public init(allowsWindowPresentation: Bool = false) {
+        self.allowsWindowPresentation = allowsWindowPresentation
+    }
 
     public var body: some View {
         @Bindable var router = router
-        NavigationStack(path: $router.path) {
-            Group {
-                switch state.connection {
-                case .connecting:
-                    VStack(spacing: 8) {
-                        ProgressView()
-                            .controlSize(.small)
-                        Text(L10n.text("status.headline.activity"))
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
+        VStack(spacing: 0) {
+            if !router.path.isEmpty, allowsWindowPresentation {
+                routeControls
+                Divider()
+            }
+
+            NavigationStack(path: $router.path) {
+                Group {
+                    switch state.connection {
+                    case .connecting:
+                        VStack(spacing: 8) {
+                            ProgressView()
+                                .controlSize(.small)
+                            Text(L10n.text("status.headline.activity"))
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                        }
+                        .frame(maxWidth: .infinity, minHeight: 120)
+                    case .unavailable:
+                        unavailable
+                    case .incompatibleDaemon:
+                        incompatible
+                    case .live:
+                        live
                     }
-                    .frame(maxWidth: .infinity, minHeight: 120)
-                case .unavailable:
-                    unavailable
-                case .incompatibleDaemon:
-                    incompatible
-                case .live:
-                    live
+                }
+                .padding()
+                .navigationDestination(for: Route.self) { route in
+                    switch route {
+                    case .history:
+                        HistoryView()
+                    case .settings:
+                        SettingsView()
+                    case .incident(let incidentID):
+                        IncidentDetailView(incidentID: incidentID)
+                    }
                 }
             }
-            .padding()
-            .navigationDestination(for: Route.self) { route in
-                switch route {
-                case .history:
-                    HistoryView()
-                case .settings:
-                    SettingsView()
-                case .incident(let incidentID):
-                    IncidentDetailView(incidentID: incidentID)
-                }
+
+            if router.path.isEmpty, allowsWindowPresentation {
+                Divider()
+                windowButton
+                    .padding(.horizontal)
+                    .padding(.vertical, 10)
             }
         }
         .frame(width: 340)
+    }
+
+    private var routeControls: some View {
+        HStack(spacing: 12) {
+            Button(L10n.text("navigation.back"), systemImage: "chevron.left") {
+                router.goBack()
+            }
+            Spacer(minLength: 0)
+            if allowsWindowPresentation {
+                windowButton
+            }
+        }
+        .controlSize(.small)
+        .padding(.horizontal)
+        .padding(.vertical, 10)
+    }
+
+    private var windowButton: some View {
+        Button(L10n.text("navigation.open_window"), systemImage: "macwindow") {
+            router.presentCurrentRoute()
+        }
     }
 
     private var unavailable: some View {

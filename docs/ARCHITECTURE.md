@@ -67,7 +67,10 @@ flowchart LR
         JOURNAL[0600 pre-send mutation journal]
         STATE[Coalesced state + shared router]
         NOTICE[Bounded notification ledger<br/>local OS delivery]
+        HOST[AppKit-owned status popover<br/>+ reusable ordinary window]
         JOURNAL --> CLIENT --> STATE --> NOTICE
+        STATE --> HOST
+        NOTICE --> HOST
     end
 
     LAUNCHD --> DAEMON --> FIRST --> SCHED

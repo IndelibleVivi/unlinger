@@ -47,7 +47,7 @@ History row使用 public `event_token`；action row使用 event token + mutation
 
 Eligible attention只来自 typed durable cleanup/storage/daemon facts；App ordinary-mutation unresolved不产生系统 notification。Sustained unreachable只声称 App无法连接。No sound，foreground quiet，`userInfo`只含 route kind、redacted incident ID和 public event token。Fixture/preview/swift-run tests不接真实 notification center。
 
-Click routing复用 shared `AppRouter` 和 compact `WindowGroup`，进入 exact incident或 global status。`SMAppService.mainApp` 只负责 menu client launch at login，不触碰 daemon。
+Click routing复用 shared `AppRouter`，进入 exact incident或 global status。AppKit拥有 `NSStatusItem`/`NSPopover` 与一个可关闭、可再次打开的 ordinary `NSWindowController`；两者通过 `NSHostingController` 投影同一份 SwiftUI state/router。Popover route必须提供显式 Back，并可在不改写当前 route 的前提下打开 ordinary window；window只保留原生 Back。不得退回依赖 lazy `WindowGroup` 注册或 `MenuBarExtra` scene replication 的并行宿主。`SMAppService.mainApp` 只负责 menu client launch at login，不触碰 daemon。
 
 ## Live boundary
 

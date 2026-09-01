@@ -35,4 +35,18 @@ public final class AppRouter {
         path = []
         windowOpener?()
     }
+
+    /// Presents the ordinary window without changing the route already chosen
+    /// in the menu-bar popover.
+    public func presentCurrentRoute() {
+        presentationRequested = true
+        windowOpener?()
+    }
+
+    /// Explicit popover navigation must not rely on scene-provided toolbar
+    /// chrome, which is not consistently visible in an AppKit-hosted view.
+    public func goBack() {
+        guard !path.isEmpty else { return }
+        path.removeLast()
+    }
 }

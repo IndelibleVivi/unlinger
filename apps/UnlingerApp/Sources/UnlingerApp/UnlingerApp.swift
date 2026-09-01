@@ -81,110 +81,73 @@ final class UnlingerEnvironment {
 /// Shared delegate: the bundle deliberately ships `LSUIElement = false` and
 /// picks its activation policy at launch. The explicit App quit leaves the
 /// daemon untouched.
+@MainActor
 final class UnlingerAppDelegate: NSObject, NSApplicationDelegate {
+    let environment = LaunchMode.makeEnvironment()
+    private var menuBarController: MenuBarPopoverController?
+    private var appWindowController: AppWindowController?
+
     func applicationWillFinishLaunching(_ notification: Notification) {
         NSApplication.shared.setActivationPolicy(LaunchMode.windowed ? .regular : .accessory)
+    }
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        let appWindowController = AppWindowController(title: "Unlinger") {
+            RootView(
+                environment: self.environment,
+                allowsWindowPresentation: false
+            )
+        }
+        self.appWindowController = appWindowController
+        environment.router.registerWindowOpener { [weak self, weak appWindowController] in
+            self?.menuBarController?.close()
+            appWindowController?.show()
+        }
+
+        if LaunchMode.windowed {
+            appWindowController.show()
+        } else {
+            menuBarController = MenuBarPopoverController(
+                title: "Unlinger",
+                icon: MenuBarIcon.image
+            ) {
+                RootView(
+                    environment: self.environment,
+                    allowsWindowPresentation: true
+                )
+            }
+        }
     }
 
     func applicationShouldHandleReopen(
         _ sender: NSApplication,
         hasVisibleWindows flag: Bool
     ) -> Bool {
-        if LaunchMode.windowed && !flag { sender.activate() }
+        if !flag { appWindowController?.show() }
         return true
     }
 }
 
 private struct RootView: View {
     let environment: UnlingerEnvironment
+    let allowsWindowPresentation: Bool
 
     var body: some View {
-        MenuPopover()
+        MenuPopover(allowsWindowPresentation: allowsWindowPresentation)
             .environment(environment.state)
             .environment(environment.router)
             .environment(environment.settings)
     }
 }
 
-/// The menu label is always instantiated, so it is a reliable place to bind
-/// AppRouter to SwiftUI's window-opening authority before a notification click.
-private struct MenuLabel: View {
-    @Environment(\.openWindow) private var openWindow
-    let router: AppRouter
-
-    var body: some View {
-        Group {
-            if let icon = MenuBarIcon.image {
-                Image(nsImage: icon)
-                    .accessibilityLabel("Unlinger")
-            } else {
-                Image(systemName: "circle.dashed")
-                    .accessibilityLabel("Unlinger")
-            }
-        }
-        .onAppear {
-            router.registerWindowOpener {
-                openWindow(id: "notification")
-            }
-        }
-    }
-}
-
-/// macOS 14 lacks Scene.defaultLaunchBehavior(.suppressed). If SwiftUI creates
-/// this secondary window at launch, it closes itself immediately; subsequent
-/// exact notification routes reopen the same compact WindowGroup.
-private struct NotificationWindowRoot: View {
-    @Environment(\.dismissWindow) private var dismissWindow
-    @Environment(\.openWindow) private var openWindow
-    let environment: UnlingerEnvironment
-
-    var body: some View {
-        RootView(environment: environment)
-            .onAppear {
-                environment.router.registerWindowOpener {
-                    openWindow(id: "notification")
-                }
-                if !environment.router.presentationRequested {
-                    DispatchQueue.main.async {
-                        dismissWindow(id: "notification")
-                    }
-                }
-            }
-    }
-}
-
-struct MenuBarUnlingerApp: App {
+struct UnlingerApplication: App {
     @NSApplicationDelegateAdaptor(UnlingerAppDelegate.self) private var appDelegate
-    @State private var environment = LaunchMode.makeEnvironment()
 
     var body: some Scene {
-        MenuBarExtra(isInserted: .constant(true)) {
-            RootView(environment: environment)
-        } label: {
-            MenuLabel(router: environment.router)
+        Settings {
+            SettingsView()
+                .environment(appDelegate.environment.state)
+                .environment(appDelegate.environment.settings)
         }
-        .menuBarExtraStyle(.window)
-
-        WindowGroup("Unlinger", id: "notification") {
-            NotificationWindowRoot(environment: environment)
-        }
-        .windowResizability(.contentSize)
-    }
-}
-
-struct WindowedUnlingerApp: App {
-    @NSApplicationDelegateAdaptor(UnlingerAppDelegate.self) private var appDelegate
-    @State private var environment = LaunchMode.makeEnvironment()
-
-    var body: some Scene {
-        WindowGroup("Unlinger", id: "main") {
-            RootView(environment: environment)
-        }
-        .windowResizability(.contentSize)
-
-        WindowGroup("Unlinger", id: "notification") {
-            NotificationWindowRoot(environment: environment)
-        }
-        .windowResizability(.contentSize)
     }
 }

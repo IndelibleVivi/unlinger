@@ -61,6 +61,10 @@
 "history.empty" = "还没有任何记录。";
 "history.section" = "最近事件";
 
+/* Navigation */
+"navigation.back" = "返回";
+"navigation.open_window" = "打开 Unlinger 窗口";
+
 /* Outcomes */
 "outcome.cleared" = "已清理";
 "outcome.cleared_with_residue" = "已清理，残留保留";

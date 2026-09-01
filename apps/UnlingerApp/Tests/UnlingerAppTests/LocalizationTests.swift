@@ -20,6 +20,7 @@ struct LocalizationTests {
             "roster.state.confirmed", "roster.state.ambiguous",
             "attention.section", "attention.hint", "roster.hint",
             "history.hint", "actions.hint",
+            "navigation.back", "navigation.open_window",
             "language.menu", "language.system", "language.en", "language.zh_hans",
             "cap.action.not_paused", "cap.action.no_blocked_cleanup",
             "cap.action.already_protected", "cap.action.not_protected", "cap.generic",

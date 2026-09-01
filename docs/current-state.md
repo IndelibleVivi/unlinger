@@ -6,7 +6,7 @@
 
 **Source:** private pre-v0.1 schema-v3 candidate; installed report-only integration verified
 
-**Remote:** private origin `main` at `9d9d76535d329ea9cb1c34388e5b750262fa7778`; exact-head `backend` run `33483324021` is green
+**Remote:** private origin `main` baseline `68085ba90662d90a24c3f15901f146ee70bbcd9a`; exact-head `backend` run `33484218771` is green. The installed AppKit navigation/window correction is local pending push and current-head CI.
 
 **Installed runtime:** generation 12, schema-v3/v6 capable, healthy at a stable report-only floor; acceptance lease retains generation 9/v5
 
@@ -32,6 +32,7 @@ The native App under `apps/UnlingerApp` now has:
 - local-view diagnostics results with required `document_schema_version` and semantic-lossless JSON export;
 - stable event/action identity, including artifact-only action groups;
 - bilingual Settings/About/Quit surfaces, shared notification routing and menu-client-only `SMAppService.mainApp` launch at login;
+- AppKit-owned `NSStatusItem`/`NSPopover` and reusable ordinary-window lifecycles around one shared SwiftUI state/router, with explicit popover Back and open-current-route controls;
 - bounded local notifications: `off`, default `attention`, or `attention_and_reclaims`; first trusted refresh baselines retained tokens, suppressed events remain seen, and durable claim precedes one schedule attempt.
 
 Notifications are best-effort local projections over bounded polling. They have no sound, are quiet in foreground, use public-safe route data, and never treat an App mutation response fault as a backend cleanup event. Runtime remains local-only with no account, telemetry, cloud sync or normal-operation network behavior.
@@ -46,7 +47,7 @@ The rollback lease was exercised rather than inspected. Generation 10 migrated t
 
 The first candidate reinstall exposed an acceptance-only race: `restart-report-only` required two separate quiescent reads and could repeatedly collide with periodic scan start. That generation was never accepted and was rolled back. Commit `9d9d765` allows exact healthy report-only restart during an observation-only scan while still refusing cleanup, arm or enforcement authority. After exact-head CI passed, the candidate was reinstalled as generation 12. A controlled readback observed `scan_in_progress: true`, invoked the fixed command, and replaced PID 7399 with PID 8047; the replacement returned healthy, quiescent ReadyReportOnly with the lease intact.
 
-The ad-hoc-signed App is installed in the owner-local Applications folder and running as the only Unlinger menu client. Installed live-socket tests passed 6/6 before and after daemon replacement; the packaged App survived the daemon restart, then its own process recreation succeeded with a fresh PID. Final notification authorization and visual preference remain owner-observed dogfood details, not daemon safety authority.
+The ad-hoc-signed App is installed in the owner-local Applications folder and running as the only Unlinger menu client. Installed live-socket tests passed 6/6 before and after daemon replacement, and the current UI bundle passed the same installed 6/6 gate. The packaged App survived the daemon restart and later process recreations. A SwiftUI `MenuBarExtra` shell rendered blank under the current macOS/Thaw menu host and was replaced rather than retained: AppKit now owns the status item, popover and reusable ordinary window while the existing SwiftUI state/router remains canonical. The owner observed the replacement popover render normally; the newly added explicit Back/open-window flow and final notification behavior remain owner-observed dogfood gates, not daemon safety authority.
 
 ## Safety and field truth
 
@@ -64,7 +65,7 @@ The level-2 source gate passed on 2026-09-01:
 - `cargo test --workspace` passed 272 tests; the two owner-only live CfT tests remained ignored;
 - source-only doctor inspected 408/408 listed processes with zero unreadable, argument-unavailable or descriptor-unavailable entries, 17 executable-identity-unavailable entries, `healthy: true` and no errors;
 - dry-run inspected the same 408/408 snapshot with the same complete readable/argument/descriptor coverage, 17 executable-identity-unavailable entries and no incident;
-- `swift test` passed 62 tests in 11 suites;
+- `swift test` passed 66 tests in 14 suites, including explicit one-level Back, current-route-preserving window presentation, actionable status-item popover and reusable AppKit-window ownership;
 - the release App bundle assembled, its active schema-v3 fixtures and localizations validated, and its ad-hoc signature verified;
 - the isolated smoke passed six live-socket tests, restarted the source daemon over the same private temporary SQLite database, then passed the same six tests again. It verified effective report-only mode, durable receipt replay and owner-private temp/database/socket/lock modes, and removed only its owned temporary root; and
 - the tracked candidate/diff scan found no Faye-specific absolute path, attached-audit filename or identifier, secret-shaped addition, whitespace error or generated build payload; generic `/Users/example` and `/Users/private` strings remain only in synthetic fixtures and redaction/path tests; and
@@ -92,7 +93,7 @@ Owner-only `cft_fieldlab` and `managed_cft_fieldlab` remained ignored and were n
 ## Open gates
 
 - multi-day report-only dogfood and an ambient real eligible incident;
-- owner visual/notification observation for the installed App;
+- owner re-observation of the installed explicit Back/open-window flow and notification behavior;
 - separately owner-authorized narrow enforcement acceptance for a future candidate;
 - resolution or explicit product acceptance of both artifact P2 residuals;
 - broader family/version/controller field evidence, chaos, sleep/wake and sustained-pressure evidence;
