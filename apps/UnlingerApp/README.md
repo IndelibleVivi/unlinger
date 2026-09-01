@@ -1,61 +1,55 @@
 # UnlingerApp
 
-Native macOS menu-bar frontend for Unlinger — a thin SwiftUI client over
-frontend schema v2. Contract authority lives in [`Contract/`](Contract/);
-implementation boundaries in [`FRONTEND_BOUNDARY.md`](FRONTEND_BOUNDARY.md).
+Native macOS menu-bar frontend for Unlinger. It is a thin, local-only SwiftUI projection over frontend schema v3; contract authority lives in [`Contract/`](Contract/) and implementation boundaries in [`FRONTEND_BOUNDARY.md`](FRONTEND_BOUNDARY.md).
 
-The app projects backend truth only: it owns no classification, cleanup
-policy, signal authorization, or service lifecycle control. Actions are gated
-by backend capabilities; a timed-out mutation is never resent automatically,
-and its uncertainty banner does not provide a shortcut around fresh capability
-readback.
+The App owns no classification, cleanup policy, signal authorization, daemon installation, daemon mode, or service lifecycle. It never falls back to schema v1. A timed-out or untrusted mutation response is reconciled from a durable pre-send journal and is never automatically resent.
+
+## Current behavior
+
+- strict v3 status/history/roster/detail/diagnostics DTOs, including exact readiness and observation freshness;
+- capability-gated pause/resume/retry/protect/unprotect with namespace-aware durable receipts;
+- one global unresolved-mutation lock, crash/restart status-only reconciliation, and authority-loss truth;
+- single-flight/coalesced refreshes, polling-session generations, stale roster retention, and typed incident-detail failures;
+- bilingual menu, detail, Settings/About and explicit “Quit Unlinger App” semantics—the daemon continues unchanged;
+- local notifications with `off`, `attention` (default), and `attention_and_reclaims`; first trusted refresh baselines retained events, suppressed events are still marked seen, and a mode change never replays backlog;
+- duplicate-avoidance notification ledger: durable claim before one schedule attempt, stable request IDs, no sound, foreground quiet, and public-safe click routing through a compact shared-router window;
+- launch-at-login controls only this menu-bar client via `SMAppService.mainApp`. It never manages the daemon.
+
+Notification delivery is a best-effort local projection over bounded status/history refreshes, not a gap-free event feed. The App reads current OS authorization every time; a denied prompt does not affect daemon behavior and is not repeatedly requested.
 
 ## Layout
 
-- `Sources/UnlingerKit/IPC` — v2 envelope/DTOs, Unix-socket client (single
-  attempt, 15 s I/O bound, 64 KiB/4 MiB limits), fixture client reading the
-  canonical `Contract/v2` JSON in place.
-- `Sources/UnlingerKit/State` — polling store, status→UI mapping, and the
-  mutation state machine (confirmed / delivery-uncertain + readback).
-- `Sources/UnlingerKit/UI` — popover, status/roster/attention/history/detail
-  views. The roster (`incidents` command) is a read-only "watching right now"
-  panel — observability only, no actions derive from it.
-- `Sources/UnlingerKit/Copy` — bilingual (en / zh-Hans) `Localizable.strings`;
-  copy states observable facts only and never renders raw backend identifiers.
-- `Sources/UnlingerKit/Assets` — menu-bar template icons generated from
-  `AssetsSource/` via `scripts/make-menubar-icon.swift`.
-- `Sources/UnlingerApp` — the `@main` entry.
-- `Tests/UnlingerAppTests` — fixture decoding, status mapping, mutation flow,
-  localization, and an opt-in live socket smoke suite.
+- `Sources/UnlingerKit/IPC` — strict v3 envelope/DTOs and single-attempt cancellable Unix-socket transport;
+- `Sources/UnlingerKit/Persistence` — owner-private `0700` directory / `0600` crash-durable atomic files;
+- `Sources/UnlingerKit/State` — coalesced polling, projection, durable mutation reconciliation;
+- `Sources/UnlingerKit/Notifications` — modes, ledger, coordinator and system scheduler;
+- `Sources/UnlingerKit/Navigation` — shared notification/menu routing;
+- `Sources/UnlingerKit/Settings` — preferences and menu-client login item;
+- `Sources/UnlingerKit/UI` — popover, roster, history, detail, diagnostics and settings surfaces;
+- `Sources/UnlingerKit/Copy` — English and Simplified Chinese copy;
+- `Sources/UnlingerApp` — `@main`, packaged-live versus fixture/debug wiring;
+- `Tests/UnlingerAppTests` — fixture, transport, mutation, concurrency, detail, notification, settings and opt-in live-socket coverage.
 
-## Build and test
+## Build and verify
 
 ```bash
 swift build
 swift test
-scripts/bundle.sh   # builds release and assembles build/Unlinger.app (ad-hoc signed)
+scripts/bundle.sh
 ```
 
-## Live socket smoke
+`scripts/bundle.sh` builds `build/Unlinger.app`, copies active v3 fixtures only, verifies both localizations and Info.plist, then applies a private ad-hoc signature. That is not Developer ID signing or notarization.
 
-The installed generation 9 is v1-only and must stay untouched. For a
-real-machine demo, `scripts/demo-window.sh` brings up an isolated source
-report-only daemon (own temp database/socket/lock) and opens the windowed app
-against it; `scripts/demo-window.sh stop` tears both down. To exercise the
-socket from tests instead, run the daemon per `FRONTEND_BOUNDARY.md`, then:
+The repeatable pre-v0.1 integration gate owns a unique temporary database/socket/lock, remains report-only, runs the live Swift suite before and after daemon restart, checks private file modes and absence of IP listeners, and deletes only its own temp root:
 
 ```bash
-UNLINGER_LIVE_SOCKET=/path/to/isolated/unlingerd.sock swift test --filter LiveSocketTests
-UNLINGER_SOCKET_PATH=/path/to/isolated/unlingerd.sock build/Unlinger.app/Contents/MacOS/UnlingerApp
+scripts/pre-v0.1-smoke.sh
 ```
 
-`UNLINGER_WINDOW=1` (windowed debug mode) additionally runs as a regular Dock
-app, so a closed window comes back with a Dock-icon click. The shipped
-menu-bar mode stays an accessory agent.
+For manual source-only UI work, `scripts/demo-window.sh` runs an isolated report-only daemon. `UNLINGER_WINDOW=1` makes the debug App a regular Dock app; packaged menu-bar mode stays an accessory app except for its compact notification destination window.
 
-## Not yet done
+## Installed boundary
 
-- UserNotifications (private v0 categories: successful reclaim,
-  daemon/service needs attention).
-- Any integration with the installed generation — that requires a future
-  v2-capable generation install, separately authorized.
+Installed generation 9 remains v1-only, report-only and unarmed. Do not point this v3 source daemon at its database: source SQLite v6 cannot be opened by the generation-9 v5 binary, and the current service transaction has no post-install acceptance rollback lease. Installed v3/App integration is therefore deliberately not performed in this tranche.
+
+The strongest current claim is **pre-v0.1 source candidate — isolated report-only verified**. It is not an installed v3 candidate, an ambient-enforcement acceptance, or a public release.

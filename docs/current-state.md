@@ -1,57 +1,96 @@
 # Current state
 
-**Updated:** 2026-08-31
+**Updated:** 2026-09-01
+
 **Programme:** Unlinger 0.1
-**Source:** private backend plus native SwiftUI source candidate; frontend not installed; source not released
-**Remote:** private origin configured
-**Installed runtime:** generation 9, v1-only, loaded and healthy at a stable report-only floor
-**Activation:** unarmed after one complete managed full-timing acceptance run; ambient enforcement remains off
 
-## What is true now
+**Source:** private pre-v0.1 schema-v3 candidate; isolated report-only verified
 
-The current source spans native macOS observation, deterministic schema-v2 sessionization for the three scoped Chromium families, exact-version protection, durable cooling, frozen cleanup plans, PREPARED-before-delivery process/artifact journals, exact TERM/KILL stages, bounded revival checks, redacted SQLite v5 history, native scheduling hints with periodic fallback, dual-schema local IPC/CLI, and transactional immutable service generations.
+**Remote:** private origin configured; this tranche not yet pushed
 
-Cleanup receipts now derive independent process, artifact, overall, and attention outcomes for both new and retained events. A known artifact refusal after exact tree absence/revival proof remains a whole-plan `FAILED` attention/retry item but projects `cleared_with_residue`, remains visible as a recent process reclaim, and no longer fails the entire managed daemon closed. Signal/artifact delivery uncertainty and unproved failures after a delivered side effect retain global fail-close.
+**Installed runtime:** generation 9, v1-only, last verified healthy at a stable report-only floor
 
-Frontend schema v2 is owned by `unlinger-protocol`, excludes service lifecycle commands at the command-enum boundary, strips process/storage/service identities from status/history/explain/incidents/diagnostics, and provides explicit global/incident capabilities. Fourteen canonical wire/app-state fixtures are tracked and Rust-roundtripped; `apps/UnlingerApp/FRONTEND_BOUNDARY.md` records the stable technical boundary, while dated working handoffs remain private continuity outside Git. Schema v1 remains the Rust CLI/service compatibility lane. The active generation 9 predates this source and therefore remains v1-only; no install, reload, mode change, or activation occurred in this tranche.
+**Activation:** unarmed; this tranche does not install, reload, arm, change mode, or run an owner-only signal harness
 
-The native frontend now has a first SwiftUI implementation under `apps/UnlingerApp`: a SwiftPM menu-bar thin client (`UnlingerKit` library + `UnlingerApp` executable + `scripts/bundle.sh` ad-hoc-signed `.app`) speaking schema v2 only over the per-user socket, with canonical-fixture-driven previews/tests, capability-gated actions, and the delivery-uncertain no-resend/readback mutation flow. It is verified against fixtures and an isolated source report-only daemon; it has not been pointed at, installed beside, or integrated with the installed generation 9.
+**Highest claim currently permitted:** **pre-v0.1 source candidate — isolated report-only verified** (acceptance level 2)
 
-On 2026-08-31 the owner authorized a read-only v2 `incidents` roster command: the daemon publishes a bounded (32) snapshot of the current incident set each reconciliation cycle, projected through the same public redaction as history, and the app renders it as a "watching right now" popover section. It is observability only — no action availability derives from the roster, and no manual lifecycle control was added.
+## Source truth
 
-The macOS live-process boundary now treats only a PID confirmed `SZOMB` through `KERN_PROC_PID` as gone; every other incomplete read remains fail closed. DAP cleanup no longer walks every descriptor of every same-UID process. It uses Darwin's targeted `proc_listpidspath` query for the exact canonical or quarantine pathname, a complete current-user argv pass, and frozen parent/file identity checks before and after the query.
+The backend source now uses SQLite schema v6 and frontend schema v3 while preserving schema-v1 CLI/service compatibility. Schema v2 remains as historical fixtures but is rejected with typed `unsupported_schema`; the App emits v3 only and never falls back to v1.
 
-The managed lifecycle is generation/instance/epoch bound. First scan is always report-only. `Failed` is terminal for one daemon instance and cannot be rehabilitated by a later successful scan or `Disarm`; exact drain/bootout/fresh restart is required. Ready report-only installation acceptance additionally requires no scan or cleanup in progress. Arm checks both durable identity and the current volatile lifecycle phase. Same-generation carried enforce intent may resume only after fresh report-only recovery/first scan, a new epoch, fresh cooling, and absence of open-attempt or delivery-unknown blockers.
+V3 ordinary mutations carry a public-safe namespace token plus canonical UUID. The daemon serializes lifecycle state with a `BEGIN IMMEDIATE` store transaction, replays an exact stored receipt before current lifecycle policy, re-evaluates authoritative durable facts through one shared public-action policy, applies state, advances a durable cleanup-policy revision and stores a typed `applied | no_change | rejected` receipt atomically. Same-ID canonical replay is idempotent; conflicting reuse fails; old-namespace missing requests cannot apply. Receipt pruning rotates namespace atomically and retains a minimum 14-day reconciliation window.
 
-Ordinary and service IPC clients make one 15-second request attempt; accepted server connections retain a 3-second I/O bound and are served by a bounded eight-worker set, so one slow history/read peer no longer blocks later status or lifecycle traffic. A timed-out mutation is uncertain delivery and is never automatically resent. Pause/resume, exact protection changes, named retry, and lifecycle changes advance the cleanup-policy revision. A named retry clears only its incident's block and cooling candidate and must pass fresh cooling before any later signal.
+SQLite v6 also assigns stable opaque public event tokens, retains storage-recovery identity across clean restarts, and commits each observation cycle's history as one batch before publishing the roster. The public roster distinguishes `never_observed`, `scan_in_progress`, `current` and `stale_after_failure`, with optional time/token when no real snapshot exists. Last scan uses cycle completion rather than cycle start.
+
+The native App under `apps/UnlingerApp` now has:
+
+- strict schema-v3 DTO/envelope decoding and a narrow exact v1 incompatibility parser;
+- phase-aware, single-attempt, cancellable socket I/O;
+- an owner-private crash-durable pending-mutation journal written before connect/send;
+- one global unresolved mutation lock and startup/status-only reconciliation without resend;
+- coalesced refresh generations, polling-session isolation, stale roster retention and typed incident-detail failures;
+- local-view diagnostics results with required `document_schema_version` and semantic-lossless JSON export;
+- stable event/action identity, including artifact-only action groups;
+- bilingual Settings/About/Quit surfaces, shared notification routing and menu-client-only `SMAppService.mainApp` launch at login;
+- bounded local notifications: `off`, default `attention`, or `attention_and_reclaims`; first trusted refresh baselines retained tokens, suppressed events remain seen, and durable claim precedes one schedule attempt.
+
+Notifications are best-effort local projections over bounded polling. They have no sound, are quiet in foreground, use public-safe route data, and never treat an App mutation response fault as a backend cleanup event. Runtime remains local-only with no account, telemetry, cloud sync or normal-operation network behavior.
+
+## Installed blocker
+
+Installed generation 9 uses schema-v1 IPC and a SQLite-v5-capable binary. Source v3 migrates isolated/copied databases to v6, which generation 9 cannot reopen. The current service install transaction removes its database rollback backup after candidate-ready, before a later App acceptance window could finish. Therefore a failed installed-v3 acceptance could not truthfully restore generation 9 and its database.
+
+Installed v3 integration remains closed until an acceptance-scoped rollback lease retains the prior manifest, plist and v5 database through explicit accept/rollback, and a real test proves the generation-9 binary opens the restored database and returns healthy ReadyReportOnly. Source and isolated tests must not open the active database with the v6 binary.
+
+## Safety and field truth
+
+Automatic process eligibility remains limited to controllerless `com.google.chrome.for.testing` exactly `151.0.7922.34`, plus every existing identity, isolation, durable abandonment, stability and protection gate. Agent-browser, Playwright and Puppeteer are recognized/classified families; only the exact controllerless CfT point is automatically eligible. Controller-bearing, headed/attached, standard/shared profile, wrong/mixed/unknown version and incomplete identity stay protected.
+
+Automatic artifact cleanup remains limited to one exact admitted `DevToolsActivePort` file after the process tree and both revival checks are clear. Two P2 residuals remain: a crash after canonical-to-quarantine rename can strand the exact quarantine entry, and the final path revalidation-to-`unlinkat` interval retains a same-UID swap TOCTOU.
+
+Historical generation-9 evidence proves one owner-approved managed full-timing Playwright-style CfT process/artifact/restart point: eight exact members, nine signal actions, zero survivors, both revival checks, one exact DAP removal, fresh-epoch restart without journal duplication, ordinary-Chrome preservation, and final stable report-only containment. It does not prove ambient eligibility, multi-day zero-false-positive dogfood, broader families/versions, or current-candidate enforcement.
 
 ## Verification truth
 
-Current-source verification passes: workspace fmt, strict workspace clippy, 251 ordinary Rust tests with the two owner-only live harnesses ignored, release workspace build, 33 native frontend tests, an ad-hoc-signed `.app` bundle whose packaged resource set excludes stale incremental files, Rust v2 fixture roundtrips, raw-socket v2 public-redaction/lifecycle-absence/error-redaction checks, a source-only doctor over 421/421 current-user processes with zero unreadable argv/descriptor coverage, and a 421/421 dry-run scan with zero incidents. Private GitHub Actions run `33404543446` passed the same Rust gates plus Swift tests and app bundling for source head `f4dbe89`. A fresh read-only service readback still proves generation 9 installed/loaded/healthy, exact launchd/IPC/generation/binary identity, private permissions, ReadyReportOnly, requested/effective report-only, unarmed, idle, healthy event source, no storage recovery, no current/blocked/protected incidents, and its prior Cleared reclaim.
+The level-2 source gate passed on 2026-09-01:
 
-Synthetic verification includes exact owned-child signal/process-exit tests, an owned-zombie lookup/capture fixture, targeted-path artifact reference and quarantine tests, durable journal/recovery tests, uncertain-delivery and named-retry policy-revision races, terminal Failed lifecycle tests, stable quiescent service predicates, and transactional service recovery tests. The two live CfT harnesses remain ignored by ordinary workspace tests and require their explicit owner acknowledgement/boundary.
+- `cargo fmt --all -- --check`, strict workspace clippy and the release workspace build passed;
+- `cargo test --workspace` passed 268 tests; the two owner-only live CfT tests remained ignored;
+- source-only doctor inspected 408/408 listed processes with zero unreadable, argument-unavailable or descriptor-unavailable entries, 17 executable-identity-unavailable entries, `healthy: true` and no errors;
+- dry-run inspected the same 408/408 snapshot with the same complete readable/argument/descriptor coverage, 17 executable-identity-unavailable entries and no incident;
+- `swift test` passed 62 tests in 11 suites;
+- the release App bundle assembled, its active schema-v3 fixtures and localizations validated, and its ad-hoc signature verified;
+- the isolated smoke passed six live-socket tests, restarted the source daemon over the same private temporary SQLite database, then passed the same six tests again. It verified effective report-only mode, durable receipt replay and owner-private temp/database/socket/lock modes, and removed only its owned temporary root; and
+- the tracked candidate/diff scan found no Faye-specific absolute path, attached-audit filename or identifier, secret-shaped addition, whitespace error or generated build payload; generic `/Users/example` and `/Users/private` strings remain only in synthetic fixtures and redaction/path tests; and
+- a separate read-only installed-status check found generation 9 healthy, ready, v1/v5, quiescent, report-only and unarmed with exact PID/generation/binary/permission agreement. It did not reload, migrate or otherwise mutate the installed service.
 
-## Field truth
+The reproducible commands were:
 
-Historical isolated Chrome-for-Testing runs at the single admitted version proved full and fast process mechanics while preserving simultaneous ordinary Chrome. Earlier short LaunchAgent operation proved report-only sweeps, exact service identity, private permissions, local IPC, protected-session coexistence, and historical mode-transition mechanics on one host. Those are point/short-duration results, not sustained acceptance.
+```bash
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
+cargo build --release --workspace
+cargo run -p unlinger-cli -- doctor --source-only --json
+cargo run -p unlinger-cli -- scan --dry-run --json
+cd apps/UnlingerApp
+swift test
+scripts/bundle.sh
+scripts/pre-v0.1-smoke.sh
+```
 
-A generation-5 managed full-timing attempt completed the exact process programme for one eight-member Chrome-for-Testing tree: journaled TERM/KILL delivery, zero survivors, both revival checks, and roughly 60 MiB reclaimed. The DAP action then returned `Unsafe` under the superseded global descriptor walk, so no artifact was removed and the harness as a whole did not pass. Its terminal failure also exposed a lifecycle projection race. The targeted-path artifact design, terminal Failed behavior, volatile Arm gate, stable quiescent predicate, and exact Failed drain/restart path were implemented afterward.
-
-Generation 7 then exposed a valid empty-argv case in a long-lived LaunchServices process. The `KERN_PROCARGS2` parser had incorrectly skipped consecutive NULs after argv parsing began, so the complete reference scan failed closed. One canonical parser now preserves empty arguments, stops at exact `argc`, and excludes the environment tail. A read-only retained-profile scan subsequently completed without incomplete processes.
-
-The first generation-8 run completed the cleanup itself but rejected the postflight because an unrelated ordinary Chrome root was opened during the test. The proof now preserves every pre-existing ordinary-Chrome root by exact identity, permits new roots and ordinary child churn, and independently requires every receipt/journal target to belong to the pre-arm frozen field tree. A later generation-8 rerun stopped on a read-only `history(1000)` IPC timeout. Exact receipt polling now uses incident-scoped `Explain` on a separate worker, so native absence sampling remains at its own cadence; only read-only transient outcomes retry.
-
-Generation 9 then passed the complete owner-approved production-timing managed harness in 341.8 seconds. One unique eight-member CfT tree produced nine ordered exact signal actions, zero survivors, both revival checks, an exact DAP removal, and roughly 90 MiB reclaimed. Durable attempt/action/artifact rows matched the terminal receipt exactly. A same-generation restart exposed the required transition, produced a new daemon instance and enforcement epoch, and left the completed journal unchanged through the post-restart observation. Every pre-existing ordinary-Chrome root retained exact identity even though a new unrelated root appeared during the run. Final independent readback proved generation/binary/launchd/IPC agreement, healthy ReadyReportOnly, requested/effective report-only, no enforcement epoch, no scan or cleanup, and no cleanup block.
-
-This is one controlled installed process/artifact/restart acceptance point, not ambient or broad family acceptance. It does not close two known artifact P2s: daemon crash after canonical-to-quarantine rename can strand the exact random entry, and the final pathname `fstatat`-to-`unlinkat` interval retains a same-UID swap TOCTOU.
+Owner-only `cft_fieldlab` and `managed_cft_fieldlab` remained ignored and were not run. No source-v3 binary opened the active generation-9 database.
 
 ## Open gates
 
-- retain the generation-9 report-only floor while collecting sustained evidence;
-- separately authorize any install/readback of a v2-capable generation for the native frontend (fixture and isolated-source-socket integration is done);
-- resolve or explicitly accept the two artifact P2s before any broad artifact-completeness claim;
-- collect broader supported-family/version, controller-bearing, chaos, sleep/wake, sustained pressure, restart-during-cooling, longevity/overhead, and multi-day zero-false-positive evidence;
-- build/test Intel or universal artifacts, then separately complete signing, notarization, packaging, versioned rollback/update, release, and public-alpha acceptance;
-- before public visibility, make the owner-approved license/rights decision, add bilingual reader documentation and a publication-grade architecture diagram, and repeat tracked/staged privacy and provenance scans.
+- acceptance-scoped installed rollback lease and real generation-9 database rollback/open proof;
+- installed v3 daemon/App integration without arm;
+- multi-day report-only dogfood and an ambient real eligible incident;
+- separately owner-authorized narrow enforcement acceptance for a future candidate;
+- resolution or explicit product acceptance of both artifact P2 residuals;
+- broader family/version/controller field evidence, chaos, sleep/wake and sustained-pressure evidence;
+- Intel/universal build evidence;
+- Developer ID signing, notarization, packaging/update/rollback and distribution;
+- public-safe repository/license/rights decision, public alpha and public release.
 
-Private continuity, origin conversation, retained profiles, diagnostics, and raw field captures remain outside Git.
+See [`PRE_V0_1_ACCEPTANCE.md`](PRE_V0_1_ACCEPTANCE.md), [`SUPPORT.md`](SUPPORT.md), and [`support-matrix.v1.json`](support-matrix.v1.json) for the exact claim and support vocabulary.

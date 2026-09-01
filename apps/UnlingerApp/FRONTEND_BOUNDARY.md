@@ -1,59 +1,56 @@
 # Frontend implementation boundary
 
-先只读：
+先读：
 
 1. [`Contract/README.md`](Contract/README.md)
-2. [`Contract/v2/`](Contract/v2/) 全部 fixtures
-3. 需要更完整 transport/error 背景时再读 [`docs/IPC.md`](../../docs/IPC.md)
+2. [`Contract/v3/`](Contract/v3/) active fixtures
+3. 需要 transport/error 细节时读 [`docs/IPC.md`](../../docs/IPC.md)
 
-不需要先翻 Rust workspace，也不要从 CLI human output、schema v1 `DaemonStatus` 或 service lifecycle code 反推 UI。
+[`Contract/v2/`](Contract/v2/) 只保留历史审计证据。不要从它、CLI human output、schema-v1 `DaemonStatus` 或 service lifecycle code反推当前 UI。
 
 ## Backend truth
 
-Unlinger 是 local-only macOS runtime hygiene utility。当前 source 默认 report-only；当前安装的 generation 9 也稳定 report-only、unarmed。Frontend 是 backend truth 的 projection，不拥有 signal authorization、service installation/mode switching 或 lifecycle recovery。
+Unlinger 是 local-only macOS runtime-hygiene utility。Direct daemon与安装中的 generation 9默认/当前都保持 report-only；generation 9是 v1-only、unarmed。Frontend 只投影 backend truth，不拥有 signal authorization、service installation/update/rollback、daemon mode switching或 lifecycle recovery。
 
-v2 已提供 status/history/explain、pause/resume、named retry、exact protect/unprotect 和 explicit diagnostics export。所有 actions 使用 backend capabilities；缺失 capability 不在 Swift 侧猜补。
+Schema v3提供 status/history/explain/incidents/diagnostics、mutation status，以及 pause/resume/named retry/exact protect/unprotect。所有 actions使用 backend capabilities，并由同一 backend policy在 commit前重新授权。UI缺失 capability时 fail closed，不从 stage、score、reason string或 roster presence自行猜补。
 
-2026-08-31 起 v2 还提供只读 `incidents` roster（owner 授权）：最近一次 reconciliation cycle 的当前 incident snapshot，上限 32 条，复用 public history 的脱敏 projection。App 把它渲染为 popover 的「正在观察 / Watching right now」区。它是 observability surface，不推导 action availability，也不附带 manual kill。
+Automatic admission依然极窄：controllerless exact Chrome for Testing `151.0.7922.34`，且所有 hard gates成立。Unknown/mixed/wrong versions、controller-bearing、headed/attached、standard/shared profile与不完整 identity保持 `PROTECTED`。UI不得添加 manual kill绕过它。
 
-当前 automatic family admission 仍刻意很窄：exact Chrome for Testing `151.0.7922.34`、无 controller 的 detached tree。Unknown/mixed versions 与 controller-bearing sessions 保持 `PROTECTED`。这不是 frontend bug，也不授权 UI 加 manual kill。
+## State mapping
 
-## UI state mapping boundary
+- Quiet 仅当 `healthy + readiness.ready + no attention + roster.current + no scan/cleanup activity`；
+- `starting`、`draining`、`failed`、unknown、transport unavailable、backend incompatible与 stale roster都不能映射成 all clear；
+- replacement scan进行中保留上一份 roster并标 scanning；失败后保留并标 stale；never-observed不制造 timestamp；
+- `cleared_with_residue` 必须同时表达 process success与 artifact residue，不写成 process cleanup failed；
+- ambiguous count、CPU、RSS、age、pressure或 protected incident只提供低调信息，不产生 action或 notification authority；
+- incident detail只有 trusted `not_found`显示不存在。Transport/store/protocol failure保留旧 detail并标 stale；旧 request结果不得覆盖新 request。
 
-- `healthy + readiness: ready + effective_mode: report_only`：正常观察；明确说明 automatic cleanup off。
-- `scan_in_progress` / `cleanup_in_progress`：短暂 activity，不升级为 warning。
-- `paused_until_unix_millis`：展示 pause deadline；observation/history 仍继续。
-- `most_recent_reclaim`：按 `overall_outcome` 表达；`cleared_with_residue` 不得写成 process failure。
-- `attention.items`：真正的 degraded/failed/residue/revival item；按 `kind + reason_id` 映射，unknown reason 使用 generic fallback。
-- `ambiguous_incident_count`：可作为低调信息，不单独产生 warning 或 notification。
-- transport unavailable：不能伪装成 all clear；使用 app-local unavailable fixture。
+Copy保持安静、直接、non-antivirus。未知 enum/reason显示 generic、保守 copy；绝不把未知值扩大成 success、eligibility、action或 notification authority。
 
-Copy register 默认安静、直接、非 antivirus/运维口吻。中英文都优先说 observable fact；不要展示 raw backend identifier 或 lifecycle terminology。
+## Mutation and transport boundary
 
-## Mutation rule
+每个 mutation在任何 connect/send前，把 namespace token、UUID、canonical command/args、semantic lock、created time和 visual dismissal写入 owner-private crash-durable journal。Journal失败则发送零字节。Pre-v0.1全局只允许一个 unresolved ordinary mutation；read-only commands继续工作。
 
-Mutation 收到可信 success 才能显示 confirmed。若 timeout/EOF/disconnect：
+任意字节可能发送后，timeout/EOF/reset/oversize/bad JSON/wrong schema或 request ID/wrong payload/DTO failure都进入 delivery uncertain。App restart或 “Check again” 只调用 `mutation_status`，永不重发原 mutation。Trusted committed/rejected或 unchanged-authority not-found可以收束；authority lost与 untrusted read保留 journal和 lock。Dismiss只隐藏 banner，不清 authority state。
 
-1. 进入 `mutation_delivery_uncertain`；
-2. 不自动重发；
-3. 根据 command 读取 `status` 或 `explain`；
-4. 只有 readback 明确证明未提交且用户再次操作时才发送新的 mutation。
+Schema v3 request遇到 exact schema-v1 `unsupported_schema` framing时显示 incompatible daemon。App绝不 fallback至 v1 mutation。
 
-## Fixture 与 live mode
+## Diagnostics and identity
 
-所有主要 states 先由 canonical fixtures 驱动 Preview/tests。当前 installed generation 9 是 v1-only，不能作为 v2 live endpoint。若 backend integration 需要 source v2，可在独立 terminal 启动完全隔离的 report-only daemon：
+Diagnostics result属于发起 view的 local state；A view的 success不会被 B view的 failure覆盖。Document使用 required `document_schema_version`，export是 semantic-lossless JSON：保留未知 fields但不承诺 byte-for-byte layout。
 
-```bash
-UNLINGER_DEV_DIR="$(mktemp -d)"
-cargo run -p unlinger-daemon -- \
-  --report-only \
-  --database "$UNLINGER_DEV_DIR/history.sqlite3" \
-  --socket "$UNLINGER_DEV_DIR/unlingerd.sock" \
-  --instance-lock "$UNLINGER_DEV_DIR/unlingerd.lock"
-```
+History row使用 public `event_token`；action row使用 event token + mutation namespace + stable sequence。Artifact-only group必须显示。Internal event/attempt/PID/fingerprint不是 Swift identity，也不进入 ordinary UI。
 
-这不会替换、reload 或改 mode 于 active generation 9。退出 source daemon 后，保留或手动清理这个 exact temp directory；App 不自动删除它。
+## Notifications and routing
 
-## Notification boundary
+允许模式：`off`、default `attention`、`attention_and_reclaims`。首次 trusted full refresh把 retained tokens设为 baseline；off/default suppression仍标 seen，之后切 mode不追发 backlog。Notification ledger先 durable claim，再 schedule一次，选择 duplicate-avoidance；schedule failure不循环 retry。
 
-允许的 private v0 notification categories：successful reclaim、daemon/service needs attention。不得仅因 ambiguous count、CPU、RSS、age 或 memory pressure 通知。`cleared_with_residue` 可以出现在 activity/attention 中，但文案必须保持 process success 与 artifact residue 的双重事实。
+Eligible attention只来自 typed durable cleanup/storage/daemon facts；App ordinary-mutation unresolved不产生系统 notification。Sustained unreachable只声称 App无法连接。No sound，foreground quiet，`userInfo`只含 route kind、redacted incident ID和 public event token。Fixture/preview/swift-run tests不接真实 notification center。
+
+Click routing复用 shared `AppRouter` 和 compact `WindowGroup`，进入 exact incident或 global status。`SMAppService.mainApp` 只负责 menu client launch at login，不触碰 daemon。
+
+## Live boundary
+
+Active generation-9 database属于安装服务。Source v3使用 SQLite v6，不能被 generation-9 binary rollback打开；在 acceptance-scoped rollback lease实现前不得 install/reload/arm/change mode或复用 active database。
+
+使用 [`scripts/pre-v0.1-smoke.sh`](scripts/pre-v0.1-smoke.sh) 获得可重复的 isolated report-only integration。Owner-only CfT harness、ambient enforcement与 installed lane不属于 frontend source validation。

@@ -1,104 +1,106 @@
-# Unlinger frontend contract v2
+# Unlinger frontend contract v3
 
-这里是 native frontend 唯一需要消费的 backend wire surface。Rust authority 是 [`crates/unlinger-protocol`](../../../crates/unlinger-protocol)，daemon projection 位于 [`crates/unlinger-daemon/src/public_ipc.rs`](../../../crates/unlinger-daemon/src/public_ipc.rs)，本目录 [`v2/`](v2/) 的 JSON 是由 Rust contract tests 逐份 decode/encode 的 canonical fixtures。
+这里是 native App 唯一消费的 backend wire surface。Rust authority 是 [`crates/unlinger-protocol`](../../../crates/unlinger-protocol)，daemon projection 位于 [`crates/unlinger-daemon/src/public_ipc.rs`](../../../crates/unlinger-daemon/src/public_ipc.rs)，active canonical fixtures 位于 [`v3/`](v3/) 并由 Rust 与 Swift tests 共同 decode。
 
-当前 source 同时接受两个 exact schema：
+协议边界：
 
-- `schema_version: 2`：frontend-only public DTO；ordinary commands only；native app 只使用这一层。
-- `schema_version: 1`：现有 Rust CLI、service transaction 与 lifecycle compatibility surface；会携带 internal lifecycle facts，不用于 App。
+- `schema_version: 3`：当前 App public contract；strict DTO、ordinary commands、durable mutation receipts；
+- `schema_version: 1`：Rust CLI/service operator compatibility；包含 internal lifecycle facts，不供 App 使用；
+- `schema_version: 2`：保留在 [`v2/`](v2/) 作为历史审计证据；它在安装前已被 v3 supersede，当前 server 对 v2 返回 v1-framed typed `unsupported_schema`；
+- App 只发送 v3，不会 silent downgrade 或改走 v1 mutation/lifecycle path。
 
-当前安装中的 generation 9 仍是上一 source head 的 v1-only report-only runtime。v2 已在 source socket integration tests 中验证，但尚未 install/reload/activate。Frontend 开发先使用 fixtures；需要 live v2 时，启动一个 database/socket/instance-lock 全部隔离的 source report-only daemon，或等待未来明确安装的新 generation。不要把 v1 status 当作 v2 fallback。
+安装中的 generation 9 仍是 v1-only、report-only、unarmed。它不是 v3 live endpoint。Active App fixtures、isolated smoke 与 source tests 不改变 installed truth。
 
-## Transport
+## Transport and trust
 
 - per-user Unix-domain stream socket；无 TCP、account、telemetry 或 normal-operation network traffic；
-- 每个 connection 恰好一个 LF-delimited JSON request 和一个 response；
-- request 上限 64 KiB，response 上限 4 MiB；
-- request envelope 是 `{"schema_version":2,"request_id":17,"command":{"command":"status"}}`；
-- response 必须验证 exact `schema_version` 与 `request_id`，并验证 `ok/payload/error` 互斥；
-- mutation 在可信 response 前 timeout、EOF 或 disconnect 时属于 delivery uncertain。绝不 automatic retry；先发 read-only command 读取 durable/runtime state。
+- 每个 connection 恰好一个 LF-delimited JSON request 和一个 response；request 上限 64 KiB，response 上限 4 MiB；
+- App request envelope 是 `{"schema_version":3,"request_id":17,"command":{"command":"status"}}`；
+- response header 用 exact integer types 验证 `schema_version` 和 `request_id`，并验证 `ok/payload/error` 互斥；
+- client 每个 request 只发送一次。Mutation request 任意字节可能写出后发生 timeout、EOF、reset、oversize、bad JSON、wrong schema/request ID/payload 或 DTO decode failure，都属于 delivery uncertain；绝不 automatic resend；
+- encode/connect/明确 zero-byte write failure 是 failed-before-send；exact v3 error envelope 是 trusted rejection；仅 exact v1 `unsupported_schema` + exact request ID 可建立 incompatible-daemon truth。
 
-## Ordinary commands
+## Commands
 
-v2 只定义：
+Read-only：
 
 - `status`
 - `history { limit }`
 - `explain { incident_id }`
 - `incidents`
-- `pause { duration_millis }`
-- `resume`
-- `retry_failed_cleanup { incident_id }`
-- `protect_incident { incident_id }`
-- `unprotect_incident { incident_id }`
+- `mutation_status { context }`
 - `export_diagnostics { incident_id }`
 
-`arm`、`disarm`、`begin_drain` 不只是“不要显示”：它们在 v2 `Command` enum 中不存在。带这些 discriminator 的 v2 request 会得到 typed `invalid_json`。
+Ordinary mutations：
 
-## Current roster
+- `pause { context, duration_millis }`
+- `resume { context }`
+- `retry_failed_cleanup { context, incident_id }`
+- `protect_incident { context, incident_id }`
+- `unprotect_incident { context, incident_id }`
 
-`incidents` 是只读的 current-incidents roster：最近一次 reconciliation cycle 实际看到的 incident 列表（不含已 terminal 的），上限 32 条。每条是 `incident_id` 加一份经过 public history 同款脱敏的 `Observation` projection——family/version、state、executable basename、member/resource totals、role counts、evidence 与 gates；同样不发送 raw PID、fingerprint、tracking/session identity 或 frozen target。
+`arm`、`disarm`、`begin_drain`、install/update/rollback 不存在于 v3 `Command` enum。App 也不从 v1 response 或 shell command获得 daemon lifecycle authority。
 
-它是 observability surface，不是 work queue：frontend 不从 roster 推导任何 action availability，也不提供 manual kill。
+## Durable mutation authority
 
-## Status 与 capabilities
+每个新 v3 mutation 都携带：
 
-`PublicStatus` 只给 App 使用：daemon version、health/readiness、effective mode、scan/cleanup activity、pause、last scan、incident counts、recent reclaim、event-source/storage health、bounded attention、exact protections 与 explicit capabilities。
+```text
+MutationContext {
+  namespace_token
+  mutation_id
+}
+```
 
-它不发送 daemon PID、instance ID、activation/armed generation、enforcement epoch、requested mode、database schema、binary/path identity、service transaction state、raw last error 或 recovery identity。
+`status.mutation_authority` 提供当前 public-safe namespace 和至少 14 天的 reconciliation window。Namespace 不复用 daemon instance、activation generation、enforcement epoch、database path 或 identity。
 
-Frontend 不从 lifecycle facts 猜 action availability。使用 `capabilities.*.available`；disabled state 显示或映射 `unavailable_reason_id`。Incident detail 还会给出 exact incident 的 retry/protect/unprotect/export capabilities。
+Backend 在同一 `BEGIN IMMEDIATE` transaction 内重读 exact policy facts、应用 state change、推进 durable policy revision并插入 typed receipt。Exact `(namespace_token, mutation_id)` replay 先于 current lifecycle policy：同一 canonical request返回 stored receipt且不重复 side effect/revision；不同 request返回 conflict。Receipt outcome 是 `applied | no_change | rejected`，`committed` 表示 outcome 已 durable，不表示 retry 后的 cleanup 已成功。
 
-## Cleanup outcome
+`mutation_status` 返回：
 
-Cleanup timeline 同时保留 whole-plan `state` 和四个 frontend outcome fields：
+- `committed { receipt }`：stored outcome 是 authority；
+- `not_found { context }`：只有 supplied namespace 仍是 current authority时，才证明本 namespace 下没有 commit；
+- `authority_lost { context }`：receipt 缺失且 namespace 已失效；不能推断原 mutation 未发生。
 
-- `process_outcome`: `cleared | revived | failed | delivery_unknown`
-- `artifact_outcome`: `not_applicable | reconciled | residue | delivery_unknown`
-- `overall_outcome`: `cleared | cleared_with_residue | revived | failed`
-- `attention_required`: boolean
+Receipt pruning 与 namespace rotation在同一 transaction；14 天窗口内不得为 count cap提前删除。容量不足时拒绝新 mutation。Old namespace + missing receipt 的 mutation request必须被拒绝。
 
-`state: FAILED` 与 `overall_outcome: cleared_with_residue` 可以同时存在：前者表示 frozen process+artifact plan 没有全部完成，后者表示 process tree 已经由 exact liveness + revival checks 证明清除，而 artifact 在明确、无不确定副作用的 refusal 后被安全保留。UI 必须说清“进程已处理，低风险 residue 被保留”，不能说 process cleanup failed。
+App 在 connect/send 前把 namespace、ID、canonical mutation、semantic lock、created time和 visual dismissal写入 owner-private crash-durable journal。Journal failure发送零请求；App restart只查 `mutation_status`，不重发原 mutation。Pre-v0.1 一次只允许一个 unresolved ordinary mutation；dismiss banner不清 journal或 lock，read-only commands继续工作。
 
-任何 process/artifact `delivery_unknown`，以及已发生 side effect 后无法证明 terminal state 的 failure，仍是 `overall_outcome: failed` 并保留 fail-close/retry block。
+## Status, readiness, and capabilities
 
-## Public history redaction
+`PublicStatus` 只给 App：daemon version、health、`starting | ready | draining | failed | unknown` readiness、effective mode、activity、pause、last completed scan、incident counts、recent reclaim、event/storage health、bounded attention/protection、global capabilities和 mutation authority。
 
-v2 history/explain 保留 family/version、member/resource totals、role counts、evidence IDs/families、hard gates、typed outcome、signal stage/signal/disposition summaries、artifact kind/disposition 和 resource receipt。
+它不发送 daemon PID、instance ID、activation/armed generation、enforcement epoch、requested mode、database schema、binary/path identity、service transaction state或 raw last error。
 
-它不发送 raw PID/survivor PID、event/attempt ID、process/artifact/member fingerprint、source PID、start identity、tracking/session identity、full argv、executable/profile path 或 frozen target。Diagnostics v2 也只组合 public status 与 public incident detail。
+Capability projection和 mutation authorization调用同一 Rust public-action policy。UI 不从 lifecycle、incident stage、reason string或 score推导授权。Quiet UI 仅在 `healthy && readiness == ready && no attention && roster current && no activity` 成立。
 
-## Canonical fixtures
+## Observation roster
 
-Status：
+`incidents` 返回 `ObservationRoster`：
 
-- `status-all-clear.json`
-- `status-report-only.json`
-- `status-scanning.json`
-- `status-paused.json`
-- `status-recently-reclaimed.json`
-- `status-needs-attention.json`
+```text
+cycle_token: optional
+observed_at_unix_millis: optional
+freshness: never_observed | scan_in_progress | current | stale_after_failure
+items: bounded redacted observations
+```
 
-Timeline/detail：
+Never-observed 没有 fake timestamp/token。Replacement cycle完成前保留上一份 roster；失败后标 `stale_after_failure`。完整 observation batch 先 atomic commit history，再 publish fresh roster。Roster 是最近一次 observation projection，不是 work queue，不授权 action，也不提供 manual kill。
 
-- `history-cleared.json`
-- `history-cleared-with-residue.json`
-- `incident-protected.json`
-- `incident-revived.json`
-- `incident-failed.json`
+## Events, outcomes, and diagnostics
 
-Roster：
+每个 retained public history event有 opaque、stable、unique `event_token`；recent reclaim和 attention在对应 durable event存在时携带同一个 token。Swift row identity与 notification dedupe使用 token，不使用 internal event/attempt IDs。Action row identity由 event token、receipt namespace和 stable sequence组成；artifact-only groups必须可渲染。
 
-- `incidents-current.json`
+Cleanup 同时保留 process、artifact、overall outcome。`state: FAILED` 与 `overall_outcome: cleared_with_residue` 可以共存：process tree已证明清除，但 artifact安全保留。Typed stored outcome决定 attention/reclaim类别；reason string只负责 copy，缺失 outcome不能伪造成 cleared。
 
-App-local transport states（不是 daemon response envelope）：
+Diagnostics payload有 required integer `document_schema_version`。Swift 用 exact `CodingKeys`；导出结果属于 initiating view的 local state，不写共享 singleton。当前语义是 **semantic-lossless JSON**：未知 fields保留，允许重新序列化，不承诺原始 byte layout或 key order。
 
-- `app-daemon-unavailable.json`
-- `app-mutation-delivery-uncertain.json`
+## Canonical fixtures and verification
 
-Contract verification：
+[`v3/`](v3/) 包含 ready/report-only/enforce/starting/draining/failed/storage-recovered statuses，current/scanning/stale/never-observed rosters，history/detail/outcome/diagnostics，mutation committed/not-found/authority-lost，以及 App-local unavailable/incompatible/unresolved states。Bundled App 只包含 v3；bundle gate发现 active v2 fixture会失败。
 
 ```bash
 cargo test -p unlinger-protocol
-cargo test -p unlinger-daemon --test ipc_roundtrip frontend_schema_v2_
+cargo test -p unlinger-daemon --test ipc_roundtrip frontend_schema_v3_
+cd apps/UnlingerApp && swift test
 ```

@@ -1,58 +1,66 @@
 # Unlinger 0.1 implementation plan
 
-## Spec authority
+## Authority and status language
 
-- Canonical specification: [`docs/SPEC.md`](SPEC.md), Product & Technical Specification 0.1, dated 2026-08-30.
-- Approval provenance: the project owner supplied the specification and explicitly asked to start the independent `unlinger` repository. The document remains labelled `Working draft`; product deltas still require owner confirmation.
-- Normative companions: none. The origin conversation is private explanatory provenance and is neither copied nor normative.
-- Repository baseline: initialized from an empty directory on local `main`; a private remote is configured.
+- Product/technical scope: [`SPEC.md`](SPEC.md), still a working draft.
+- This file owns implementation coverage and tranche status; it may change technique, not product meaning or safety thresholds.
+- Volatile source/installed/field/release truth: [`current-state.md`](current-state.md).
+- Claim levels: [`PRE_V0_1_ACCEPTANCE.md`](PRE_V0_1_ACCEPTANCE.md).
+- Exact support/evidence vocabulary: [`SUPPORT.md`](SUPPORT.md) and Rust-validated [`support-matrix.v1.json`](support-matrix.v1.json).
 
-Status terms: `verified` means the named evidence boundary passed; `implemented` means the source path exists with focused verification but its later field/activation boundary remains open; `partial` names an intentionally unfinished row rather than hiding it.
+`implemented` means the canonical source path exists with focused evidence. `verified` names the exact gate that passed. Source-complete, isolated, installed, activated, field-accepted and released are separate states.
 
-## Complete coverage ledger
+## Coverage ledger
 
-| ID | Spec anchor | Intended outcome | Current evidence | Remaining boundary | Status |
-| --- | --- | --- | --- | --- | --- |
-| PC-01..04 | Sections 3-4 | install-and-forget, silent, deterministic, local/private | generation 9 is installed, loaded, healthy, stably quiescent, and report-only; one complete managed full-timing process/artifact/restart transaction passed; source has redacted persistence, exact lifecycle status, and silent successful cycles | sustained dogfood, unhealthy-user signal, release acceptance | partial |
-| DET-01 | 6.1 | four evidence families with explicit contrary evidence | typed evidence ledger and positive/nearest-counterexample corpus | real supported-family capture | verified at fixture boundary |
-| DET-02 | 6.2 | every hard gate; score never authorizes cleanup | shared deterministic classifier, 60-second minimum-age protection, exact CfT product/version gate, controller-version protection, two observations, durable grace, and exact revalidation | broader live false-positive and race evidence | implemented |
-| DET-03 | 6.3 | complete confidence-state model | guarded transitions plus daemon cleanup outcomes | persistence-corruption and long dogfood transitions | implemented |
-| RUN-01 | 7.1-7.2 | startup/periodic/exit/wake/pressure triggers and cooling defaults | launchd startup, periodic fallback, coalesced native process-exit/wake/memory-pressure hints, 15 s stability, durable 90 s grace, and 120 s continuity reset | real sleep/wake, pressure, watched-exit, and restart field evidence | implemented at source boundary |
-| RUN-02 | 7.3 | TERM, rescan, exact KILL, post-scan, bounded revival | frozen executor, PREPARED-before-signal journal, interrupted-delivery recovery/lockout, exact owned-child signal test, earlier isolated CfT evidence, and one complete generation-9 managed run with eight exact members, nine ordered actions, zero survivors, and both revival checks | first ambient ordinary eligible incident, broader real framework trees, restart-during-cooling, and chaos matrix | verified at one controlled installed field point; broader boundary partial |
-| RUN-03 | 7.4 | remove only proven stale low-risk metadata; never profiles in 0.1 | exact `DevToolsActivePort` candidate, targeted Darwin pathname-reference query plus complete current-user argv scan, inode/parent revalidation, exclusive same-directory quarantine, durable artifact-action journal, and one installed live `removed` receipt | crash-after-quarantine recovery; final same-UID `fstatat`/`unlinkat` TOCTOU; canonical socket/PID-file ownership policies; broader field matrix | partial for DAP only |
-| ARCH-01 | 8.1-8.2 | Rust core/rules/macos/daemon/CLI separation | separated crates plus versioned data packs, scheduler, journaled enforcement, immutable service generations, and local control plane | publication-grade bilingual diagram later | implemented at source boundary |
-| MAC-01 | 8.3 | native current-user snapshots and stable identity | libproc/sysctl identity/argv/CPU/debug-peer facts, exact `KERN_PROC_PID` zombie semantics, targeted pathname-reference lookup, no-shell bounded bundle-version collection, exact signals, and native exit/wake/pressure sources | real sleep/wake/pressure evidence and Intel/universal verification | implemented at source boundary |
-| STORE-01 | 8.4 | bounded SQLite receipts and local read-mostly IPC | schema v5 validation/migration, corruption quarantine, redacted signal/artifact journals, derived process/artifact/overall outcomes for current and retained receipts, restart recovery and named retry blocks, durable cooling/pause/protection/lifecycle state, 14 d/10k prune, blocking 0600 socket, schema-v2 public DTO plus schema-v1 operator compatibility, bounded concurrency, and complete managed restart/re-arm evidence | install/readback of v2 source, sustained installed load, and pagination/performance evidence at maximum history retention | implemented at source; v2 not installed |
-| RULE-01 | 8.5 | embedded versioned packs with positive and nearest counterexamples | one shared deterministic Rust sessionizer parameterized by three schema-v2 TOML packs; exact `com.google.chrome.for.testing` 151.0.7922.34 browser point; controller version remains unverified and therefore protected | controller-version evidence and any broader browser-version range | implemented, exact private point only |
-| SCOPE-01 | 9 | macOS 14+, current user, three Chromium families only | platform/UID checks and scoped packs | Intel/universal and real family matrix | partial |
-| CLI-01 | 10 | status/history/explain/doctor/pause/resume/retry/protect/unprotect/dry-run/export | schema-v1 CLI/service compatibility, schema-v2 frontend-only ordinary commands/public DTO/capabilities plus bounded read-only incidents roster, canonical Rust-decoded fixtures, exact-incident protection projection, source-only doctor mode, transactional service lifecycle, and generation-9 v1 installed acceptance | v2-capable generation install/readback, broader user acceptance, and packaged command discovery | v1 installed; v2 source/isolated-socket verified |
-| SAFE-01..13 | 11 | listed safety invariants | source guards, counterexamples, exact owned-child signal/process-exit/zombie tests, durable delivery-unknown recovery, cleanup-policy revision gates, terminal Failed lifecycle, stable quiescent acceptance, targeted artifact reference tests, native-event fallback, exact drain, frozen-target receipt/journal closure, ordinary-root preservation, and one complete managed field run | two known artifact P2s, remaining chaos, and sustained dogfood/public-alpha zero-FP evidence | partial |
-| ACC-01 | 12 | latency, safety, completeness, overhead targets | earlier host points include a 58 ms doctor, isolated cleanups with zero survivors/no revival, and a short installed-enforce sample of 0.0% CPU/720 KiB RSS with no IP socket | managed-candidate measurement, sustained benchmark, representative latency/completeness, multi-day dogfood, and alpha | in progress |
-| TEST-01 | 13.1-13.4 | fixture, live, adversarial, comparative evidence | fixture/focused source suites cover rules v2, native version/events/artifacts/zombies, split cleanup outcomes/fail-close, schema-v2 public redaction/capabilities/fixture roundtrips, IPC timing and uncertain delivery, lifecycle, service transactions, and native frontend projection/mutation/localization; exact-head macOS CI passes Rust fmt/clippy/test/release build plus Swift tests and app bundling; isolated full/fast-timing plus one complete generation-9 managed run provide controlled live evidence | broader real corpus, chaos, benchmarks, and comparative Field Lab remain | in progress |
-| DIST-01 | Phase 3 | universal signed/notarized release, Homebrew, update/rollback | generation 9 is installed report-only through sealed immutable generations; durable transaction recovery, exact PID/binary/generation checks, SQLite backup/validation, terminal Failed drain/restart, same-generation fresh-epoch re-arm, exact offline disarm recovery, report-only recovery floor, and one complete managed acceptance pass exist | universal build, signing, notarization, packaging, release rollback, and Homebrew evidence | in progress |
-| SURF-01 | Phase 4 | optional UI, signed data rules, Linux/Windows, new families | first SwiftPM menu-bar App is source-complete with bilingual copy, fixture-driven previews/tests, schema-v2 socket client, read-only roster, capability-gated actions, delivery-uncertain readback, isolated source-daemon smoke, private bundler, and icon assets | owner visual acceptance, notifications, separately authorized v2-generation install/readback, signing/notarization/distribution, and later surfaces | first native implementation verified at source/isolated-daemon boundary |
+| ID | Intended outcome | Current implementation/evidence | Remaining boundary | Status |
+| --- | --- | --- | --- | --- |
+| DET-01..03 | deterministic evidence, hard gates and confidence states | native/redacted fixture corpus, shared rule-pack sessionizer, exact CfT version gate, controller fail-closed, two observations and durable abandonment grace | broader real corpus and controller/version evidence | source implemented; fixture verified |
+| RUN-01 | startup/periodic/exit/wake/pressure observation | coalesced native hints plus periodic fallback; each trigger begins with a fresh snapshot; pressure never lowers gates | real sleep/wake, sustained pressure and watched-exit field evidence | source implemented |
+| RUN-02 | frozen TERM→rescan→exact KILL→postscan→revival | exact identity revalidation, PREPARED-before-signal journal, delivery-unknown recovery, owned-child tests and one historical generation-9 full-timing point | ambient real eligible incident, broader families and chaos | exact source mechanics + one historical controlled point; ambient open |
+| RUN-03 | remove only admitted low-risk artifact | exact DAP identity, targeted pathname-reference + complete argv proof, quarantine and durable artifact journal | crash-after-quarantine and final same-UID swap P2s; sockets/PID files | partial by design |
+| STORE-01 | bounded redacted durable authority | SQLite v6 migration; stable public event/recovery tokens; atomic observation batch; durable policy revision; namespace-aware typed mutation receipts with 14-day proof window | installed v6 migration intentionally blocked; max-retention performance | source implemented; focused migration/atomicity tests |
+| IPC-01 | local single-shot operator + App protocols | schema v1 operator/lifecycle preserved; schema v3 strict App surface; v2 typed rejection; bounded 0600 socket/eight workers; shared action policy; honest roster freshness | installed v3 endpoint absent | source/isolated target |
+| APP-01 | trustworthy private native client | strict DTOs, cancellable phase-aware transport, pre-send durable journal, no-resend reconciliation, coalesced refresh, typed detail, local diagnostics, stable row identity, bilingual UI | owner visual acceptance and installed integration | source implemented; 62-test gate + bundle verified |
+| APP-02 | bounded local notifications and routing | off/attention/attention-and-reclaims, first-refresh baseline, seen suppression, durable claim-before-schedule, health episodes, current OS permission, compact shared-router window | best-effort bounded polling is not gap-free; packaged owner observation | source implemented; fake-scheduler verified |
+| APP-03 | basic private usability | Settings/About, App and connected daemon versions, explicit quit semantics, `SMAppService.mainApp` menu-client login item with typed failures | ad-hoc login-item behavior may depend on macOS bundle policy; owner observation | source implemented |
+| DIST-01 | transactional install/update/rollback and release | generation 9 historically installed through sealed immutable generations and remains report-only; source release build/bundle gates exist | acceptance-scoped v5 rollback lease, installed v3 acceptance, universal, signing/notarization, packaging/update | installed v3 blocked; release open |
+| PRIV-01 | local/private and truthful publication boundary | no runtime account/network/telemetry; redacted IPC/store; owner-private App state; public-safe notification routes; private continuity outside Git | repeat the boundary review before any future visibility change | implemented; tracked candidate/diff scan verified |
+| TEST-01 | executable pre-v0.1 contract | Rust migration/policy/IPC fixtures; Swift transport/state/detail/notification/settings tests; active v3 fixture bundle gate; isolated report-only smoke script | remote exact-head CI | local full gate verified: Rust 268 passed/2 owner-only ignored; Swift 62; isolated smoke 6 + restart 6 |
 
-## Scope and order deltas
+## Pre-v0.1 tranche dependency order
 
-- **Reordered, no product delta:** private per-user installation, immutable-generation transactions, report-only recovery, and mode mechanics from `DIST-01` were implemented during P2 hardening before universal packaging, signing/notarization, and Homebrew. The owner authorized installation and early ambient dogfood on the first Mac, then authorized report-only containment. This advances a reversible implementation dependency; it does not remove or lower any P3 release gate.
-- **Narrow 0.1 artifact admission, no product removal:** automatic runtime-artifact cleanup currently admits only `DevToolsActivePort`. Socket and PID-file cleanup remains in the product programme but is not automatically eligible until a framework-specific canonical ownership/reference contract and nearest race counterexamples exist. Profile and runtime-directory deletion remain deferred.
-- **Notification threshold deliberately unresolved:** memory pressure accelerates scheduling only. The specification does not define the threshold at which a sustained ambiguous incident becomes user-notifiable, so source and future frontend work must not infer one from aggregate ambiguous count, CPU, RSS, or elapsed time.
-- No other accepted requirement was added, removed, or narrowed.
+1. **Protocol/authority fence — implemented:** server accepts schemas 1 and 3, rejects 2; App emits v3 only; lifecycle remains v1-only.
+2. **SQLite v6 authority — implemented:** event tokens, receipt namespace, durable revision, typed receipts, atomic migration and observation batch.
+3. **Shared policy and control linearization — implemented:** projection and v3 commit call the same policy under the lifecycle/status serialization boundary; replay precedes current lifecycle denial.
+4. **Strict Swift transport/state — implemented:** exact DTOs, phase-aware uncertainty, pre-send journal, status-only restart reconciliation and concurrency generations.
+5. **UI/notifications/usability — implemented:** truthful readiness/freshness/detail/export, stable identity, bounded notifications/routing and menu-client login item.
+6. **Contracts/support — implemented:** active v3 docs/fixtures, acceptance levels, support matrix and installed blocker.
+7. **Source + isolated gate — verified locally:** full Rust/Swift/build/bundle/doctor/dry-run passed; the same isolated report-only database passed six live-socket tests before and after daemon restart.
+8. **Installed v3 lane — deliberately closed:** first implement an acceptance-scoped rollback lease and prove a real generation-9 v5 database rollback/open. Never arm in that lane.
 
-## Dependency order and current tranche
+## Scope/order notes
 
-1. **P0 Evidence Lab — source largely implemented:** native identity/argv/CPU/descriptor/version facts → graph → shared sessionizer parameterized by v2 packs → counterexamples → read-only live smoke. The broader real incident/version corpus remains open.
-2. **P1 Deterministic cleanup — one controlled installed point complete; artifact source partial:** durable cooling → frozen plan → exact revalidation → journaled TERM/rescan/exact KILL → post-scan/revival → journaled DAP reconciliation → terminal receipt passed end to end for one exact admitted CfT tree. Broader families and the two artifact P2s remain open.
-3. **P2 Ambient daemon — generation 9 installed and contained:** periodic fallback plus native scheduling hints, SQLite v5, bounded concurrent IPC, single-shot uncertain-delivery controls, protection/named-retry policy revisions, and managed lifecycle exist. Terminal Failed drain/restart and same-generation fresh-epoch re-arm crossed the controlled installed field boundary. The LaunchAgent remains stably report-only; ambient and sustained safety remain open.
-4. **P3 Distribution hardening — private report-only install/acceptance boundary crossed:** sealed immutable generations, durable selection/recovery transactions, SQLite rollback backup, exact launchd/IPC/binary/generation checks, terminal Failed replacement, a report-only recovery floor, and one installed managed acceptance pass exist. Universal release → signing/notarization → Homebrew → release update/rollback → public alpha evidence remain.
-5. **P4 Optional surfaces/platforms — first native source tranche complete:** the thin SwiftUI menu-bar client and read-only roster are implemented against fixtures and an isolated source report-only daemon. Installed-generation integration, owner visual acceptance, notifications, signing/distribution, signed data-only rules, Linux/Windows, and separately admitted families remain open.
+- **Schema v2 is historical, not a compatibility endpoint.** It never reached the installed service or a public release, so v3 replaces it without a downgrade path while its fixtures remain as audit evidence.
+- **V3 receipt authority is App-scoped.** Schema-v1 CLI/service ordinary behavior remains compatible; lifecycle commands never enter v3.
+- **Notifications are bounded and best-effort.** Duplicate avoidance is preferred: durable claim occurs before one OS schedule attempt. A mode change never replays suppressed history. Ambiguous count/CPU/RSS/age/pressure has no notification authority.
+- **Artifact admission remains DAP-only.** The current tranche does not change either P2 residual or widen automatic deletion.
+- **The original install target is gated, not silently dropped.** SQLite v6 creates a real rollback incompatibility with generation 9; source/isolated work may push with that blocker recorded.
 
-The owner explicitly asked not to stop at a minimal report-only implementation, so work advanced through P1 into the P2/P3 substrate, private installation, and one complete controlled field transaction. The current generation nevertheless remains deliberately report-only. This changes implementation sequencing, not the acceptance threshold: source implemented, built candidate, installed report-only, temporarily armed field run, complete controlled field acceptance, sustained dogfood, release, and public acceptance remain separate facts.
+## Verification and completion
 
-## Private-remote and publication gates
+Narrow tests run first. A level-2 claim then requires:
 
-The first remote is private. Private provenance, live captures, diagnostics, local continuity, machine paths, and personal working documents remain outside Git. A visibility change is a separate owner action and requires bilingual reader documentation, a publication-grade architecture diagram, license/rights selection, real field evidence, public-safe examples, and a fresh tracked/staged privacy scan.
+```bash
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
+cargo build --release --workspace
+cargo run -p unlinger-cli -- doctor --source-only --json
+cargo run -p unlinger-cli -- scan --dry-run --json
+cd apps/UnlingerApp
+swift test
+scripts/bundle.sh
+scripts/pre-v0.1-smoke.sh
+```
 
-## Full acceptance
-
-Unlinger 0.1 is complete only when every ledger row through P3 is verified with the appropriate source, built artifact, activated runtime, safety, dogfood, and release evidence. A green fixture suite, exact owned-child signal test, private remote, or report-only smoke is not auto-cleanup readiness.
+Owner-only live CfT harnesses remain ignored. Passing these commands permits only **pre-v0.1 source candidate — isolated report-only verified**. Multi-day dogfood, ambient real eligibility, current-candidate narrow enforcement, both artifact P2 decisions, Intel/universal, signing/notarization/distribution and public alpha remain separate gates.

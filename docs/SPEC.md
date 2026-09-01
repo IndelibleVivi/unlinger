@@ -5,7 +5,7 @@
 
 **Document:** Product & Technical Specification 0.1
 **Status:** Working draft
-**Date:** 2026-08-30
+**Date:** 2026-08-30; pre-v0.1 protocol/acceptance revision 2026-09-01
 **Repository slug:** `unlinger`
 
 ---
@@ -94,13 +94,17 @@ Optional integrations may provide stronger or faster evidence, but absence of an
 
 ### 3.2 Silent by default
 
-Confirmed incidents are reclaimed automatically and recorded locally. Routine successful cleanup does not produce a notification.
+Confirmed incidents are reclaimed automatically and recorded locally. Routine successful cleanup does not produce a notification in the default App mode.
 
 The user is interrupted only when:
 
 1. a high-impact incident repeatedly revives or cannot be cleaned;
 2. a likely incident remains ambiguous and continues to create serious pressure;
 3. Unlinger itself is unhealthy or has stopped protecting the machine.
+
+The pre-v0.1 native App implements `off`, default `attention`, and `attention_and_reclaims`. The third mode may notify on a successful process reclaim; it is an explicit user preference, not the default. Notifications are a bounded best-effort local projection over trusted refreshes, not a gap-free event feed. Retained event tokens are baselined on first trusted refresh, suppressed events remain seen, and mode changes do not replay backlog.
+
+No numeric authority exists yet for “ambiguous under serious sustained pressure.” Ambiguous count, CPU, RSS, age, memory pressure, scan activity, or a protected incident alone therefore cannot authorize either cleanup or a notification.
 
 ### 3.3 Decisive only after proof
 
@@ -420,9 +424,15 @@ The daemon stores a compact local SQLite database containing:
 - signature pack/version;
 - bounded error details.
 
-Default retention: 14 days or 10,000 events, whichever is smaller.
+Event history defaults to 14 days or 10,000 events, whichever is smaller. Ordinary-mutation receipts have a separate minimum 14-day reconciliation window and cannot be pruned early to satisfy a count cap; capacity pressure rejects a new mutation rather than destroying authority.
 
-A Unix-domain socket exposes read-mostly local IPC. Frontend schema v2 projects public status/history/incident DTOs and ordinary mutations only; it omits process and service lifecycle identities and provides explicit action capabilities. Schema v1 remains the Rust CLI/service compatibility protocol. Ordinary user mutations are limited to pause/resume, explicit protect/unprotect, retry failed cleanup, and diagnostic export. Generation- and instance-bound arm, disarm, and drain messages exist only in the internal schema-v1 service lifecycle protocol; they are not ordinary UI authority.
+A Unix-domain socket exposes read-mostly local IPC. Schema v1 remains the Rust CLI/service compatibility protocol. Frontend schema v3 projects strict public status/history/incident/roster/diagnostics DTOs, exact readiness/freshness, stable public event tokens, explicit capabilities, ordinary mutations, and read-only mutation reconciliation. It omits process and service lifecycle identities. Schema v2 was superseded before installation and receives typed `unsupported_schema`; the App never downgrades to v1.
+
+Every v3 mutation carries a public-safe receipt namespace and canonical UUID. Before applying a new request, the daemon serializes lifecycle state with one immediate SQLite transaction, replays an exact receipt before current lifecycle policy, recomputes the same shared policy used for capability projection, and atomically commits state, durable cleanup-policy revision, and a typed `applied | no_change | rejected` receipt. Pruning rotates namespace in the same transaction. Current-authority `not_found` can prove absence; `authority_lost` cannot.
+
+The App durably records pending mutation intent before connect/send. Any post-send untrusted result remains unresolved and is reconciled only through `mutation_status`; the original mutation is never automatically resent. Pre-v0.1 permits one unresolved ordinary mutation at a time while read-only surfaces remain available.
+
+Ordinary user mutations are pause/resume, explicit protect/unprotect, and named retry failed cleanup. Diagnostics export is read-only. Generation- and instance-bound arm, disarm, and drain messages exist only in schema v1; v3 has no install, mode, signal, update, rollback, or lifecycle authority.
 
 ### 8.5 Signature packs
 
@@ -449,8 +459,11 @@ The first automatic-cleanup admission is intentionally narrower than the recogni
 ### Supported platform
 
 - macOS 14 or later;
-- Apple silicon and Intel universal release;
+- Apple silicon is the currently verified source/controlled-field architecture;
+- Intel and a universal binary remain 0.1 release requirements but are not yet verified;
 - current-user processes only.
+
+Exact support truth and evidence classes live in [`SUPPORT.md`](SUPPORT.md) and the Rust-validated [`support-matrix.v1.json`](support-matrix.v1.json). Recognition, deterministic classification, automatic eligibility, synthetic evidence, controlled field evidence, and ambient evidence are separate claims.
 
 ### Supported automation families
 
@@ -473,7 +486,8 @@ The first automatic-cleanup admission is intentionally narrower than the recogni
 - generic Node, Python, Rust, or dev-server cleanup;
 - containers and remote hosts;
 - deletion of temporary browser profiles;
-- menu-bar app and visual dashboard;
+- a dashboard that requires continuous user attention;
+- public distribution of the private menu-bar App;
 - Linux and Windows enforcement;
 - remote accounts, cloud sync, telemetry, or hosted reports.
 
@@ -492,6 +506,9 @@ unlinger explain <incident-id>
 unlinger doctor
 unlinger pause <duration>
 unlinger resume
+unlinger retry <incident-id>
+unlinger protect <incident-id>
+unlinger unprotect <incident-id>
 unlinger scan --dry-run
 unlinger export-diagnostics <incident-id>
 ```
@@ -503,7 +520,9 @@ unlinger export-diagnostics <incident-id>
 - are any confirmed/ambiguous incidents present;
 - what was reclaimed most recently.
 
-A later menu-bar app may project the same data. It must not turn the product into a dashboard the user has to watch.
+The pre-v0.1 native menu-bar App projects schema-v3 status, the last observation roster with honest freshness, history/detail, diagnostics, ordinary actions, notification preferences, menu-client launch at login, App/daemon versions, and explicit App-only quit semantics. It must not turn the product into a dashboard the user has to watch and owns no daemon lifecycle or signal authority.
+
+The roster is observability, not a work queue. A quiet App state requires healthy + ready + no attention + a current roster + no scan/cleanup activity. Starting, draining, failed, unknown, unavailable, incompatible, and stale are never all-clear.
 
 ---
 
@@ -522,6 +541,10 @@ A later menu-bar app may project the same data. It must not turn the product int
 11. Never enter an unbounded kill/revival loop.
 12. Every automatic action must produce a redacted evidence receipt.
 13. Any new signature must include a positive fixture and the nearest plausible normal-process counterexample.
+14. A v3 ordinary mutation is journaled before send, committed with its receipt and durable revision in one transaction, and never automatically resent after delivery becomes uncertain.
+15. V3 capability projection and authoritative mutation admission use the same policy; a UI affordance or score never authorizes a change.
+16. Stable public event tokens identify retained events without exposing internal event/attempt IDs; missing typed outcome never becomes a fabricated success.
+17. Schema v3 cannot encode service lifecycle or signal authority, and version skew never falls back to v1.
 
 ---
 
@@ -670,11 +693,13 @@ The goal is not to imitate another project's UI or wording. The fieldlab identif
 
 ### Phase 4 — Optional surfaces and platforms
 
-- native menu-bar projection;
+- continue hardening and distributing the now-source-complete native menu-bar projection;
 - signed data-only signature updates;
 - Linux backend using `/proc`, user services, and optional cgroup integration;
 - Windows backend using native process identity and optional Job Object integration;
 - carefully admitted non-browser automation families.
+
+Pre-v0.1 source, isolated, installed, enforcement, private acceptance, public-alpha, and public-release claims are defined separately in [`PRE_V0_1_ACCEPTANCE.md`](PRE_V0_1_ACCEPTANCE.md). The current source SQLite-v6 candidate must not enter the installed generation-9 lane until an acceptance-scoped v5 rollback lease and real old-binary open test exist.
 
 ---
 

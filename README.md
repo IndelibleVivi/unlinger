@@ -7,7 +7,7 @@ Unlinger is a local, zero-touch runtime-hygiene utility for abandoned browser-au
 
 ## Current state
 
-The repository now contains a macOS source candidate spanning observation, deterministic cleanup, persistence, IPC, daemon, CLI, managed-service, and a first native SwiftUI frontend:
+The repository contains a macOS pre-v0.1 source candidate spanning observation, deterministic cleanup, persistence, IPC, daemon, CLI, managed-service, and a native SwiftUI menu-bar App:
 
 - native current-user process snapshots through `libproc` and `sysctl`;
 - PID plus process-birth and executable-file identity;
@@ -18,15 +18,17 @@ The repository now contains a macOS source candidate spanning observation, deter
 - controller/root TERM, member TERM, exact-survivor KILL, post-action scans, bounded 15/60-second revival checks, and restart-safe delivery-unknown retry lockout;
 - DAP-only runtime-artifact cleanup with a targeted Darwin pathname-reference query, a complete current-user argv pass, exact file/parent identity, an exclusive quarantine step, and a durable action journal; profiles and runtime directories are never deleted;
 - independent process/artifact/overall cleanup outcomes, so a proved-gone tree remains visible as reclaimed when an explicitly refused artifact is safely retained; delivery uncertainty and unproved post-side-effect failures still fail closed;
-- redacted SQLite v5 timelines, cooling/protection/retry/lifecycle state, terminal receipts stamped at completion, and 14-day/10,000-event retention;
-- a 0600 local newline-delimited JSON socket with a frontend-only public schema v2 and a schema-v1 CLI/service compatibility lane; v2 omits process/service identities, exposes explicit capabilities and a bounded read-only current-incident roster, and cannot encode lifecycle commands; clients use one 15-second attempt, each connection retains a 3-second I/O bound, and a bounded eight-worker server prevents one slow read from blocking later control traffic;
+- redacted SQLite v6 timelines, durable cleanup-policy revision, stable public event tokens, namespace-aware ordinary-mutation receipts, cooling/protection/retry/lifecycle state, terminal receipts stamped at completion, and bounded retention;
+- a 0600 local newline-delimited JSON socket with frontend schema v3 and a schema-v1 CLI/service compatibility lane; v3 omits process/service identities, exposes exact readiness, roster freshness, typed outcomes, capabilities and durable mutation reconciliation, and cannot encode lifecycle commands; historical v2 is rejected rather than silently downgraded;
 - native process-exit, wake, and memory-pressure scheduling hints with a periodic fallback; every trigger still begins with a fresh snapshot and pressure never lowers a gate;
 - a report-only daemon default and generation/instance/epoch-bound signal authorization;
 - a transactional per-user LaunchAgent lifecycle with sealed immutable generations, exact launchd/IPC/binary checks, SQLite backup, report-only rollback, and same-generation fresh-epoch re-arm only after a signal-free first scan;
 - graceful SIGTERM handling that terminates the current cycle safely, preserves same-generation desired intent for launchd restart, and removes the exact owned socket; explicit service drain clears that intent.
-- a SwiftPM native menu-bar client under `apps/UnlingerApp`, with bilingual copy, canonical-fixture previews/tests, capability-gated ordinary actions, delivery-uncertain readback without automatic resend, and an ad-hoc-signed private `.app` bundler.
+- a SwiftPM native menu-bar client under `apps/UnlingerApp`, with strict v3 DTOs, bilingual copy, canonical-fixture previews/tests, crash-durable pre-send mutation journal, stale-safe refresh/detail state, capability-gated ordinary actions, bounded deduplicated local notifications, shared click routing, menu-client-only launch at login, and a private ad-hoc-signed `.app` bundler.
 
-This is **a private source candidate with generation 9 installed report-only; the native frontend is source/isolated-daemon verified but not installed or integrated with generation 9; nothing is a product release**. One owner-approved production-timing installed-generation harness has now passed end to end on the exact admitted Chrome-for-Testing point: one eight-member frozen tree produced nine journaled exact signal actions, zero survivors, both revival checks, an exact `DevToolsActivePort` removal, and roughly 90 MiB reclaimed. The same generation then restarted into a fresh daemon instance and enforcement epoch without duplicating the cleanup journal, preserved every pre-existing ordinary-Chrome root identity, and finished stably unarmed/report-only. This proves one controlled process/artifact/restart transaction on one host, not ambient or broad safety. Two artifact residuals remain known: a daemon crash after canonical-to-quarantine rename can strand the exact quarantined entry, and a same-UID swap remains possible between final pathname revalidation and `unlinkat`. Ambient operation has not encountered and reclaimed an ordinary real eligible incident, and no multi-day, public-alpha, universal-binary, signed, notarized, or distribution claim exists.
+The current allowed claim is **pre-v0.1 source candidate — isolated report-only verified**. Installed generation 9 remains v1-only, report-only and unarmed; the v3 App/source daemon is not installed or integrated with it. Source SQLite v6 cannot be opened by the generation-9 v5 binary, while the current service transaction has no post-install acceptance rollback lease, so installed v3 work is deliberately blocked rather than risk the active rollback floor.
+
+Historical field evidence remains narrower than the source surface: one owner-approved production-timing generation-9 harness passed on the exact admitted Chrome-for-Testing point, with one eight-member tree, nine exact signal actions, zero survivors, both revival checks, one exact `DevToolsActivePort` removal, restart without journal duplication, ordinary-Chrome preservation, and final report-only containment. This is one controlled point—not ambient or broad support. A crash after canonical-to-quarantine rename may still strand the exact quarantine entry, and the final revalidation-to-`unlinkat` interval retains a same-UID swap TOCTOU. Multi-day dogfood, an ambient real eligible incident, narrow enforce acceptance for this candidate, Intel/universal, signing/notarization/distribution and public alpha remain open.
 
 ## Build and inspect
 
@@ -50,19 +52,12 @@ Build and test the fixture-first native frontend without touching the installed 
 cd apps/UnlingerApp
 swift test
 scripts/bundle.sh
+scripts/pre-v0.1-smoke.sh
 ```
 
-See [`apps/UnlingerApp/README.md`](apps/UnlingerApp/README.md) for the isolated source-daemon live smoke. The installed generation 9 is v1-only and is not a frontend integration target.
+The smoke script creates and owns one temporary database/socket/lock, keeps the daemon report-only, verifies v3 reads and durable receipts across restart, checks private modes and no IP listener, and removes only that exact temporary root. It never touches the installed service. See [`apps/UnlingerApp/README.md`](apps/UnlingerApp/README.md).
 
-Build a private release candidate, install it in report-only mode, and inspect the exact launchd/IPC boundary:
-
-```bash
-cargo build --release --workspace
-target/release/unlinger service install --mode report-only
-target/release/unlinger service status
-```
-
-`service install` publishes both binaries as a sealed generation under the private Application Support tree, writes a generation-bound per-user LaunchAgent, bootstraps it, and returns only after launchd PID, IPC PID, generation, executable identity, desired/effective mode, private permissions, readiness, and a completed first reconciliation scan agree. `service set-mode` uses exact generation/instance lifecycle IPC; failed arming is recovered to a proven report-only floor. `service uninstall` unloads the agent and removes managed service definitions/generations while preserving local history and logs. Enforce mode is an explicit field/dogfood action, not part of ordinary source verification.
+Do not install/reload this source candidate or point it at the active database. Installed v3 integration requires an acceptance-scoped rollback lease that preserves the prior generation manifest/plist and v5 database until explicit acceptance, plus a real rollback/open test using the generation-9 binary.
 
 For source-only development, run the daemon in its safe default mode and use the local CLI from another terminal:
 
@@ -82,7 +77,7 @@ cargo run -p unlinger-cli -- export-diagnostics <incident-id>
 
 `scan` always requires `--dry-run` and never sends signals. Direct `unlingerd` invocation defaults to report-only. Managed LaunchAgents receive only `--managed --activation-generation`; the desired/effective mode and signal authority live in exact durable lifecycle state, not in a plist `--enforce` flag.
 
-IPC requests are single-shot. The client does not automatically resend after a timeout: for a mutation, a missing response means delivery is uncertain and the caller must read back the relevant state before deciding what to do next. A named cleanup retry clears only that incident's durable block and cooling candidate; it never signals immediately and must pass a fresh cooling window and every ordinary gate.
+IPC requests are single-shot. The v3 App durably journals a namespace token and mutation UUID before any request byte, then reconciles uncertain delivery with read-only `mutation_status`; it never automatically resends. A named cleanup retry clears only that incident's durable block and cooling candidate; it never signals immediately and must pass a fresh cooling window and every ordinary gate.
 
 Full command lines, executable paths, and profile paths exist only in transient classification memory. SQLite, IPC, CLI output, and diagnostic exports use redacted typed records that omit signal targets and session identifiers.
 
@@ -94,6 +89,9 @@ Full command lines, executable paths, and profile paths exist only in transient 
 - [Signature packs](docs/SIGNATURES.md)
 - [Privacy](docs/PRIVACY.md)
 - [Local IPC contract](docs/IPC.md)
+- [Pre-v0.1 acceptance levels](docs/PRE_V0_1_ACCEPTANCE.md)
+- [Support truth](docs/SUPPORT.md)
+- [Machine-readable support matrix](docs/support-matrix.v1.json)
 - [Native frontend](apps/UnlingerApp/README.md)
 - [Frontend contract and canonical fixtures](apps/UnlingerApp/Contract/README.md)
 - [Field Lab](docs/FIELDLAB.md)

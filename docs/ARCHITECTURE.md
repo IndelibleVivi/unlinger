@@ -54,11 +54,20 @@ flowchart LR
     end
 
     subgraph LOCAL[Owner-private state and control]
-        STORE[SQLite v5 timeline + journals<br/>14 d or 10,000 events]
+        STORE[SQLite v6 timeline + journals<br/>event tokens + mutation receipts]
         IPC[0600 newline-delimited JSON socket<br/>bounded eight-worker server]
-        PUBLIC[Schema v2 public DTO<br/>ordinary frontend commands only]
+        PUBLIC[Schema v3 public DTO<br/>ordinary frontend commands only]
         V1[Schema v1 compatibility<br/>CLI + service transaction]
+        V2[Schema v2 historical<br/>typed unsupported]
         INTERNAL[Service-only lifecycle controls<br/>exact generation + instance]
+    end
+
+    subgraph APP[Native menu-bar App]
+        CLIENT[Strict single-attempt v3 client]
+        JOURNAL[0600 pre-send mutation journal]
+        STATE[Coalesced state + shared router]
+        NOTICE[Bounded notification ledger<br/>local OS delivery]
+        JOURNAL --> CLIENT --> STATE --> NOTICE
     end
 
     LAUNCHD --> DAEMON --> FIRST --> SCHED
@@ -77,12 +86,16 @@ flowchart LR
     APREP -->|after durable commit| DAP --> STORE
     STORE --> IPC --> PUBLIC
     STORE --> IPC --> V1
+    IPC --> V2
+    PUBLIC --> CLIENT
     SVC --> INTERNAL --> V1
 ```
 
 `unlingerd` defaults to report-only when invoked directly. Managed source boots name a sealed generation and never receive `--enforce` in the plist. Every managed process begins with a signal-free report-only recovery/first-scan phase. A same-generation restart may carry durable enforce intent only for that exact generation; after recovery and a fresh first scan, it creates a new enforcement epoch and resets cooling before effective enforcement resumes. An open cleanup attempt or delivery-unknown retry block clears that intent and leaves the generation durably report-only. A new generation, explicit `Disarm`, explicit `BeginDrain`, or failed managed startup also clears it. Ordinary SIGTERM/SIGINT performs a clean process exit without pretending to be the service manager's explicit drain transaction.
 
 The service CLI builds a new immutable generation, validates its files and manifest, records a durable transaction, drains the exact prior service, validates and backs up SQLite state, selects the candidate, and accepts it only when launchd PID, IPC PID, generation, executable, private permissions, lifecycle identity, and effective mode agree. Ready report-only acceptance is stable rather than momentary: `scan_in_progress` and `cleanup_in_progress` must both be false. Crash/failure recovery restores a report-only floor. If lifecycle IPC is unavailable during that bounded recovery, the emergency path first proves the exact manifest/plist/binary/process identity, waits for launchd and the captured daemon identity to disappear, clears enforce intent through an exact-generation offline store API, and accepts only a runtime-proven ReadyReportOnly replacement.
+
+That install transaction does not yet provide a post-ready acceptance rollback lease. Source SQLite v6 cannot be reopened by the installed generation-9 v5 binary after an App acceptance failure. The pre-v0.1 v3 lane is therefore source/isolated only until prior manifest/plist/v5 database material remains leased through explicit accept/rollback and a real old-binary rollback/open test passes.
 
 `Failed` is terminal for one managed daemon instance. A later successful observation cannot reinterpret it as a first scan or turn it into ReadyReportOnly. An exact `Disarm` may retry the durable fail-close while preserving `Failed`, unhealthy, and not-ready; transaction recovery may then send exact `BeginDrain`, validate the resulting draining identity, boot out the captured process, and start a fresh report-only instance. Arm also checks the volatile lifecycle phase, so stale durable ReadyEnforce state cannot reopen a live signal gate after an in-memory fail-close. Generation 9 has passed this transactional report-only recovery boundary and one full managed process/artifact/restart transaction, then returned to stable report-only. Universal packaging, signing/notarization, release update/rollback, sustained dogfood, and broader field evidence remain open.
 
@@ -96,6 +109,10 @@ The macOS adapter no longer walks every file descriptor of every same-UID proces
 
 This is not a claim that the final deletion race is fully closed. Two known P2 residuals remain: daemon death after the canonical-to-quarantine rename can strand the exact private quarantine entry, and a same-UID actor can still attempt a swap between the final `fstatat` pathname check and `unlinkat`. One controlled generation-9 field run produced a successful live DAP-removal receipt with the current path; that point result does not resolve either race or authorize broader artifact eligibility.
 
-Ordinary IPC commands and service lifecycle controls share the owner-private socket but not the same typed authority surface. Schema v2 contains only public status/history/incident DTOs plus ordinary pause/resume, retry, exact-incident protect/unprotect, and diagnostics; it strips process/service identities and exposes explicit action capabilities. `Arm`, `Disarm`, and `BeginDrain` exist only in schema v1 and remain bound to the exact activation generation and daemon instance. Every request uses one connection and one response. The default and service clients make one 15-second attempt; up to eight accepted connections are served concurrently, each with a 3-second read/write bound. Slow history or a partial peer therefore cannot head-of-line block all later control traffic. A timed-out mutation is uncertain delivery and is never automatically resent; the owner or service transaction must read back exact state. The managed field harness polls only read-only exact-incident `Explain` on a separate worker so native absence sampling is independent. Raw arguments, executable/profile paths, frozen target identities, and session fingerprints terminate inside transient observation/enforcement memory. SQLite, IPC, CLI, and diagnostics retain or project only typed redacted records.
+Ordinary IPC commands and service lifecycle controls share the owner-private socket but not the same typed authority surface. Schema v3 contains strict public status/history/incident/roster/diagnostics DTOs plus mutation status and ordinary pause/resume, retry and exact-incident protect/unprotect. It strips process/service identities, exposes exact readiness/freshness and derives capabilities from the same policy used for transaction authorization. Schema v2 is historical and rejected. `Arm`, `Disarm`, and `BeginDrain` exist only in schema v1 and remain bound to the exact activation generation and daemon instance.
+
+Every v3 mutation is written to an App-local crash-durable journal before connect/send, then the daemon commits state, durable revision and typed receipt in one immediate transaction. Exact replay precedes lifecycle denial; same ID plus different canonical arguments conflicts; pruning rotates receipt namespace atomically. Any post-send untrusted result remains unresolved and the App uses read-only mutation status rather than resending. The App's coalesced refresh generation prevents old results from overwriting new state. Stable public event tokens drive history identity and duplicate-avoiding local notifications; the first trusted refresh baselines retained history.
+
+Every socket request still uses one connection and one response. Default and service clients make one 15-second attempt; up to eight accepted connections are served concurrently, each with a 3-second read/write bound. Slow history or a partial peer therefore cannot head-of-line block all later control traffic. The managed field harness polls only read-only exact-incident `Explain` on a separate worker so native absence sampling is independent. Raw arguments, executable/profile paths, frozen target identities, and session fingerprints terminate inside transient observation/enforcement memory. SQLite, IPC, CLI, diagnostics, App journals and notification routes retain or project only typed redacted records.
 
 macOS can leave an exited child visible in the process table as a zombie while `kill(pid, 0)` still reports that the PID exists. Snapshot and exact lookup therefore use `KERN_PROC_PID` status as the fallback authority: a confirmed `SZOMB` is treated as gone, excluded from live incidents, and not counted as unreadable coverage. Other read failures still fail closed.
