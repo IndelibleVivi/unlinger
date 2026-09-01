@@ -519,7 +519,7 @@ pub fn restart_report_only(paths: &LocalPaths) -> Result<ServiceStatusReport, Se
     if let Some(transaction) = read_optional_transaction(&layout.transaction)? {
         match transaction.phase {
             TransactionPhase::CandidateReadyReportOnly => {
-                validate_candidate_acceptance_state(paths, &layout, &transaction)?;
+                validate_candidate_restart_state(paths, &layout, &transaction)?;
             }
             TransactionPhase::Accepted => {
                 finalize_accepted_lease(paths, &layout, &transaction)?;
@@ -552,6 +552,37 @@ pub fn restart_report_only(paths: &LocalPaths) -> Result<ServiceStatusReport, Se
         manifest.active_generation,
         SERVICE_START_TIMEOUT,
     )
+}
+
+fn validate_candidate_restart_state(
+    paths: &LocalPaths,
+    layout: &ServiceLayout,
+    transaction: &InstallTransaction,
+) -> Result<ServiceStatusReport, ServiceError> {
+    let acceptance = inspect_acceptance_lease(paths, layout)?
+        .ok_or_else(|| ServiceError::new("candidate acceptance lease disappeared"))?;
+    if acceptance.candidate_generation != transaction.candidate_generation
+        || acceptance.phase != transaction_phase_name(transaction.phase)
+        || !acceptance.rollback_available
+    {
+        return Err(ServiceError::new(
+            "candidate rollback material is incomplete or inconsistent",
+        ));
+    }
+    let report = status(paths)?;
+    if !report.healthy
+        || report.expected_mode != Some(DaemonMode::ReportOnly)
+        || !generation_runtime_is_ready_report_only_for_restart(
+            &report,
+            transaction.candidate_generation,
+        )
+    {
+        return Err(ServiceError::new(format!(
+            "generation {} is not a healthy exact report-only candidate for restart",
+            transaction.candidate_generation
+        )));
+    }
+    Ok(report)
 }
 
 fn validate_candidate_acceptance_state(
@@ -2065,6 +2096,17 @@ fn wait_for_generation_runtime_report_only(
 }
 
 fn generation_runtime_is_ready_report_only(report: &ServiceStatusReport, generation: u64) -> bool {
+    generation_runtime_is_ready_report_only_for_restart(report, generation)
+        && report
+            .daemon_status
+            .as_ref()
+            .is_some_and(|status| !status.scan_in_progress)
+}
+
+fn generation_runtime_is_ready_report_only_for_restart(
+    report: &ServiceStatusReport,
+    generation: u64,
+) -> bool {
     report.installed
         && report.loaded
         && report.active_generation == Some(generation)
@@ -2084,7 +2126,6 @@ fn generation_runtime_is_ready_report_only(report: &ServiceStatusReport, generat
                 && status.armed_generation.is_none()
                 && status.enforcement_epoch.is_none()
                 && !status.draining
-                && !status.scan_in_progress
                 && !status.cleanup_in_progress
                 && !status.instance_id.is_empty()
         })
@@ -3696,6 +3737,9 @@ mod tests {
             .expect("daemon status")
             .scan_in_progress = true;
         assert!(!generation_runtime_is_ready_report_only(&scanning, 7));
+        assert!(generation_runtime_is_ready_report_only_for_restart(
+            &scanning, 7
+        ));
         let mut cleaning = report.clone();
         cleaning
             .daemon_status
@@ -3703,6 +3747,9 @@ mod tests {
             .expect("daemon status")
             .cleanup_in_progress = true;
         assert!(!generation_runtime_is_ready_report_only(&cleaning, 7));
+        assert!(!generation_runtime_is_ready_report_only_for_restart(
+            &cleaning, 7
+        ));
         let mut failed = report.clone();
         let failed_daemon = failed.daemon_status.as_mut().expect("daemon status");
         failed_daemon.healthy = false;
