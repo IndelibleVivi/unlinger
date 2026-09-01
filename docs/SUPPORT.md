@@ -42,7 +42,7 @@ The controlled DAP result is one exact point. It does not establish broad artifa
 | Native App source protocol | schema v3 only |
 | Schema v2 | historical fixtures retained; superseded before installation; current server returns typed `unsupported_schema` |
 | Installed generation 12 | schema v1 operator + v3 App endpoint; SQLite v6; report-only, unarmed; lease to generation 9/v5 retained |
-| Installed App/v3 integration | ad-hoc-signed private App installed; live socket and daemon/App restart reconciliation passed; AppKit-owned popover/window host installed, final owner navigation/notification observation pending |
+| Installed App/v3 integration | ad-hoc-signed private App installed; live socket and daemon/App restart reconciliation passed; direct-AppKit popover/window host installed; owner Back/open-window flow passed; packaged notification observation pending |
 
 SQLite schema v6 is incompatible with the generation-9 binary. The service therefore retains the prior-generation manifest/plist/v5 database lease and provides explicit accept/rollback plus exact report-only restart. The real v5 rollback/open and packaged App/restart runbook passed without arm; generation 12 remains unaccepted so that rollback stays available during dogfood.
 

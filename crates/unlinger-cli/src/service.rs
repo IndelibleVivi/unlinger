@@ -19,6 +19,7 @@ use unlinger_daemon::{
 use unlinger_macos::MacosSnapshotter;
 
 const SERVICE_SCHEMA_VERSION: u32 = 3;
+const PUBLIC_SERVICE_STATUS_SCHEMA_VERSION: u32 = 1;
 const SERVICE_MANIFEST_SCHEMA_VERSION: u32 = 1;
 const SERVICE_TRANSACTION_SCHEMA_VERSION: u32 = 2;
 const SERVICE_START_TIMEOUT: Duration = Duration::from_secs(120);
@@ -71,6 +72,78 @@ pub struct ServiceAcceptanceReport {
     pub database_backup_present: bool,
 }
 
+#[derive(Clone, Debug, Serialize)]
+pub struct PublicServiceStatusReport {
+    pub schema_version: u32,
+    pub label: &'static str,
+    pub installed: bool,
+    pub loaded: bool,
+    pub healthy: bool,
+    pub unmanaged_daemon: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expected_mode: Option<DaemonMode>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub active_generation: Option<u64>,
+    pub pid_matches: bool,
+    pub generation_matches: bool,
+    pub binary_matches: bool,
+    pub permissions_ok: bool,
+    pub data_preserved: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub runtime: Option<PublicServiceRuntimeReport>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub acceptance: Option<ServiceAcceptanceReport>,
+    pub problem_count: usize,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct PublicServiceRuntimeReport {
+    pub managed: bool,
+    pub healthy: bool,
+    pub ready: bool,
+    pub startup_state: StartupState,
+    pub requested_mode: DaemonMode,
+    pub effective_mode: DaemonMode,
+    pub scan_in_progress: bool,
+    pub cleanup_in_progress: bool,
+    pub draining: bool,
+}
+
+#[must_use]
+pub fn public_status_report(report: &ServiceStatusReport) -> PublicServiceStatusReport {
+    PublicServiceStatusReport {
+        schema_version: PUBLIC_SERVICE_STATUS_SCHEMA_VERSION,
+        label: report.label,
+        installed: report.installed,
+        loaded: report.loaded,
+        healthy: report.healthy,
+        unmanaged_daemon: report.unmanaged_daemon,
+        expected_mode: report.expected_mode,
+        active_generation: report.active_generation,
+        pid_matches: report.pid_matches,
+        generation_matches: report.generation_matches,
+        binary_matches: report.binary_matches,
+        permissions_ok: report.permissions_ok,
+        data_preserved: report.data_preserved,
+        runtime: report
+            .daemon_status
+            .as_ref()
+            .map(|status| PublicServiceRuntimeReport {
+                managed: status.managed,
+                healthy: status.healthy,
+                ready: status.ready,
+                startup_state: status.startup_state,
+                requested_mode: status.requested_mode,
+                effective_mode: status.effective_mode(),
+                scan_in_progress: status.scan_in_progress,
+                cleanup_in_progress: status.cleanup_in_progress,
+                draining: status.draining,
+            }),
+        acceptance: report.acceptance.clone(),
+        problem_count: report.errors.len(),
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 struct ActiveServiceManifest {
     schema_version: u32,
@@ -121,6 +194,7 @@ enum TransactionPhase {
     CandidateSelected,
     CandidateReadyReportOnly,
     AcceptanceInProgress,
+    RollbackInProgress,
     Accepted,
 }
 
@@ -138,7 +212,8 @@ fn transaction_recovery_disposition(phase: TransactionPhase) -> TransactionRecov
         | TransactionPhase::PriorDrained
         | TransactionPhase::DatabaseBackedUp
         | TransactionPhase::CandidateSelected
-        | TransactionPhase::AcceptanceInProgress => TransactionRecoveryDisposition::RollbackPrior,
+        | TransactionPhase::AcceptanceInProgress
+        | TransactionPhase::RollbackInProgress => TransactionRecoveryDisposition::RollbackPrior,
         TransactionPhase::CandidateReadyReportOnly => {
             TransactionRecoveryDisposition::HoldForExplicitDecision
         }
@@ -155,6 +230,7 @@ fn transaction_phase_name(phase: TransactionPhase) -> &'static str {
         TransactionPhase::CandidateSelected => "candidate_selected",
         TransactionPhase::CandidateReadyReportOnly => "candidate_ready_report_only",
         TransactionPhase::AcceptanceInProgress => "acceptance_in_progress",
+        TransactionPhase::RollbackInProgress => "rollback_in_progress",
         TransactionPhase::Accepted => "accepted",
     }
 }
@@ -162,9 +238,11 @@ fn transaction_phase_name(phase: TransactionPhase) -> &'static str {
 fn candidate_database_may_have_changed(phase: TransactionPhase) -> bool {
     matches!(
         phase,
-        TransactionPhase::CandidateSelected
+        TransactionPhase::DatabaseBackedUp
+            | TransactionPhase::CandidateSelected
             | TransactionPhase::CandidateReadyReportOnly
             | TransactionPhase::AcceptanceInProgress
+            | TransactionPhase::RollbackInProgress
     )
 }
 
@@ -178,6 +256,10 @@ struct InstallTransaction {
     prior_was_loaded: bool,
     #[serde(default)]
     database_backed_up: bool,
+    #[serde(default)]
+    database_backup_schema_version: Option<u32>,
+    #[serde(default)]
+    rollback_database_restore: bool,
 }
 
 impl InstallTransaction {
@@ -195,6 +277,8 @@ impl InstallTransaction {
             prior_plist,
             prior_was_loaded,
             database_backed_up: false,
+            database_backup_schema_version: None,
+            rollback_database_restore: false,
         }
     }
 }
@@ -392,6 +476,10 @@ pub fn install(
         persist_transaction(&layout, &transaction)?;
 
         transaction.database_backed_up = backup_database(&paths.database, &layout)?;
+        transaction.database_backup_schema_version = transaction
+            .database_backed_up
+            .then(|| sqlite_database_schema_version(&layout.database_backup))
+            .transpose()?;
         transaction.phase = TransactionPhase::DatabaseBackedUp;
         persist_transaction(&layout, &transaction)?;
 
@@ -558,7 +646,7 @@ fn validate_candidate_restart_state(
     paths: &LocalPaths,
     layout: &ServiceLayout,
     transaction: &InstallTransaction,
-) -> Result<ServiceStatusReport, ServiceError> {
+) -> Result<(), ServiceError> {
     let acceptance = inspect_acceptance_lease(paths, layout)?
         .ok_or_else(|| ServiceError::new("candidate acceptance lease disappeared"))?;
     if acceptance.candidate_generation != transaction.candidate_generation
@@ -569,20 +657,15 @@ fn validate_candidate_restart_state(
             "candidate rollback material is incomplete or inconsistent",
         ));
     }
-    let report = status(paths)?;
-    if !report.healthy
-        || report.expected_mode != Some(DaemonMode::ReportOnly)
-        || !generation_runtime_is_ready_report_only_for_restart(
-            &report,
-            transaction.candidate_generation,
-        )
-    {
-        return Err(ServiceError::new(format!(
-            "generation {} is not a healthy exact report-only candidate for restart",
-            transaction.candidate_generation
-        )));
+    validate_exact_generation_selection(paths, layout, transaction.candidate_generation)?;
+    let manifest = read_optional_manifest(&layout.active_manifest)?
+        .ok_or_else(|| ServiceError::new("candidate active manifest is missing"))?;
+    if manifest.desired_mode != DaemonMode::ReportOnly {
+        return Err(ServiceError::new(
+            "candidate restart requires a report-only active manifest",
+        ));
     }
-    Ok(report)
+    Ok(())
 }
 
 fn validate_candidate_acceptance_state(
@@ -818,7 +901,13 @@ fn inspect_acceptance_lease(
     };
     let database_backup_present = path_entry_exists(&layout.database_backup)?;
     let rollback_database_available = if transaction.database_backed_up {
-        database_backup_present && validate_sqlite_database(&layout.database_backup).is_ok()
+        database_backup_present
+            && validate_sqlite_database(&layout.database_backup).is_ok()
+            && transaction
+                .database_backup_schema_version
+                .is_none_or(|expected| {
+                    sqlite_database_schema_version(&layout.database_backup).ok() == Some(expected)
+                })
     } else {
         !database_backup_present
     };
@@ -830,7 +919,9 @@ fn inspect_acceptance_lease(
     };
     let rollback_generation_available = transaction.prior_manifest.as_ref().map_or_else(
         || transaction.prior_plist.is_none() || paths.daemon_binary.is_file(),
-        |manifest| validate_generation(&layout.generation(manifest.active_generation)).is_ok(),
+        |manifest| {
+            validate_rollback_generation(&layout.generation(manifest.active_generation)).is_ok()
+        },
     );
     Ok(Some(ServiceAcceptanceReport {
         phase: transaction_phase_name(transaction.phase),
@@ -1713,22 +1804,116 @@ fn clear_generation_enforce_request_offline(
     _daemon_lock: &DaemonInstanceLock,
 ) -> Result<(), ServiceError> {
     validate_managed_database_path(&paths.database, layout)?;
+    let database_metadata = fs::symlink_metadata(&paths.database).map_err(|error| {
+        ServiceError::context("could not inspect managed history offline", error)
+    })?;
+    validate_database_component(&paths.database, &database_metadata)?;
+    validate_database_sidecars(&paths.database)?;
+    validate_sqlite_database(&paths.database)?;
     let now_unix_millis = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|error| ServiceError::context("wall clock failed", error))?
         .as_millis();
     let now_unix_millis = u64::try_from(now_unix_millis)
         .map_err(|_| ServiceError::new("wall clock overflowed u64"))?;
-    let store = HistoryStore::open(&paths.database)
-        .map_err(|error| ServiceError::context("could not open managed history offline", error))?;
-    store
-        .clear_managed_enforce_request_offline(generation, now_unix_millis)
+    let original_schema = sqlite_database_schema_version(&paths.database)?;
+    if !(4..=HistoryStore::schema_version()).contains(&original_schema) {
+        return Err(ServiceError::new(format!(
+            "managed report-only recovery cannot safely edit schema version {original_schema}"
+        )));
+    }
+    let mut connection = rusqlite::Connection::open_with_flags(
+        &paths.database,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .map_err(|error| ServiceError::context("could not open managed history offline", error))?;
+    connection
+        .busy_timeout(Duration::from_secs(2))
+        .map_err(|error| ServiceError::context("could not configure offline history", error))?;
+    connection
+        .pragma_update(None, "synchronous", "FULL")
+        .map_err(|error| {
+            ServiceError::context("could not configure durable offline history", error)
+        })?;
+    let transaction = connection
+        .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+        .map_err(|error| {
+            ServiceError::context("could not begin offline history transaction", error)
+        })?;
+    let stored_generation = transaction
+        .query_row(
+            "SELECT activation_generation FROM managed_lifecycle WHERE singleton = 1",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(|error| {
+            ServiceError::context("could not read offline managed generation", error)
+        })?;
+    let expected_generation = i64::try_from(generation)
+        .map_err(|_| ServiceError::new("managed activation generation exceeds SQLite range"))?;
+    if stored_generation != expected_generation {
+        return Err(ServiceError::new(format!(
+            "managed activation generation mismatch: expected {stored_generation}, got {generation}"
+        )));
+    }
+    let occurred_at = i64::try_from(now_unix_millis)
+        .map_err(|_| ServiceError::new("offline recovery timestamp exceeds SQLite range"))?;
+    let changed = transaction
+        .execute(
+            "UPDATE managed_lifecycle
+             SET requested_enforce = 0, effective_enforce = 0,
+                 armed_generation = NULL, enforcement_epoch = NULL,
+                 ready = 0, draining = 0, startup_phase = 'recovering',
+                 updated_at_ms = ?1
+             WHERE singleton = 1 AND activation_generation = ?2",
+            rusqlite::params![occurred_at, expected_generation],
+        )
         .map_err(|error| {
             ServiceError::context(
                 "could not clear exact-generation enforcement intent offline",
                 error,
             )
         })?;
+    if changed != 1 {
+        return Err(ServiceError::new(
+            "offline report-only recovery did not update the exact managed generation",
+        ));
+    }
+    transaction
+        .commit()
+        .map_err(|error| ServiceError::context("could not commit offline history", error))?;
+    connection
+        .execute_batch("PRAGMA wal_checkpoint(FULL);")
+        .map_err(|error| {
+            ServiceError::context("could not checkpoint offline history recovery", error)
+        })?;
+    drop(connection);
+    let final_schema = sqlite_database_schema_version(&paths.database)?;
+    if final_schema != original_schema {
+        return Err(ServiceError::new(format!(
+            "offline report-only recovery changed schema {original_schema} to {final_schema}"
+        )));
+    }
+    for component in [
+        paths.database.clone(),
+        database_sidecar(&paths.database, "-wal"),
+        database_sidecar(&paths.database, "-shm"),
+        database_sidecar(&paths.database, "-journal"),
+    ] {
+        match File::open(&component) {
+            Ok(file) => file
+                .sync_all()
+                .map_err(|error| ServiceError::context("could not sync offline history", error))?,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(ServiceError::context(
+                    "could not open offline history component for sync",
+                    error,
+                ));
+            }
+        }
+    }
+    sync_directory(&paths.application_support)?;
     Ok(())
 }
 
@@ -2176,77 +2361,10 @@ fn rollback_install_transaction(
     paths: &LocalPaths,
     layout: &ServiceLayout,
     uid: u32,
-    transaction: InstallTransaction,
+    mut transaction: InstallTransaction,
 ) -> Result<(), ServiceError> {
-    let launchd = launchd_state(uid)?;
-    if launchd.loaded {
-        match (launchd.pid, transaction.phase) {
-            (
-                Some(pid),
-                TransactionPhase::CandidateSelected
-                | TransactionPhase::CandidateReadyReportOnly
-                | TransactionPhase::AcceptanceInProgress,
-            ) => {
-                let daemon_status = ipc_status_for_launchd(paths, Some(pid));
-                if let Ok(Some(status)) = daemon_status {
-                    validate_managed_identity(&status, transaction.candidate_generation)?;
-                    let (exact_launchd, identity) = capture_exact_generation_process(
-                        paths,
-                        layout,
-                        uid,
-                        transaction.candidate_generation,
-                    )?;
-                    if status.pid != identity.pid {
-                        return Err(ServiceError::new(
-                            "candidate IPC and exact launchd process identities do not match",
-                        ));
-                    }
-                    quiesce_loaded_service(paths, uid, exact_launchd, Some(&status))?;
-                } else {
-                    // A selected candidate can only have been launched by a managed
-                    // plist, whose boot floor is report-only. Re-prove the manifest,
-                    // plist, immutable binary, and exact process identity before the
-                    // only recovery bootout that can proceed without lifecycle IPC.
-                    let (_launchd, identity) = capture_exact_generation_process(
-                        paths,
-                        layout,
-                        uid,
-                        transaction.candidate_generation,
-                    )?;
-                    bootout_and_wait(uid, Some(&identity))?;
-                }
-            }
-            (Some(pid), _) => {
-                let status = ipc_status_for_launchd(paths, Some(pid))?.ok_or_else(|| {
-                    ServiceError::new(
-                        "cannot recover service transaction while prior daemon IPC is unavailable",
-                    )
-                })?;
-                quiesce_loaded_service(paths, uid, launchd, Some(&status))?;
-            }
-            (
-                None,
-                TransactionPhase::CandidateSelected
-                | TransactionPhase::CandidateReadyReportOnly
-                | TransactionPhase::AcceptanceInProgress,
-            ) => {
-                validate_exact_generation_selection(
-                    paths,
-                    layout,
-                    transaction.candidate_generation,
-                )?;
-                bootout_and_wait(uid, None)?;
-            }
-            (None, _) => bootout_and_wait(uid, None)?,
-        }
-    } else if candidate_database_may_have_changed(transaction.phase) {
-        validate_exact_generation_selection(paths, layout, transaction.candidate_generation)?;
-    }
-    let mut daemon_lock = Some(prove_daemon_offline(paths, SERVICE_STOP_TIMEOUT)?);
-
     // Resolve and structurally validate the exact rollback target before any
-    // database or LaunchAgent mutation. The daemon lifetime lock remains held
-    // across this validation and the subsequent offline restore transaction.
+    // transaction intent, database, or LaunchAgent mutation.
     let report_only_prior_plist = transaction
         .prior_plist
         .as_deref()
@@ -2254,10 +2372,22 @@ fn rollback_install_transaction(
             validate_report_only_rollback_plist(paths, layout, &transaction, prior_plist)
         })
         .transpose()?;
+    validate_rollback_selection_scope(paths, layout, &transaction)?;
+    validate_committed_rollback_backup(layout, &transaction)?;
+
+    // Persist rollback intent before the first physical rollback step. Every
+    // later step is deliberately replayable, so a crash at any durable-write
+    // cut converges by stopping either transaction-owned generation, restoring
+    // the same immutable snapshot, republishing the prior selection, and
+    // restarting it at the report-only floor.
+    mark_rollback_in_progress(layout, &mut transaction)?;
+
+    drain_rollback_selected_service(paths, layout, uid, &transaction)?;
+    let mut daemon_lock = Some(prove_daemon_offline(paths, SERVICE_STOP_TIMEOUT)?);
 
     remove_file_durable(&layout.database_backup_pending)?;
 
-    if candidate_database_may_have_changed(transaction.phase) {
+    if transaction.rollback_database_restore {
         if transaction.database_backed_up {
             restore_database_backup_files(paths, layout, transaction.candidate_generation)?;
         } else {
@@ -2303,6 +2433,196 @@ fn rollback_install_transaction(
     remove_file_durable(&layout.database_backup_pending)?;
     drop(daemon_lock.take());
     Ok(())
+}
+
+fn mark_rollback_in_progress(
+    layout: &ServiceLayout,
+    transaction: &mut InstallTransaction,
+) -> Result<(), ServiceError> {
+    transaction.rollback_database_restore |= candidate_database_may_have_changed(transaction.phase);
+    transaction.phase = TransactionPhase::RollbackInProgress;
+    persist_transaction(layout, transaction)
+}
+
+fn validate_committed_rollback_backup(
+    layout: &ServiceLayout,
+    transaction: &InstallTransaction,
+) -> Result<(), ServiceError> {
+    if !transaction.database_backed_up {
+        if path_entry_exists(&layout.database_backup)? {
+            return Err(ServiceError::new(
+                "rollback backup exists without a committed database snapshot",
+            ));
+        }
+        return Ok(());
+    }
+    let metadata = fs::symlink_metadata(&layout.database_backup).map_err(|error| {
+        ServiceError::context("committed history rollback backup is unavailable", error)
+    })?;
+    validate_database_component(&layout.database_backup, &metadata)?;
+    validate_sqlite_database(&layout.database_backup)?;
+    if let Some(expected) = transaction.database_backup_schema_version {
+        let actual = sqlite_database_schema_version(&layout.database_backup)?;
+        if actual != expected {
+            return Err(ServiceError::new(format!(
+                "rollback backup schema changed: expected {expected}, found {actual}"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn transaction_allows_generation(transaction: &InstallTransaction, generation: u64) -> bool {
+    generation == transaction.candidate_generation
+        || transaction
+            .prior_manifest
+            .as_ref()
+            .is_some_and(|prior| prior.active_generation == generation)
+}
+
+fn validate_rollback_selection_scope(
+    paths: &LocalPaths,
+    layout: &ServiceLayout,
+    transaction: &InstallTransaction,
+) -> Result<(), ServiceError> {
+    if let Some(generation) = installed_generation_result(paths)? {
+        if !transaction_allows_generation(transaction, generation) {
+            return Err(ServiceError::new(
+                "LaunchAgent selection is outside the rollback transaction",
+            ));
+        }
+        validate_rollback_generation(&layout.generation(generation))?;
+    }
+    if let Some(manifest) = read_optional_manifest(&layout.active_manifest)? {
+        if !transaction_allows_generation(transaction, manifest.active_generation) {
+            return Err(ServiceError::new(
+                "active manifest selection is outside the rollback transaction",
+            ));
+        }
+        validate_rollback_generation(&layout.generation(manifest.active_generation))?;
+    }
+    Ok(())
+}
+
+fn validate_rollback_generation(generation: &GenerationPaths) -> Result<(), ServiceError> {
+    validate_generation(generation)?;
+    for (path, expected_mode, expected_kind) in [
+        (&generation.directory, 0o500, "directory"),
+        (&generation.daemon, 0o500, "file"),
+        (&generation.cli, 0o500, "file"),
+        (&generation.manifest, 0o400, "file"),
+    ] {
+        let metadata = fs::symlink_metadata(path).map_err(|error| {
+            ServiceError::context("could not inspect sealed rollback generation", error)
+        })?;
+        let kind_matches = match expected_kind {
+            "directory" => metadata.file_type().is_dir(),
+            _ => metadata.file_type().is_file(),
+        } && !metadata.file_type().is_symlink();
+        if !kind_matches
+            || metadata.uid() != current_uid()
+            || metadata.permissions().mode() & 0o777 != expected_mode
+        {
+            return Err(ServiceError::new(format!(
+                "rollback generation has unsafe ownership, type, or permissions at {}",
+                path.display()
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn drain_rollback_selected_service(
+    paths: &LocalPaths,
+    layout: &ServiceLayout,
+    uid: u32,
+    transaction: &InstallTransaction,
+) -> Result<(), ServiceError> {
+    validate_rollback_selection_scope(paths, layout, transaction)?;
+    let launchd = launchd_state(uid)?;
+    if !launchd.loaded {
+        return Ok(());
+    }
+    let Some(pid) = launchd.pid else {
+        bootout_and_wait(uid, None)?;
+        return Ok(());
+    };
+    match ipc_status_for_launchd(paths, Some(pid)) {
+        Ok(Some(status)) if status.managed => {
+            let generation = status.activation_generation.ok_or_else(|| {
+                ServiceError::new("managed rollback process has no activation generation")
+            })?;
+            if !transaction_allows_generation(transaction, generation) {
+                return Err(ServiceError::new(
+                    "running managed generation is outside the rollback transaction",
+                ));
+            }
+            let (exact_launchd, identity) =
+                capture_plist_generation_process(paths, layout, uid, generation)?;
+            if status.pid != identity.pid {
+                return Err(ServiceError::new(
+                    "rollback IPC and exact launchd process identities do not match",
+                ));
+            }
+            quiesce_loaded_service(paths, uid, exact_launchd, Some(&status))
+        }
+        Ok(Some(status)) => {
+            if transaction.prior_manifest.is_some() || transaction.prior_plist.is_none() {
+                return Err(ServiceError::new(
+                    "unexpected legacy daemon is running during managed rollback",
+                ));
+            }
+            quiesce_loaded_service(paths, uid, launchd, Some(&status))
+        }
+        Ok(None) | Err(_) => {
+            let generation = installed_generation_result(paths)?.ok_or_else(|| {
+                ServiceError::new(
+                    "rollback cannot prove a loaded daemon without a managed plist selection",
+                )
+            })?;
+            if !transaction_allows_generation(transaction, generation) {
+                return Err(ServiceError::new(
+                    "loaded generation is outside the rollback transaction",
+                ));
+            }
+            let (_launchd, identity) =
+                capture_plist_generation_process(paths, layout, uid, generation)?;
+            bootout_and_wait(uid, Some(&identity))
+        }
+    }
+}
+
+fn capture_plist_generation_process(
+    paths: &LocalPaths,
+    layout: &ServiceLayout,
+    uid: u32,
+    generation: u64,
+) -> Result<(LaunchdState, ProcessIdentity), ServiceError> {
+    if installed_generation_result(paths)? != Some(generation) {
+        return Err(ServiceError::new(
+            "LaunchAgent no longer selects the expected rollback generation",
+        ));
+    }
+    let generation_paths = layout.generation(generation);
+    validate_generation(&generation_paths)?;
+    let launchd = launchd_state(uid)?;
+    let pid = launchd.pid.ok_or_else(|| {
+        ServiceError::new("loaded rollback service has no process identity to validate")
+    })?;
+    let identity = capture_loaded_identity(launchd)?
+        .ok_or_else(|| ServiceError::new("could not capture rollback daemon identity"))?;
+    let binary = fs::metadata(&generation_paths.daemon).map_err(|error| {
+        ServiceError::context("could not inspect rollback generation daemon", error)
+    })?;
+    if identity.pid != pid
+        || identity.executable_device != Some(binary.dev())
+        || identity.executable_inode != Some(binary.ino())
+    {
+        return Err(ServiceError::new(
+            "refusing to stop a process that is not the selected rollback generation",
+        ));
+    }
+    Ok((launchd, identity))
 }
 
 fn wait_for_restored_report_only(
@@ -2789,6 +3109,17 @@ fn validate_sqlite_database(path: &Path) -> Result<(), ServiceError> {
             "SQLite backup quick_check failed: {result}"
         )))
     }
+}
+
+fn sqlite_database_schema_version(path: &Path) -> Result<u32, ServiceError> {
+    let connection = rusqlite::Connection::open_with_flags(
+        path,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .map_err(|error| ServiceError::context("could not open SQLite schema target", error))?;
+    connection
+        .query_row("PRAGMA user_version", [], |row| row.get::<_, u32>(0))
+        .map_err(|error| ServiceError::context("could not read SQLite schema version", error))
 }
 
 fn database_sidecar(database: &Path, suffix: &str) -> PathBuf {
@@ -3405,6 +3736,28 @@ mod tests {
         )
     }
 
+    fn create_sealed_test_generation(layout: &ServiceLayout, generation: u64) -> GenerationPaths {
+        let generation = layout.generation(generation);
+        fs::create_dir(&generation.directory).expect("generation directory");
+        fs::write(&generation.daemon, b"test daemon").expect("generation daemon");
+        fs::write(&generation.cli, b"test cli").expect("generation cli");
+        write_json_atomic(
+            &generation.manifest,
+            &GenerationManifest::new(generation.activation_generation),
+            0o600,
+        )
+        .expect("generation manifest");
+        fs::set_permissions(&generation.daemon, fs::Permissions::from_mode(0o500))
+            .expect("seal generation daemon");
+        fs::set_permissions(&generation.cli, fs::Permissions::from_mode(0o500))
+            .expect("seal generation cli");
+        fs::set_permissions(&generation.manifest, fs::Permissions::from_mode(0o400))
+            .expect("seal generation manifest");
+        fs::set_permissions(&generation.directory, fs::Permissions::from_mode(0o500))
+            .expect("seal generation directory");
+        generation
+    }
+
     #[test]
     fn plist_is_generation_bound_report_only_and_escapes_local_paths() {
         let paths = LocalPaths::from_home("/Users/A&B Person").expect("paths");
@@ -3695,6 +4048,105 @@ mod tests {
         assert!(ready.ready);
         assert!(!ready.requested_enforce);
         assert!(!ready.effective_enforce);
+    }
+
+    #[test]
+    fn offline_report_only_recovery_preserves_a_prior_schema_version() {
+        let temp = TempDirectory::new();
+        let mut paths = LocalPaths::from_home(&temp.0).expect("paths");
+        shorten_test_ipc_paths(&mut paths, &temp.0);
+        prepare_install_directories(&paths).expect("prepare managed directories");
+        let layout = ServiceLayout::new(&paths);
+        let store = HistoryStore::open(&paths.database).expect("open managed store");
+        store
+            .begin_managed_boot(9, "prior-instance", 1_000)
+            .expect("begin prior boot");
+        drop(store);
+        let connection = rusqlite::Connection::open(&paths.database).expect("open prior schema");
+        connection
+            .pragma_update(None, "user_version", 5)
+            .expect("mark exact prior schema");
+        drop(connection);
+        let daemon_lock =
+            prove_daemon_offline(&paths, Duration::ZERO).expect("prove daemon offline");
+
+        clear_generation_enforce_request_offline(&paths, &layout, 9, &daemon_lock)
+            .expect("clear without current-source migration");
+        drop(daemon_lock);
+
+        let connection = rusqlite::Connection::open_with_flags(
+            &paths.database,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+        )
+        .expect("inspect preserved prior schema");
+        assert_eq!(
+            connection
+                .query_row("PRAGMA user_version", [], |row| row.get::<_, u32>(0))
+                .expect("schema version"),
+            5
+        );
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT requested_enforce FROM managed_lifecycle WHERE singleton = 1",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .expect("requested mode"),
+            0
+        );
+    }
+
+    #[test]
+    fn public_service_json_omits_runtime_identity_paths_and_raw_errors() {
+        let paths = LocalPaths::from_home("/Users/private-path-marker").expect("paths");
+        let mut daemon =
+            managed_lifecycle_status(DaemonMode::ReportOnly, 12, "private-instance-marker");
+        daemon.pid = 987_654_321;
+        daemon.last_error = Some("private-daemon-error-marker".to_owned());
+        let report = ServiceStatusReport {
+            schema_version: SERVICE_SCHEMA_VERSION,
+            label: LAUNCH_AGENT_LABEL,
+            installed: true,
+            loaded: true,
+            healthy: false,
+            unmanaged_daemon: false,
+            expected_mode: Some(DaemonMode::ReportOnly),
+            active_generation: Some(12),
+            launchd_pid: Some(987_654_321),
+            daemon_status: Some(daemon),
+            pid_matches: true,
+            generation_matches: true,
+            binary_matches: true,
+            permissions_ok: true,
+            launch_agent_path: paths.launch_agent.clone(),
+            daemon_path: paths.binary_directory.join("unlingerd"),
+            cli_path: paths.binary_directory.join("unlinger"),
+            database_path: paths.database.clone(),
+            socket_path: paths.socket.clone(),
+            data_preserved: true,
+            acceptance: Some(ServiceAcceptanceReport {
+                phase: "candidate_ready_report_only",
+                candidate_generation: 12,
+                prior_generation: Some(9),
+                rollback_available: true,
+                database_backup_present: true,
+            }),
+            errors: vec!["private-service-error-marker".to_owned()],
+        };
+
+        let json = serde_json::to_string(&public_status_report(&report)).expect("public JSON");
+
+        assert!(json.contains("\"schema_version\":1"));
+        assert!(!json.contains("987654321"));
+        assert!(!json.contains("private-instance-marker"));
+        assert!(!json.contains("private-path-marker"));
+        assert!(!json.contains("private-daemon-error-marker"));
+        assert!(!json.contains("private-service-error-marker"));
+        assert!(json.contains("candidate_ready_report_only"));
+        assert!(json.contains("\"candidate_generation\":12"));
+        assert!(json.contains("\"prior_generation\":9"));
+        assert!(json.contains("\"problem_count\":1"));
     }
 
     #[test]
@@ -4468,10 +4920,14 @@ app.unlinger.daemon = {
             TransactionRecoveryDisposition::RollbackPrior
         );
         assert_eq!(
+            transaction_recovery_disposition(TransactionPhase::RollbackInProgress),
+            TransactionRecoveryDisposition::RollbackPrior
+        );
+        assert_eq!(
             transaction_recovery_disposition(TransactionPhase::Accepted),
             TransactionRecoveryDisposition::FinalizeAccepted
         );
-        assert!(!candidate_database_may_have_changed(
+        assert!(candidate_database_may_have_changed(
             TransactionPhase::DatabaseBackedUp
         ));
         assert!(candidate_database_may_have_changed(
@@ -4483,9 +4939,96 @@ app.unlinger.daemon = {
         assert!(candidate_database_may_have_changed(
             TransactionPhase::AcceptanceInProgress
         ));
+        assert!(candidate_database_may_have_changed(
+            TransactionPhase::RollbackInProgress
+        ));
         assert!(!candidate_database_may_have_changed(
             TransactionPhase::Accepted
         ));
+    }
+
+    #[test]
+    fn rollback_intent_preserves_database_restore_across_reentry() {
+        let temp = TempDirectory::new();
+        let paths = LocalPaths::from_home(&temp.0).expect("paths");
+        prepare_install_directories(&paths).expect("directories");
+        let layout = ServiceLayout::new(&paths);
+        let mut transaction = InstallTransaction::new(12, None, None, false);
+        transaction.database_backed_up = true;
+        transaction.database_backup_schema_version = Some(5);
+        transaction.phase = TransactionPhase::DatabaseBackedUp;
+
+        mark_rollback_in_progress(&layout, &mut transaction).expect("persist rollback intent");
+        let persisted = read_optional_transaction(&layout.transaction)
+            .expect("read transaction")
+            .expect("transaction");
+        assert_eq!(persisted.phase, TransactionPhase::RollbackInProgress);
+        assert!(persisted.rollback_database_restore);
+
+        let mut early = InstallTransaction::new(13, None, None, false);
+        early.phase = TransactionPhase::PriorDrained;
+        mark_rollback_in_progress(&layout, &mut early).expect("persist early rollback");
+        assert!(!early.rollback_database_restore);
+    }
+
+    #[test]
+    fn rollback_selection_reconciles_candidate_prior_and_mixed_durable_cuts() {
+        let temp = TempDirectory::new();
+        let paths = LocalPaths::from_home(&temp.0).expect("paths");
+        prepare_install_directories(&paths).expect("directories");
+        let layout = ServiceLayout::new(&paths);
+        let prior = create_sealed_test_generation(&layout, 9);
+        let candidate = create_sealed_test_generation(&layout, 12);
+        let transaction = InstallTransaction::new(
+            12,
+            Some(ActiveServiceManifest::new(9, DaemonMode::ReportOnly)),
+            Some(launch_agent_plist(&paths, &prior)),
+            true,
+        );
+
+        write_bytes_atomic(
+            &paths.launch_agent,
+            launch_agent_plist(&paths, &candidate).as_bytes(),
+            0o600,
+        )
+        .expect("candidate plist");
+        write_json_atomic(
+            &layout.active_manifest,
+            &ActiveServiceManifest::new(9, DaemonMode::ReportOnly),
+            0o600,
+        )
+        .expect("prior manifest");
+        validate_rollback_selection_scope(&paths, &layout, &transaction)
+            .expect("candidate plist plus prior manifest is a recoverable cut");
+
+        write_bytes_atomic(
+            &paths.launch_agent,
+            launch_agent_plist(&paths, &prior).as_bytes(),
+            0o600,
+        )
+        .expect("prior plist");
+        write_json_atomic(
+            &layout.active_manifest,
+            &ActiveServiceManifest::new(12, DaemonMode::ReportOnly),
+            0o600,
+        )
+        .expect("candidate manifest");
+        validate_rollback_selection_scope(&paths, &layout, &transaction)
+            .expect("prior plist plus candidate manifest is a recoverable cut");
+
+        write_json_atomic(
+            &layout.active_manifest,
+            &ActiveServiceManifest::new(99, DaemonMode::ReportOnly),
+            0o600,
+        )
+        .expect("outsider manifest");
+        let error = validate_rollback_selection_scope(&paths, &layout, &transaction)
+            .expect_err("outsider selection must fail closed");
+        assert!(
+            error
+                .to_string()
+                .contains("outside the rollback transaction")
+        );
     }
 
     #[test]
@@ -4540,6 +5083,20 @@ app.unlinger.daemon = {
             0o600,
         )
         .expect("prior generation manifest");
+        fs::set_permissions(&prior_generation.daemon, fs::Permissions::from_mode(0o500))
+            .expect("seal prior daemon");
+        fs::set_permissions(&prior_generation.cli, fs::Permissions::from_mode(0o500))
+            .expect("seal prior cli");
+        fs::set_permissions(
+            &prior_generation.manifest,
+            fs::Permissions::from_mode(0o400),
+        )
+        .expect("seal prior manifest");
+        fs::set_permissions(
+            &prior_generation.directory,
+            fs::Permissions::from_mode(0o500),
+        )
+        .expect("seal prior generation directory");
 
         let prior = rusqlite::Connection::open(&paths.database).expect("prior database");
         prior
@@ -4555,6 +5112,7 @@ app.unlinger.daemon = {
             true,
         );
         transaction.database_backed_up = true;
+        transaction.database_backup_schema_version = Some(5);
         transaction.phase = TransactionPhase::CandidateReadyReportOnly;
         persist_transaction(&layout, &transaction).expect("persist ready lease");
 
@@ -4563,6 +5121,32 @@ app.unlinger.daemon = {
             .expect("acceptance report");
         assert!(acceptance.rollback_available);
         assert!(acceptance.database_backup_present);
+
+        fs::set_permissions(&prior_generation.cli, fs::Permissions::from_mode(0o700))
+            .expect("make prior cli unsafe");
+        let acceptance = inspect_acceptance_lease(&paths, &layout)
+            .expect("inspect unsafe prior generation")
+            .expect("acceptance report");
+        assert!(!acceptance.rollback_available);
+        fs::set_permissions(&prior_generation.cli, fs::Permissions::from_mode(0o500))
+            .expect("restore prior cli seal");
+
+        let backup =
+            rusqlite::Connection::open(&layout.database_backup).expect("open rollback backup");
+        backup
+            .pragma_update(None, "user_version", 6)
+            .expect("change rollback schema");
+        drop(backup);
+        let acceptance = inspect_acceptance_lease(&paths, &layout)
+            .expect("inspect wrong rollback schema")
+            .expect("acceptance report");
+        assert!(!acceptance.rollback_available);
+        let backup =
+            rusqlite::Connection::open(&layout.database_backup).expect("reopen rollback backup");
+        backup
+            .pragma_update(None, "user_version", 5)
+            .expect("restore rollback schema");
+        drop(backup);
 
         transaction.phase = TransactionPhase::Accepted;
         persist_transaction(&layout, &transaction).expect("persist accepted lease");

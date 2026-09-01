@@ -423,7 +423,10 @@ fn service_command(paths: &LocalPaths, arguments: ServiceArgs) -> Result<(), Box
         ServiceCommand::Uninstall(output) => {
             let report = service::uninstall(paths)?;
             if output.json {
-                println!("{}", serde_json::to_string_pretty(&report)?);
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&service::public_status_report(&report))?
+                );
             } else {
                 println!("Unlinger LaunchAgent and service binaries removed.");
                 println!("Local history and logs were preserved.");
@@ -439,7 +442,10 @@ fn print_service_status(
     json: bool,
 ) -> Result<(), Box<dyn Error>> {
     if json {
-        println!("{}", serde_json::to_string_pretty(report)?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&service::public_status_report(report))?
+        );
         return Ok(());
     }
     for line in service_status_lines(report) {

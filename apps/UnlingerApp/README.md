@@ -11,7 +11,7 @@ The App owns no classification, cleanup policy, signal authorization, daemon ins
 - one global unresolved-mutation lock, crash/restart status-only reconciliation, and authority-loss truth;
 - single-flight/coalesced refreshes, polling-session generations, stale roster retention, and typed incident-detail failures;
 - bilingual menu, detail, Settings/About and explicit “Quit Unlinger App” semantics—the daemon continues unchanged;
-- an AppKit-owned status item/popover and reusable ordinary window that host the same SwiftUI state/router; popover detail has an explicit Back control and can open the current route in the window;
+- a direct AppKit `@main` whose strong process-lifetime delegate owns the status item/popover and reusable ordinary window independently of any SwiftUI scene or window lifetime; both hosts project the same SwiftUI state/router, popover detail has an explicit Back control, and it can open the current route in the window;
 - local notifications with `off`, `attention` (default), and `attention_and_reclaims`; first trusted refresh baselines retained events, suppressed events are still marked seen, and a mode change never replays backlog;
 - duplicate-avoidance notification ledger: durable claim before one schedule attempt, stable request IDs, no sound, foreground quiet, and public-safe click routing through the reusable shared-router window;
 - launch-at-login controls only this menu-bar client via `SMAppService.mainApp`. It never manages the daemon.

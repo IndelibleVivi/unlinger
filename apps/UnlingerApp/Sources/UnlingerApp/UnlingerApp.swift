@@ -126,6 +126,10 @@ final class UnlingerAppDelegate: NSObject, NSApplicationDelegate {
         if !flag { appWindowController?.show() }
         return true
     }
+
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        false
+    }
 }
 
 private struct RootView: View {
@@ -140,14 +144,19 @@ private struct RootView: View {
     }
 }
 
-struct UnlingerApplication: App {
-    @NSApplicationDelegateAdaptor(UnlingerAppDelegate.self) private var appDelegate
+@main
+enum UnlingerApplication {
+    @MainActor
+    static func main() {
+        let application = NSApplication.shared
+        let delegate = UnlingerAppDelegate()
+        application.delegate = delegate
 
-    var body: some Scene {
-        Settings {
-            SettingsView()
-                .environment(appDelegate.environment.state)
-                .environment(appDelegate.environment.settings)
+        // NSApplication.delegate is weak. Keep the single owner of the
+        // status item, ordinary window, router, and polling state alive for
+        // exactly the blocking AppKit run-loop lifetime.
+        withExtendedLifetime(delegate) {
+            application.run()
         }
     }
 }

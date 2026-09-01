@@ -4,9 +4,9 @@
 
 **Programme:** Unlinger 0.1
 
-**Source:** private pre-v0.1 schema-v3 candidate; installed report-only integration verified
+**Source:** private pre-v0.1 schema-v3 candidate; rollback-hardening and direct-AppKit lifetime follow-up under final verification
 
-**Remote:** AppKit menu/window implementation head `4eb70eb7c067f85e28604ec010756d26972c3b9b` is on private origin `main`; exact-head `backend` run `33500090371` is green. This current-state reconciliation follows as documentation-only truth.
+**Remote:** private origin `main` is currently `1e89235`; the rollback-hardening and direct-AppKit lifetime follow-up is local until its final gate, explicit commit and push complete.
 
 **Installed runtime:** generation 12, schema-v3/v6 capable, healthy at a stable report-only floor; acceptance lease retains generation 9/v5
 
@@ -32,22 +32,26 @@ The native App under `apps/UnlingerApp` now has:
 - local-view diagnostics results with required `document_schema_version` and semantic-lossless JSON export;
 - stable event/action identity, including artifact-only action groups;
 - bilingual Settings/About/Quit surfaces, shared notification routing and menu-client-only `SMAppService.mainApp` launch at login;
-- AppKit-owned `NSStatusItem`/`NSPopover` and reusable ordinary-window lifecycles around one shared SwiftUI state/router, with explicit popover Back and open-current-route controls;
+- a direct AppKit `@main` that strongly retains the single delegate for the blocking App run loop, with AppKit-owned `NSStatusItem`/`NSPopover` and reusable ordinary-window lifecycles around one shared SwiftUI state/router; closing the last ordinary window does not terminate the menu client, and popover detail retains explicit Back/open-current-route controls;
 - bounded local notifications: `off`, default `attention`, or `attention_and_reclaims`; first trusted refresh baselines retained tokens, suppressed events remain seen, and durable claim precedes one schedule attempt.
 
 Notifications are best-effort local projections over bounded polling. They have no sound, are quiet in foreground, use public-safe route data, and never treat an App mutation response fault as a backend cleanup event. Runtime remains local-only with no account, telemetry, cloud sync or normal-operation network behavior.
 
-The service source now extends its durable install transaction through `CandidateReadyReportOnly`, `AcceptanceInProgress` and `Accepted`. A ready candidate retains the prior manifest, report-only plist and SQLite snapshot; install, uninstall and mode changes remain blocked until explicit `accept-candidate` or `rollback-candidate`. `restart-report-only` restarts only the exact active generation at the report-only floor and preserves a pending lease. Focused CLI tests cover phase disposition, rollback-material retention, invalid backup projection, install-time enforce rejection and command parsing.
+The service source extends its durable install transaction through `CandidateReadyReportOnly`, `AcceptanceInProgress`, `RollbackInProgress` and `Accepted`. `DatabaseBackedUp` is a conservative restore boundary because a crash may occur after either candidate selection file is published but before `CandidateSelected` is durable. Rollback validates the immutable backup's recorded schema and the sealed prior daemon/CLI/manifest, persists replay intent before physical mutation, accepts only transaction-owned candidate/prior/mixed selection cuts, restores the same snapshot and republishes the prior report-only selection until convergence. Offline containment directly updates the compatible managed-lifecycle row and verifies that the database `user_version` is unchanged; it no longer opens a restored prior database through the current migrating `HistoryStore::open` path.
+
+`restart-report-only` still requires exact candidate selection, a report-only manifest and executable rollback material, but it no longer requires a stopped, PID-less or terminal-failed candidate to already be healthy before replacement. Acceptance remains stricter: exact healthy, quiescent ReadyReportOnly plus report-only desired mode and valid rollback material. Service-command JSON now serializes a dedicated schema-v1 public projection that retains lifecycle/lease truth while excluding PID, instance ID, absolute paths and raw errors.
 
 ## Installed evidence
 
-Generation 12 is the active exact-head candidate. Its daemon exposes frontend schema v3 over the owner-private socket, uses SQLite v6, is healthy and quiescent ReadyReportOnly, has no armed generation or enforcement epoch, and retains `candidate_ready_report_only` rollback authority to generation 9. The current lease reports the prior generation and SQLite backup present with `rollback_available: true`; it has not been accepted.
+Generation 12 from the previously verified source head remains the active installed candidate; the newer rollback-hardening source is not installed. The daemon exposes frontend schema v3 over the owner-private socket, uses SQLite v6, is healthy and quiescent ReadyReportOnly, has no armed generation or enforcement epoch, and retains `candidate_ready_report_only` rollback authority to generation 9. The current lease reports the prior generation and SQLite backup present with `rollback_available: true`; it has not been accepted. No daemon lifecycle or mode mutation occurred during this follow-up.
 
 The rollback lease was exercised rather than inspected. Generation 10 migrated the active copy to v6, passed installed v3 reads/mutations and daemon restart, then `rollback-candidate` restored generation 9 and the SQLite-v5 snapshot. The exact generation-9 CLI/daemon reopened that database and returned healthy, quiescent ReadyReportOnly with exact PID/generation/binary/permission agreement. Candidate v6 database state was preserved separately as failed-generation evidence.
 
 The first candidate reinstall exposed an acceptance-only race: `restart-report-only` required two separate quiescent reads and could repeatedly collide with periodic scan start. That generation was never accepted and was rolled back. Commit `9d9d765` allows exact healthy report-only restart during an observation-only scan while still refusing cleanup, arm or enforcement authority. After exact-head CI passed, the candidate was reinstalled as generation 12. A controlled readback observed `scan_in_progress: true`, invoked the fixed command, and replaced PID 7399 with PID 8047; the replacement returned healthy, quiescent ReadyReportOnly with the lease intact.
 
-The ad-hoc-signed App is installed in the owner-local Applications folder and running as the only Unlinger menu client. Installed live-socket tests passed 6/6 before and after daemon replacement, and the current UI bundle passed the same installed 6/6 gate. The packaged App survived the daemon restart and later process recreations. A SwiftUI `MenuBarExtra` shell rendered blank under the current macOS/Thaw menu host and was replaced rather than retained: AppKit now owns the status item, popover and reusable ordinary window while the existing SwiftUI state/router remains canonical. The owner observed the replacement popover render normally; the newly added explicit Back/open-window flow and final notification behavior remain owner-observed dogfood gates, not daemon safety authority.
+The current ad-hoc-signed App is installed byte-for-byte from the final local bundle and runs as the only Unlinger menu client. Installed live-socket tests passed 6/6 before and after daemon replacement, and the UI bundle passed the same installed 6/6 gate. A SwiftUI `MenuBarExtra` shell rendered blank under the prior macOS/Thaw menu host and was retired: direct AppKit entry now owns one process-lifetime delegate, status item, popover and reusable ordinary window while the SwiftUI state/router remains canonical. Runtime introspection confirms the direct `UnlingerAppDelegate`; the owner exercised popover Back and ordinary-window routing successfully.
+
+The later missing-icon symptom was external menu-host state rather than a missing Unlinger status item: the item existed, remained visible to AppKit and had a live 38-point status window, but Thaw 2.0.0 build 53 logged an unresolved offscreen hidden divider and retained a stale item cache. The owner-local Thaw installation was upgraded from the official notarized 2.0.1-rc.1 build 54 asset after digest verification and with recoverable app/preferences backups. The unresolved/cache-hold signature disappeared and Thaw's hidden bar rendered its managed item set. Unlinger remains in the hidden section rather than consuming scarce notch-visible menu-bar space; final clicking is an owner-visible menu-host check, not source or daemon safety evidence.
 
 ## Safety and field truth
 
@@ -62,9 +66,9 @@ Historical generation-9 evidence proves one owner-approved managed full-timing P
 The level-2 source gate passed on 2026-09-01:
 
 - `cargo fmt --all -- --check`, strict workspace clippy and the release workspace build passed;
-- `cargo test --workspace` passed 272 tests; the two owner-only live CfT tests remained ignored;
-- source-only doctor inspected 408/408 listed processes with zero unreadable, argument-unavailable or descriptor-unavailable entries, 17 executable-identity-unavailable entries, `healthy: true` and no errors;
-- dry-run inspected the same 408/408 snapshot with the same complete readable/argument/descriptor coverage, 17 executable-identity-unavailable entries and no incident;
+- `cargo test --workspace` passed 276 tests; the two owner-only live CfT tests remained ignored;
+- source-only doctor inspected 452/452 listed processes with zero unreadable, argument-unavailable or descriptor-unavailable entries, 15 executable-identity-unavailable entries, `healthy: true` and no errors;
+- dry-run inspected 451/451 listed processes with the same complete readable/argument/descriptor coverage, 15 executable-identity-unavailable entries and no incident;
 - `swift test` passed 66 tests in 14 suites, including explicit one-level Back, current-route-preserving window presentation, actionable status-item popover and reusable AppKit-window ownership;
 - the release App bundle assembled, its active schema-v3 fixtures and localizations validated, and its ad-hoc signature verified;
 - the isolated smoke passed six live-socket tests, restarted the source daemon over the same private temporary SQLite database, then passed the same six tests again. It verified effective report-only mode, durable receipt replay and owner-private temp/database/socket/lock modes, and removed only its owned temporary root; and
@@ -93,7 +97,7 @@ Owner-only `cft_fieldlab` and `managed_cft_fieldlab` remained ignored and were n
 ## Open gates
 
 - multi-day report-only dogfood and an ambient real eligible incident;
-- owner re-observation of the installed explicit Back/open-window flow and notification behavior;
+- owner re-observation of the final hidden-section icon click after the Thaw host repair, plus packaged notification behavior;
 - separately owner-authorized narrow enforcement acceptance for a future candidate;
 - resolution or explicit product acceptance of both artifact P2 residuals;
 - broader family/version/controller field evidence, chaos, sleep/wake and sustained-pressure evidence;

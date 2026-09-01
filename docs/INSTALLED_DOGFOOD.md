@@ -29,7 +29,7 @@ A successful install must report all of the following at the same readback:
 - acceptance phase `candidate_ready_report_only`;
 - `rollback_available: true`, with the prior generation named and the SQLite backup present.
 
-While that lease is pending, ordinary install, uninstall and `set-mode` remain blocked. `service restart-report-only` is the only acceptance restart command; it keeps the lease and re-establishes an exact fresh report-only instance. It may request graceful replacement during an observation-only scan, because that scan has no signal authority; it still requires a healthy exact ReadyReportOnly identity, no arm/enforcement authority and no cleanup in progress.
+While that lease is pending, ordinary install, uninstall and `set-mode` remain blocked. `service restart-report-only` is the only acceptance restart command; it keeps the lease and re-establishes an exact fresh report-only instance. Its preflight requires the exact selected candidate, a report-only active manifest and executable rollback material, so it can recover an unloaded, PID-less, scanning or terminal-failed candidate instead of requiring that the broken instance already be healthy. Acceptance remains separate and requires a healthy, quiescent exact ReadyReportOnly projection with no arm/enforcement authority.
 
 ## Installed App and restart checks
 
