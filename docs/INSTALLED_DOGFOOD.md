@@ -33,7 +33,7 @@ While that lease is pending, ordinary install, uninstall and `set-mode` remain b
 
 ## Installed App and restart checks
 
-Install the verified ad-hoc bundle at the owner-local application target, preserving any prior bundle as a recoverable sibling until the new App has launched. Run the opt-in `LiveSocketTests` against the installed service socket, launch the packaged App, and verify that status/history/roster/detail/diagnostics and ordinary mutation reconciliation use schema v3. Restart the daemon with:
+Install the verified ad-hoc bundle at the owner-local application target, preserving any prior bundle as a recoverable sibling until the new App has launched. The packaged executable and resource lookup must contain no source/build-volume path, and a clean launch must not request removable-volume access. Run the opt-in `LiveSocketTests` against the installed service socket, launch the packaged App, and verify that status/history/roster/detail/diagnostics and ordinary mutation reconciliation use schema v3. The regular Dock/window route must remain available independently of status-item discovery by any external menu host. Restart the daemon with:
 
 ```bash
 <candidate-cli-path> service restart-report-only --json

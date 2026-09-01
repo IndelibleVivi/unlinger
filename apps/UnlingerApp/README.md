@@ -1,6 +1,6 @@
 # UnlingerApp
 
-Native macOS menu-bar frontend for Unlinger. It is a thin, local-only SwiftUI projection over frontend schema v3; contract authority lives in [`Contract/`](Contract/) and implementation boundaries in [`FRONTEND_BOUNDARY.md`](FRONTEND_BOUNDARY.md).
+Native macOS menu-bar and Dock frontend for Unlinger. It is a thin, local-only SwiftUI projection over frontend schema v3; contract authority lives in [`Contract/`](Contract/) and implementation boundaries in [`FRONTEND_BOUNDARY.md`](FRONTEND_BOUNDARY.md).
 
 The App owns no classification, cleanup policy, signal authorization, daemon installation, daemon mode, or service lifecycle. It never falls back to schema v1. A timed-out or untrusted mutation response is reconciled from a durable pre-send journal and is never automatically resent.
 
@@ -11,7 +11,7 @@ The App owns no classification, cleanup policy, signal authorization, daemon ins
 - one global unresolved-mutation lock, crash/restart status-only reconciliation, and authority-loss truth;
 - single-flight/coalesced refreshes, polling-session generations, stale roster retention, and typed incident-detail failures;
 - bilingual menu, detail, Settings/About and explicit “Quit Unlinger App” semantics—the daemon continues unchanged;
-- a direct AppKit `@main` whose strong process-lifetime delegate owns the status item/popover and reusable ordinary window independently of any SwiftUI scene or window lifetime; both hosts project the same SwiftUI state/router, popover detail has an explicit Back control, and it can open the current route in the window;
+- a direct AppKit `@main` whose strong process-lifetime delegate owns the status item/popover and reusable ordinary window independently of any SwiftUI scene or window lifetime; the App remains a regular Dock app so the window route is available even when a third-party menu host cannot resolve the status item; both hosts project the same SwiftUI state/router, popover detail has an explicit Back control, and it can open the current route in the window;
 - local notifications with `off`, `attention` (default), and `attention_and_reclaims`; first trusted refresh baselines retained events, suppressed events are still marked seen, and a mode change never replays backlog;
 - duplicate-avoidance notification ledger: durable claim before one schedule attempt, stable request IDs, no sound, foreground quiet, and public-safe click routing through the reusable shared-router window;
 - launch-at-login controls only this menu-bar client via `SMAppService.mainApp`. It never manages the daemon.
@@ -39,7 +39,7 @@ swift test
 scripts/bundle.sh
 ```
 
-`scripts/bundle.sh` builds `build/Unlinger.app`, copies active v3 fixtures only, verifies both localizations and Info.plist, then applies a private ad-hoc signature. That is not Developer ID signing or notarization.
+`scripts/bundle.sh` builds `build/Unlinger.app` in a temporary internal SwiftPM scratch path, copies active v3 fixtures only, rejects packaged resource fallbacks or loader paths that still point at a removable volume, verifies both localizations and Info.plist, then applies a private ad-hoc signature. That is not Developer ID signing or notarization.
 
 The repeatable pre-v0.1 integration gate owns a unique temporary database/socket/lock, remains report-only, runs the live Swift suite before and after daemon restart, checks private file modes and absence of IP listeners, and deletes only its own temp root:
 
@@ -47,7 +47,7 @@ The repeatable pre-v0.1 integration gate owns a unique temporary database/socket
 scripts/pre-v0.1-smoke.sh
 ```
 
-For manual source-only UI work, `scripts/demo-window.sh` runs an isolated report-only daemon. `UNLINGER_WINDOW=1` makes the debug App a regular Dock app. Packaged menu-bar mode stays an accessory app; its explicit window action and notification routes show the same reusable AppKit-owned ordinary window without changing daemon state.
+For manual source-only UI work, `scripts/demo-window.sh` runs an isolated report-only daemon. `UNLINGER_WINDOW=1` presents the ordinary window immediately. The packaged App remains regular and retains its Dock entry alongside the status item; Dock reopen, the popover's explicit window action, and notification routes all show the same reusable AppKit-owned ordinary window without changing daemon state.
 
 ## Installed boundary
 

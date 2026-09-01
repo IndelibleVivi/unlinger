@@ -79,8 +79,9 @@ final class UnlingerEnvironment {
 }
 
 /// Shared delegate: the bundle deliberately ships `LSUIElement = false` and
-/// picks its activation policy at launch. The explicit App quit leaves the
-/// daemon untouched.
+/// remains a regular App so its Dock/window route is available even when a
+/// third-party menu host cannot resolve the status item. Explicit App quit
+/// leaves the daemon untouched.
 @MainActor
 final class UnlingerAppDelegate: NSObject, NSApplicationDelegate {
     let environment = LaunchMode.makeEnvironment()
@@ -88,7 +89,7 @@ final class UnlingerAppDelegate: NSObject, NSApplicationDelegate {
     private var appWindowController: AppWindowController?
 
     func applicationWillFinishLaunching(_ notification: Notification) {
-        NSApplication.shared.setActivationPolicy(LaunchMode.windowed ? .regular : .accessory)
+        NSApplication.shared.setActivationPolicy(.regular)
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
