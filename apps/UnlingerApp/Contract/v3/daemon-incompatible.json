@@ -1,0 +1,1 @@
+{"fixture_schema_version":1,"state":"daemon_incompatible","reason_id":"transport.unsupported_schema","suggested_action":"update_backend_with_cli"}

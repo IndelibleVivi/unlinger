@@ -4,49 +4,176 @@ use crate::{
     StartupState, StorageRecoveryReason,
 };
 use unlinger_core::{
-    ArtifactDisposition, ArtifactOutcome, CleanupOutcome, IncidentReport, IncidentState,
-    OverallOutcome, ProcessOutcome, SignalDisposition,
+    ArtifactDisposition, ArtifactOutcome, IncidentReport, IncidentState, OverallOutcome,
+    ProcessOutcome, SignalDisposition,
 };
 use unlinger_protocol as public;
+
+const MAX_PUBLIC_PAUSE_MILLIS: u64 = 30 * 24 * 60 * 60 * 1_000;
 
 pub(crate) fn handle_at(
     control: &ControlPlane,
     command: public::Command,
     now_unix_millis: u64,
 ) -> Result<public::Payload, ControlError> {
-    // The roster is a v2-only read-only surface: it projects the engine's
-    // latest in-memory cycle and has no v1 counterpart.
-    if command == public::Command::Incidents {
-        return Ok(public::Payload::Incidents(
-            control
-                .roster_snapshot()
-                .into_iter()
-                .map(project_current_incident)
-                .collect(),
+    match command {
+        public::Command::Status => project_payload(
+            control,
+            control.handle_at(IpcCommand::Status, now_unix_millis)?,
+        ),
+        public::Command::History { limit } => project_payload(
+            control,
+            control.handle_at(IpcCommand::History { limit }, now_unix_millis)?,
+        ),
+        public::Command::Explain { incident_id } => project_payload(
+            control,
+            control.handle_at(IpcCommand::Explain { incident_id }, now_unix_millis)?,
+        ),
+        public::Command::Incidents => {
+            let roster = control.roster_snapshot();
+            Ok(public::Payload::Incidents(public::ObservationRoster {
+                cycle_token: roster.cycle_token,
+                observed_at_unix_millis: roster.observed_at_unix_millis,
+                freshness: match roster.freshness {
+                    crate::ipc::RosterFreshness::Current => public::ObservationFreshness::Current,
+                    crate::ipc::RosterFreshness::ScanInProgress => {
+                        public::ObservationFreshness::ScanInProgress
+                    }
+                    crate::ipc::RosterFreshness::StaleAfterFailure => {
+                        public::ObservationFreshness::StaleAfterFailure
+                    }
+                    crate::ipc::RosterFreshness::NeverObserved => {
+                        public::ObservationFreshness::NeverObserved
+                    }
+                },
+                items: roster
+                    .reports
+                    .into_iter()
+                    .map(project_current_incident)
+                    .collect(),
+            }))
+        }
+        public::Command::MutationStatus { context } => {
+            validate_mutation_context(&context)?;
+            let status = match control.mutation_lookup(&context)? {
+                crate::MutationLookup::Committed(receipt) => {
+                    public::MutationStatus::Committed { receipt }
+                }
+                crate::MutationLookup::NotFound => public::MutationStatus::NotFound { context },
+                crate::MutationLookup::AuthorityLost => {
+                    public::MutationStatus::AuthorityLost { context }
+                }
+            };
+            Ok(public::Payload::MutationStatus(status))
+        }
+        public::Command::Pause {
+            context,
+            duration_millis,
+        } => {
+            validate_mutation_context(&context)?;
+            if duration_millis == 0 || duration_millis > MAX_PUBLIC_PAUSE_MILLIS {
+                return Err(ControlError::InvalidArgument(format!(
+                    "pause duration must be between 1 and {MAX_PUBLIC_PAUSE_MILLIS} milliseconds"
+                )));
+            }
+            commit_mutation(
+                control,
+                context,
+                crate::OrdinaryMutation::Pause { duration_millis },
+                now_unix_millis,
+            )
+        }
+        public::Command::Resume { context } => {
+            validate_mutation_context(&context)?;
+            commit_mutation(
+                control,
+                context,
+                crate::OrdinaryMutation::Resume,
+                now_unix_millis,
+            )
+        }
+        public::Command::RetryFailedCleanup {
+            context,
+            incident_id,
+        } => {
+            validate_mutation_context(&context)?;
+            validate_incident_id(&incident_id)?;
+            commit_mutation(
+                control,
+                context,
+                crate::OrdinaryMutation::RetryFailedCleanup { incident_id },
+                now_unix_millis,
+            )
+        }
+        public::Command::ProtectIncident {
+            context,
+            incident_id,
+        } => {
+            validate_mutation_context(&context)?;
+            validate_incident_id(&incident_id)?;
+            commit_mutation(
+                control,
+                context,
+                crate::OrdinaryMutation::ProtectIncident { incident_id },
+                now_unix_millis,
+            )
+        }
+        public::Command::UnprotectIncident {
+            context,
+            incident_id,
+        } => {
+            validate_mutation_context(&context)?;
+            validate_incident_id(&incident_id)?;
+            commit_mutation(
+                control,
+                context,
+                crate::OrdinaryMutation::UnprotectIncident { incident_id },
+                now_unix_millis,
+            )
+        }
+        public::Command::ExportDiagnostics { incident_id } => project_payload(
+            control,
+            control.handle_at(
+                IpcCommand::ExportDiagnostics { incident_id },
+                now_unix_millis,
+            )?,
+        ),
+    }
+}
+
+fn commit_mutation(
+    control: &ControlPlane,
+    context: public::MutationContext,
+    mutation: crate::OrdinaryMutation,
+    now_unix_millis: u64,
+) -> Result<public::Payload, ControlError> {
+    let commit = control.commit_public_mutation(&context, &mutation, now_unix_millis)?;
+    Ok(public::Payload::MutationCommitted(commit.receipt))
+}
+
+fn validate_mutation_context(context: &public::MutationContext) -> Result<(), ControlError> {
+    if !public::is_valid_namespace_token(&context.namespace_token) {
+        return Err(ControlError::InvalidArgument(
+            "mutation namespace must use the canonical 32-byte opaque token representation"
+                .to_owned(),
         ));
     }
-    let internal = match command {
-        public::Command::Status => IpcCommand::Status,
-        public::Command::History { limit } => IpcCommand::History { limit },
-        public::Command::Explain { incident_id } => IpcCommand::Explain { incident_id },
-        public::Command::Incidents => unreachable!("incidents roster returned above"),
-        public::Command::Pause { duration_millis } => IpcCommand::Pause { duration_millis },
-        public::Command::Resume => IpcCommand::Resume,
-        public::Command::RetryFailedCleanup { incident_id } => {
-            IpcCommand::RetryFailedCleanup { incident_id }
-        }
-        public::Command::ProtectIncident { incident_id } => {
-            IpcCommand::ProtectIncident { incident_id }
-        }
-        public::Command::UnprotectIncident { incident_id } => {
-            IpcCommand::UnprotectIncident { incident_id }
-        }
-        public::Command::ExportDiagnostics { incident_id } => {
-            IpcCommand::ExportDiagnostics { incident_id }
-        }
-    };
-    let payload = control.handle_at(internal, now_unix_millis)?;
-    project_payload(control, payload)
+    if !public::is_valid_mutation_id(&context.mutation_id) {
+        return Err(ControlError::InvalidArgument(
+            "mutation ID must use canonical 36-byte UUID representation".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_incident_id(incident_id: &str) -> Result<(), ControlError> {
+    if incident_id.is_empty() || incident_id.len() > 128 {
+        Err(ControlError::InvalidArgument(
+            "incident ID must contain 1 to 128 bytes".to_owned(),
+        ))
+    } else {
+        Ok(())
+    }
 }
 
 fn project_payload(
@@ -54,44 +181,43 @@ fn project_payload(
     payload: IpcPayload,
 ) -> Result<public::Payload, ControlError> {
     Ok(match payload {
-        IpcPayload::Status(status) => public::Payload::Status(project_status(status)),
+        IpcPayload::Status(status) => public::Payload::Status(project_status(control, status)?),
         IpcPayload::History(events) => {
             public::Payload::History(events.into_iter().map(project_history_event).collect())
         }
         IpcPayload::Incident(detail) => {
             public::Payload::Incident(project_incident(control, detail)?)
         }
-        IpcPayload::Pause { until_unix_millis } => public::Payload::Pause { until_unix_millis },
-        IpcPayload::Resumed => public::Payload::Resumed,
-        IpcPayload::RetryScheduled { incident_id } => {
-            public::Payload::RetryScheduled { incident_id }
-        }
-        IpcPayload::IncidentProtected { protection } => public::Payload::IncidentProtected {
-            protection: project_protection(protection),
-        },
-        IpcPayload::IncidentUnprotected { incident_id } => {
-            public::Payload::IncidentUnprotected { incident_id }
+        IpcPayload::Pause { .. }
+        | IpcPayload::Resumed
+        | IpcPayload::RetryScheduled { .. }
+        | IpcPayload::IncidentProtected { .. }
+        | IpcPayload::IncidentUnprotected { .. } => {
+            return Err(ControlError::Unavailable(
+                "public mutations require schema-v3 durable receipts".to_owned(),
+            ));
         }
         IpcPayload::Diagnostics(bundle) => {
             let incident = project_incident(control, bundle.incident)?;
             public::Payload::Diagnostics(public::DiagnosticsBundle {
-                document_schema_version: 2,
+                document_schema_version: public::SCHEMA_VERSION,
                 generated_at_unix_millis: bundle.generated_at_unix_millis,
-                status: project_status(bundle.status),
+                status: project_status(control, bundle.status)?,
                 incident,
             })
         }
         IpcPayload::Lifecycle(_) => {
             return Err(ControlError::Unavailable(
-                "service lifecycle responses are not part of public IPC v2".to_owned(),
+                "service lifecycle responses are not part of public IPC v3".to_owned(),
             ));
         }
     })
 }
 
-fn project_status(status: DaemonStatus) -> public::PublicStatus {
-    let draining = status.draining || status.startup_state == StartupState::Draining;
-    let paused = status.paused_until_unix_millis.is_some();
+fn project_status(
+    control: &ControlPlane,
+    status: DaemonStatus,
+) -> Result<public::PublicStatus, ControlError> {
     let blocked_cleanup_count = status.attention.blocked_cleanup_count;
     let effective_mode = project_mode(status.effective_mode());
     let readiness = match status.startup_state {
@@ -109,35 +235,22 @@ fn project_status(status: DaemonStatus) -> public::PublicStatus {
         | StartupState::ReadyEnforce => public::Readiness::Starting,
     };
     let had_storage_recovery = status.storage_recovery.is_some();
-    let action_while_active = || {
-        if draining {
-            public::Capability::unavailable("action.daemon_draining")
-        } else {
-            public::Capability::available()
-        }
-    };
-    let resume = if draining {
-        public::Capability::unavailable("action.daemon_draining")
-    } else if paused {
-        public::Capability::available()
-    } else {
-        public::Capability::unavailable("action.not_paused")
-    };
-    let retry = if draining {
-        public::Capability::unavailable("action.daemon_draining")
-    } else if blocked_cleanup_count > 0 {
-        public::Capability::available()
-    } else {
-        public::Capability::unavailable("action.no_blocked_cleanup")
-    };
+    let pause = project_mutation_capability(
+        control,
+        &crate::OrdinaryMutation::Pause { duration_millis: 1 },
+    )?;
+    let resume = project_mutation_capability(control, &crate::OrdinaryMutation::Resume)?;
     let attention_items = status
         .attention
         .items
         .into_iter()
         .map(|item| {
-            let residue = item.reason_id.starts_with("cleanup.artifact_")
-                && item.reason_id != "cleanup.artifact_delivery_unknown";
+            let outcome = item.outcome;
+            let residue = outcome
+                .as_ref()
+                .is_some_and(|value| value.overall == OverallOutcome::ClearedWithResidue);
             public::AttentionItem {
+                event_token: item.event_token,
                 kind: if residue {
                     public::AttentionKind::CleanupResidue
                 } else {
@@ -153,7 +266,7 @@ fn project_status(status: DaemonStatus) -> public::PublicStatus {
                 },
                 reason_id: item.reason_id,
                 incident_id: item.incident_id,
-                overall_outcome: residue.then_some(public::OverallOutcome::ClearedWithResidue),
+                overall_outcome: outcome.map(|value| project_overall_outcome(value.overall)),
                 occurred_at_unix_millis: item.occurred_at_unix_millis,
             }
         })
@@ -161,6 +274,7 @@ fn project_status(status: DaemonStatus) -> public::PublicStatus {
     let storage_recovery = status
         .storage_recovery
         .map(|recovery| public::StorageRecovery {
+            recovery_token: recovery.public_token,
             occurred_at_unix_millis: recovery.occurred_at_unix_millis,
             reason_id: match recovery.reason {
                 StorageRecoveryReason::IntegrityCheckFailed => "storage.integrity_recovered",
@@ -169,22 +283,23 @@ fn project_status(status: DaemonStatus) -> public::PublicStatus {
             .to_owned(),
             quarantined_sidecar_count: recovery.quarantined_sidecar_count,
         });
-    let most_recent_reclaim = status.most_recent_reclaim.map(|reclaim| {
-        let outcome = reclaim.outcome.unwrap_or(CleanupOutcome {
-            process: ProcessOutcome::Cleared,
-            artifact: ArtifactOutcome::NotApplicable,
-            overall: OverallOutcome::Cleared,
-            attention_required: false,
-        });
-        public::RecentReclaim {
+    let most_recent_reclaim = status.most_recent_reclaim.and_then(|reclaim| {
+        let outcome = reclaim.outcome?;
+        let event_token = reclaim.event_token?;
+        Some(public::RecentReclaim {
+            event_token,
             incident_id: reclaim.incident_id,
             occurred_at_unix_millis: reclaim.occurred_at_unix_millis,
             process_outcome: project_process_outcome(outcome.process),
             artifact_outcome: project_artifact_outcome(outcome.artifact),
             overall_outcome: project_overall_outcome(outcome.overall),
-        }
+        })
     });
-    public::PublicStatus {
+    let mutation_authority = public::MutationAuthority {
+        namespace_token: control.store().mutation_namespace_token()?,
+        minimum_reconciliation_window_millis: crate::store::MUTATION_RECONCILIATION_WINDOW_MILLIS,
+    };
+    Ok(public::PublicStatus {
         daemon_version: status.daemon_version,
         healthy: status.healthy,
         readiness,
@@ -192,6 +307,8 @@ fn project_status(status: DaemonStatus) -> public::PublicStatus {
         scan_in_progress: status.scan_in_progress,
         cleanup_in_progress: status.cleanup_in_progress,
         paused_until_unix_millis: status.paused_until_unix_millis,
+        cycle_started_at_unix_millis: status.cycle_started_at_unix_millis,
+        latest_observation_at_unix_millis: status.latest_observation_at_unix_millis,
         last_scan_at_unix_millis: status.last_scan_at_unix_millis,
         confirmed_incident_count: status.confirmed_incidents,
         ambiguous_incident_count: status.ambiguous_incidents,
@@ -220,60 +337,66 @@ fn project_status(status: DaemonStatus) -> public::PublicStatus {
                 .map(project_protection)
                 .collect(),
         },
-        capabilities: public::Capabilities {
-            pause: action_while_active(),
-            resume,
-            retry_failed_cleanup: retry,
-            protect_incident: action_while_active(),
-            unprotect_incident: action_while_active(),
-            export_diagnostics: public::Capability::available(),
+        capabilities: public::GlobalCapabilities { pause, resume },
+        mutation_authority,
+    })
+}
+
+fn project_mutation_capability(
+    control: &ControlPlane,
+    mutation: &crate::OrdinaryMutation,
+) -> Result<public::Capability, ControlError> {
+    Ok(
+        match control.ordinary_mutation_unavailable_reason(mutation)? {
+            Some(reason_id) => public::Capability::unavailable(reason_id),
+            None => public::Capability::available(),
         },
-    }
+    )
 }
 
 fn project_incident(
     control: &ControlPlane,
     detail: crate::IncidentDetail,
 ) -> Result<public::IncidentDetail, ControlError> {
-    let blocked = control
-        .store()
-        .cleanup_blocked(&detail.incident_id)
-        .map_err(|error| ControlError::Store(error.to_string()))?;
-    let protected = control
-        .store()
-        .protection_for_incident(&detail.incident_id)
-        .map_err(|error| ControlError::Store(error.to_string()))?
-        .is_some();
+    let incident_id = detail.incident_id;
+    let retry_failed_cleanup = project_mutation_capability(
+        control,
+        &crate::OrdinaryMutation::RetryFailedCleanup {
+            incident_id: incident_id.clone(),
+        },
+    )?;
+    let protect_incident = project_mutation_capability(
+        control,
+        &crate::OrdinaryMutation::ProtectIncident {
+            incident_id: incident_id.clone(),
+        },
+    )?;
+    let unprotect_incident = project_mutation_capability(
+        control,
+        &crate::OrdinaryMutation::UnprotectIncident {
+            incident_id: incident_id.clone(),
+        },
+    )?;
     Ok(public::IncidentDetail {
-        incident_id: detail.incident_id,
+        incident_id,
         events: detail
             .events
             .into_iter()
             .map(project_history_event)
             .collect(),
         capabilities: public::IncidentCapabilities {
-            retry_failed_cleanup: if blocked {
-                public::Capability::available()
-            } else {
-                public::Capability::unavailable("action.no_blocked_cleanup")
-            },
-            protect_incident: if protected {
-                public::Capability::unavailable("action.already_protected")
-            } else {
-                public::Capability::available()
-            },
-            unprotect_incident: if protected {
-                public::Capability::available()
-            } else {
-                public::Capability::unavailable("action.not_protected")
-            },
+            retry_failed_cleanup,
+            protect_incident,
+            unprotect_incident,
             export_diagnostics: public::Capability::available(),
         },
     })
 }
 
 fn project_history_event(event: HistoryEvent) -> public::HistoryEvent {
+    let event_token = event.event_token;
     public::HistoryEvent {
+        event_token: event_token.clone(),
         incident_id: event.incident_id,
         occurred_at_unix_millis: event.occurred_at_unix_millis,
         state: project_incident_state(event.state),
@@ -294,7 +417,9 @@ fn project_history_event(event: HistoryEvent) -> public::HistoryEvent {
                         process_actions: receipt
                             .actions
                             .into_iter()
-                            .map(|action| public::ProcessAction {
+                            .enumerate()
+                            .map(|(index, action)| public::ProcessAction {
+                                action_token: format!("{event_token}:p:{index}"),
                                 stage: project_cleanup_stage(action.stage),
                                 signal: project_cleanup_signal(action.signal),
                                 disposition: project_signal_disposition(action.disposition),
@@ -303,7 +428,9 @@ fn project_history_event(event: HistoryEvent) -> public::HistoryEvent {
                         artifact_actions: receipt
                             .artifact_actions
                             .into_iter()
-                            .map(|action| public::ArtifactAction {
+                            .enumerate()
+                            .map(|(index, action)| public::ArtifactAction {
+                                action_token: format!("{event_token}:a:{index}"),
                                 kind: project_artifact_kind(action.kind),
                                 disposition: project_artifact_disposition(action.disposition),
                             })

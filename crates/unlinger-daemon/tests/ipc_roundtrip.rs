@@ -774,7 +774,7 @@ fn ordinary_schema_v1_status_and_not_found_envelopes_have_stable_json() {
 }
 
 #[test]
-fn frontend_schema_v2_status_is_public_and_has_explicit_capabilities() {
+fn frontend_schema_v3_status_is_public_and_has_explicit_capabilities() {
     let temp = TempState::new();
     let database = temp.directory.join("history.sqlite3");
     let socket = temp.directory.join("unlingerd.sock");
@@ -789,16 +789,20 @@ fn frontend_schema_v2_status_is_public_and_has_explicit_capabilities() {
     status.last_scan_at_unix_millis = Some(1_234);
     let control = ControlPlane::new(HistoryStore::open(&database).expect("open store"), status)
         .expect("restore control state");
+    let namespace_token = control
+        .store()
+        .mutation_namespace_token()
+        .expect("mutation namespace");
     let _server = IpcServer::start(&socket, control).expect("start IPC server");
 
     let response = raw_request(
         &socket,
-        r#"{"schema_version":2,"request_id":17,"command":{"command":"status"}}"#,
+        r#"{"schema_version":3,"request_id":17,"command":{"command":"status"}}"#,
     );
     assert_eq!(
         response,
         serde_json::json!({
-            "schema_version": 2,
+            "schema_version": 3,
             "request_id": 17,
             "ok": true,
             "payload": {
@@ -822,14 +826,11 @@ fn frontend_schema_v2_status_is_public_and_has_explicit_capabilities() {
                         "resume": {
                             "available": false,
                             "unavailable_reason_id": "action.not_paused"
-                        },
-                        "retry_failed_cleanup": {
-                            "available": false,
-                            "unavailable_reason_id": "action.no_blocked_cleanup"
-                        },
-                        "protect_incident": {"available": true},
-                        "unprotect_incident": {"available": true},
-                        "export_diagnostics": {"available": true}
+                        }
+                    },
+                    "mutation_authority": {
+                        "namespace_token": namespace_token,
+                        "minimum_reconciliation_window_millis": 1209600000_u64
                     }
                 }
             }
@@ -846,12 +847,52 @@ fn frontend_schema_v2_status_is_public_and_has_explicit_capabilities() {
         "database_schema_version",
         "last_error",
     ] {
-        assert!(!encoded.contains(forbidden), "v2 status leaked {forbidden}");
+        assert!(!encoded.contains(forbidden), "v3 status leaked {forbidden}");
     }
 }
 
 #[test]
-fn frontend_schema_v2_history_strips_process_and_storage_identities() {
+fn frontend_schema_v3_lifecycle_capabilities_match_authoritative_policy() {
+    for (startup_state, readiness, reason_id) in [
+        (StartupState::Draining, "draining", "action.daemon_draining"),
+        (StartupState::Failed, "failed", "action.daemon_failed"),
+    ] {
+        let temp = TempState::new();
+        let database = temp.directory.join("history.sqlite3");
+        let socket = temp.directory.join("unlingerd.sock");
+        let mut status = DaemonStatus::new(DaemonMode::ReportOnly, 42);
+        status.healthy = startup_state != StartupState::Failed;
+        status.ready = false;
+        status.startup_state = startup_state;
+        let control = ControlPlane::new(HistoryStore::open(&database).expect("open store"), status)
+            .expect("restore control state");
+        let _server = IpcServer::start(&socket, control).expect("start IPC server");
+
+        let response = raw_request(
+            &socket,
+            r#"{"schema_version":3,"request_id":18,"command":{"command":"status"}}"#,
+        );
+        assert_eq!(
+            response.pointer("/payload/data/readiness"),
+            Some(&serde_json::json!(readiness))
+        );
+        for action in ["pause", "resume"] {
+            assert_eq!(
+                response.pointer(&format!("/payload/data/capabilities/{action}/available")),
+                Some(&serde_json::json!(false))
+            );
+            assert_eq!(
+                response.pointer(&format!(
+                    "/payload/data/capabilities/{action}/unavailable_reason_id"
+                )),
+                Some(&serde_json::json!(reason_id))
+            );
+        }
+    }
+}
+
+#[test]
+fn frontend_schema_v3_history_strips_process_and_storage_identities() {
     let temp = TempState::new();
     let database = temp.directory.join("history.sqlite3");
     let socket = temp.directory.join("unlingerd.sock");
@@ -870,9 +911,9 @@ fn frontend_schema_v2_history_strips_process_and_storage_identities() {
 
     let response = raw_request(
         &socket,
-        r#"{"schema_version":2,"request_id":18,"command":{"command":"history","limit":20}}"#,
+        r#"{"schema_version":3,"request_id":18,"command":{"command":"history","limit":20}}"#,
     );
-    assert_eq!(response["schema_version"], 2);
+    assert_eq!(response["schema_version"], 3);
     assert_eq!(response["ok"], true);
     assert_eq!(response["payload"]["type"], "history");
     let encoded = response.to_string();
@@ -893,40 +934,54 @@ fn frontend_schema_v2_history_strips_process_and_storage_identities() {
     ] {
         assert!(
             !encoded.contains(forbidden),
-            "v2 history leaked {forbidden}"
+            "v3 history leaked {forbidden}"
         );
     }
 }
 
 #[test]
-fn frontend_schema_v2_incidents_roster_is_public_and_redacted() {
+fn frontend_schema_v3_observation_roster_is_public_redacted_and_fresh() {
     let temp = TempState::new();
     let database = temp.directory.join("history.sqlite3");
     let socket = temp.directory.join("unlingerd.sock");
     let status = DaemonStatus::new(DaemonMode::ReportOnly, 42);
     let control = ControlPlane::new(HistoryStore::open(&database).expect("open store"), status)
         .expect("restore control state");
-    control.publish_roster(vec![confirmed_report(
-        "inc-public-roster",
-        "tracking-private-roster",
-    )]);
+    let cycle_token = control
+        .begin_observation_cycle(100)
+        .expect("begin observation cycle");
+    control
+        .publish_roster(
+            &cycle_token,
+            101,
+            vec![confirmed_report(
+                "inc-public-roster",
+                "tracking-private-roster",
+            )],
+        )
+        .expect("publish observation roster");
+    control.finish_observation_cycle(&cycle_token, true);
     let _server = IpcServer::start(&socket, control).expect("start IPC server");
 
     let response = raw_request(
         &socket,
-        r#"{"schema_version":2,"request_id":31,"command":{"command":"incidents"}}"#,
+        r#"{"schema_version":3,"request_id":31,"command":{"command":"incidents"}}"#,
     );
     assert_eq!(
         response,
         serde_json::json!({
-            "schema_version": 2,
+            "schema_version": 3,
             "request_id": 31,
             "ok": true,
             "payload": {
                 "type": "incidents",
-                "data": [{
-                    "incident_id": "inc-public-roster",
-                    "observation": {
+                "data": {
+                    "cycle_token": cycle_token,
+                    "observed_at_unix_millis": 101,
+                    "freshness": "current",
+                    "items": [{
+                        "incident_id": "inc-public-roster",
+                        "observation": {
                         "family": "agent-browser",
                         "family_version": "0.1.0",
                         "state": "CONFIRMED",
@@ -944,8 +999,9 @@ fn frontend_schema_v2_incidents_roster_is_public_and_redacted() {
                             "process_identity_unchanged": true,
                             "no_protection_rule": true
                         }
-                    }
-                }]
+                        }
+                    }]
+                }
             }
         })
     );
@@ -959,12 +1015,12 @@ fn frontend_schema_v2_incidents_roster_is_public_and_redacted() {
         "targets",
         "pid",
     ] {
-        assert!(!encoded.contains(forbidden), "v2 roster leaked {forbidden}");
+        assert!(!encoded.contains(forbidden), "v3 roster leaked {forbidden}");
     }
 }
 
 #[test]
-fn frontend_schema_v2_incidents_roster_is_bounded() {
+fn frontend_schema_v3_observation_roster_is_bounded() {
     let temp = TempState::new();
     let database = temp.directory.join("history.sqlite3");
     let socket = temp.directory.join("unlingerd.sock");
@@ -974,21 +1030,50 @@ fn frontend_schema_v2_incidents_roster_is_bounded() {
     let reports = (0..40)
         .map(|index| confirmed_report(&format!("inc-roster-{index}"), &format!("tracking-{index}")))
         .collect::<Vec<_>>();
-    control.publish_roster(reports);
+    let cycle_token = control
+        .begin_observation_cycle(100)
+        .expect("begin observation cycle");
+    control
+        .publish_roster(&cycle_token, 101, reports)
+        .expect("publish observation roster");
+    control.finish_observation_cycle(&cycle_token, true);
     let _server = IpcServer::start(&socket, control).expect("start IPC server");
 
     let response = raw_request(
         &socket,
-        r#"{"schema_version":2,"request_id":32,"command":{"command":"incidents"}}"#,
+        r#"{"schema_version":3,"request_id":32,"command":{"command":"incidents"}}"#,
     );
-    let data = response["payload"]["data"]
+    let data = response["payload"]["data"]["items"]
         .as_array()
         .expect("roster array");
     assert_eq!(data.len(), 32, "roster must stay bounded");
 }
 
 #[test]
-fn frontend_schema_v2_cannot_invoke_service_lifecycle_commands() {
+fn frontend_schema_v3_roster_never_observed_has_no_fake_token_or_timestamp() {
+    let temp = TempState::new();
+    let database = temp.directory.join("history.sqlite3");
+    let socket = temp.directory.join("unlingerd.sock");
+    let control = ControlPlane::new(
+        HistoryStore::open(&database).expect("open store"),
+        DaemonStatus::new(DaemonMode::ReportOnly, 42),
+    )
+    .expect("restore control state");
+    let _server = IpcServer::start(&socket, control).expect("start IPC server");
+
+    let response = raw_request(
+        &socket,
+        r#"{"schema_version":3,"request_id":33,"command":{"command":"incidents"}}"#,
+    );
+    let data = &response["payload"]["data"];
+    assert_eq!(data["freshness"], "never_observed");
+    assert_eq!(data["items"], serde_json::json!([]));
+    assert!(data.get("cycle_token").is_none());
+    assert!(data.get("observed_at_unix_millis").is_none());
+}
+
+#[test]
+fn frontend_schema_v3_cannot_invoke_service_lifecycle_commands() {
     let temp = TempState::new();
     let database = temp.directory.join("history.sqlite3");
     let socket = temp.directory.join("unlingerd.sock");
@@ -1001,16 +1086,16 @@ fn frontend_schema_v2_cannot_invoke_service_lifecycle_commands() {
 
     let response = raw_request(
         &socket,
-        r#"{"schema_version":2,"request_id":19,"command":{"command":"arm","activation_generation":9,"instance_id":"private"}}"#,
+        r#"{"schema_version":3,"request_id":19,"command":{"command":"arm","activation_generation":9,"instance_id":"private"}}"#,
     );
-    assert_eq!(response["schema_version"], 2);
+    assert_eq!(response["schema_version"], 3);
     assert_eq!(response["request_id"], 19);
     assert_eq!(response["ok"], false);
     assert_eq!(response["error"]["code"], "invalid_json");
 }
 
 #[test]
-fn frontend_schema_v2_errors_do_not_echo_private_request_values() {
+fn superseded_frontend_schema_v2_is_rejected_before_dispatch() {
     let temp = TempState::new();
     let database = temp.directory.join("history.sqlite3");
     let socket = temp.directory.join("unlingerd.sock");
@@ -1020,26 +1105,167 @@ fn frontend_schema_v2_errors_do_not_echo_private_request_values() {
     )
     .expect("restore control state");
     let _server = IpcServer::start(&socket, control).expect("start IPC server");
+
+    let response = raw_request(
+        &socket,
+        r#"{"schema_version":2,"request_id":34,"command":{"command":"pause","duration_millis":3600000}}"#,
+    );
+    assert_eq!(response["schema_version"], 1);
+    assert_eq!(response["request_id"], 34);
+    assert_eq!(response["ok"], false);
+    assert_eq!(response["error"]["code"], "unsupported_schema");
+    assert!(response.get("payload").is_none());
+}
+
+#[test]
+fn frontend_schema_v3_errors_do_not_echo_private_request_values() {
+    let temp = TempState::new();
+    let database = temp.directory.join("history.sqlite3");
+    let socket = temp.directory.join("unlingerd.sock");
+    let control = ControlPlane::new(
+        HistoryStore::open(&database).expect("open store"),
+        DaemonStatus::new(DaemonMode::ReportOnly, std::process::id()),
+    )
+    .expect("restore control state");
+    let namespace_token = control
+        .store()
+        .mutation_namespace_token()
+        .expect("mutation namespace");
+    let _server = IpcServer::start(&socket, control).expect("start IPC server");
     let private_value = "missing-private-correlation";
     let request = serde_json::json!({
-        "schema_version": 2,
+        "schema_version": 3,
         "request_id": 20,
         "command": {
             "command": "retry_failed_cleanup",
+            "context": {
+                "namespace_token": namespace_token,
+                "mutation_id": "11111111-1111-4111-8111-111111111111"
+            },
             "incident_id": private_value
         }
     })
     .to_string();
 
     let response = raw_request(&socket, &request);
-    assert_eq!(response["schema_version"], 2);
+    assert_eq!(response["schema_version"], 3);
     assert_eq!(response["request_id"], 20);
-    assert_eq!(response["error"]["code"], "not_found");
+    assert_eq!(response["ok"], true);
+    assert_eq!(response["payload"]["type"], "mutation_committed");
     assert_eq!(
-        response["error"]["message"],
-        "requested local record was not found"
+        response["payload"]["data"]["outcome"]["outcome"],
+        "rejected"
+    );
+    assert_eq!(
+        response["payload"]["data"]["outcome"]["reason_id"],
+        "action.no_blocked_cleanup"
     );
     assert!(!response.to_string().contains(private_value));
+}
+
+#[test]
+fn frontend_schema_v3_receipt_replay_precedes_failed_lifecycle_policy() {
+    let temp = TempState::new();
+    let database = temp.directory.join("history.sqlite3");
+    let socket = temp.directory.join("unlingerd.sock");
+    let mut status = DaemonStatus::new(DaemonMode::ReportOnly, std::process::id());
+    status.healthy = true;
+    status.ready = true;
+    status.startup_state = StartupState::ReadyReportOnly;
+    let control = ControlPlane::new(HistoryStore::open(&database).expect("open store"), status)
+        .expect("restore control state");
+    let namespace_token = control
+        .store()
+        .mutation_namespace_token()
+        .expect("mutation namespace");
+    let _server = IpcServer::start(&socket, control.clone()).expect("start IPC server");
+    let context = serde_json::json!({
+        "namespace_token": namespace_token,
+        "mutation_id": "99999999-9999-4999-8999-999999999999"
+    });
+    let first = raw_request(
+        &socket,
+        &serde_json::json!({
+            "schema_version": 3,
+            "request_id": 40,
+            "command": {
+                "command": "pause",
+                "context": context,
+                "duration_millis": 500
+            }
+        })
+        .to_string(),
+    );
+    assert_eq!(first["ok"], true);
+    assert_eq!(first["payload"]["data"]["outcome"]["outcome"], "applied");
+    let stored_receipt = first["payload"]["data"].clone();
+
+    control
+        .fail_closed(2_000, "test lifecycle failure")
+        .expect("fail lifecycle");
+    let replay = raw_request(
+        &socket,
+        &serde_json::json!({
+            "schema_version": 3,
+            "request_id": 41,
+            "command": {
+                "command": "pause",
+                "context": context,
+                "duration_millis": 500
+            }
+        })
+        .to_string(),
+    );
+    assert_eq!(replay["ok"], true);
+    assert_eq!(replay["payload"]["data"], stored_receipt);
+
+    let rejected_context = serde_json::json!({
+        "namespace_token": namespace_token,
+        "mutation_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+    });
+    let rejected = raw_request(
+        &socket,
+        &serde_json::json!({
+            "schema_version": 3,
+            "request_id": 42,
+            "command": {
+                "command": "resume",
+                "context": rejected_context
+            }
+        })
+        .to_string(),
+    );
+    assert_eq!(rejected["ok"], true);
+    assert_eq!(
+        rejected["payload"]["data"]["outcome"],
+        serde_json::json!({
+            "outcome": "rejected",
+            "reason_id": "action.daemon_failed"
+        })
+    );
+    assert_eq!(
+        rejected["payload"]["data"]["policy_revision_after"],
+        stored_receipt["policy_revision_after"]
+    );
+
+    let status_response = raw_request(
+        &socket,
+        &serde_json::json!({
+            "schema_version": 3,
+            "request_id": 43,
+            "command": {
+                "command": "mutation_status",
+                "context": context
+            }
+        })
+        .to_string(),
+    );
+    assert_eq!(status_response["ok"], true);
+    assert_eq!(status_response["payload"]["data"]["status"], "committed");
+    assert_eq!(
+        status_response["payload"]["data"]["receipt"],
+        stored_receipt
+    );
 }
 
 #[test]

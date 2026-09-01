@@ -1,7 +1,8 @@
 use crate::{
     CleanupAttemptHandle, HistoryEvent, HistoryStore, IncidentDetail, ManagedLifecycle,
-    ManagedStartupPhase, MostRecentReclaim, ProtectedIncidentSummary, ProtectionProjection,
-    StorageRecoveryOccurrence, StorageRecoveryReason, StoreAttentionProjection, StoreError,
+    ManagedStartupPhase, MostRecentReclaim, MutationCommit, MutationLookup, OrdinaryMutation,
+    ProtectedIncidentSummary, ProtectionProjection, StorageRecoveryOccurrence,
+    StorageRecoveryReason, StoreAttentionProjection, StoreError,
 };
 use serde::{Deserialize, Serialize};
 use std::error::Error;
@@ -14,6 +15,9 @@ use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use unlinger_core::{CleanupOutcome, IncidentReport, SignalDisposition};
+use unlinger_protocol::{MutationContext, MutationOutcome};
+
+use crate::public_action_policy::{RuntimePolicyFacts, evaluate_action};
 
 #[cfg(unix)]
 use std::os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt};
@@ -39,6 +43,7 @@ const EVENT_SOURCE_DEGRADED_MESSAGE: &str =
 static NEXT_REQUEST_ID: AtomicU64 = AtomicU64::new(1);
 static NEXT_INSTANCE_ID: AtomicU64 = AtomicU64::new(1);
 static NEXT_ENFORCEMENT_EPOCH: AtomicU64 = AtomicU64::new(1);
+static NEXT_CYCLE_TOKEN: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -64,6 +69,8 @@ pub enum StartupState {
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct RecentReclaim {
+    #[serde(default, skip_serializing)]
+    pub event_token: Option<String>,
     pub incident_id: String,
     pub occurred_at_unix_millis: u64,
     pub state: unlinger_core::IncidentState,
@@ -74,6 +81,7 @@ pub struct RecentReclaim {
 impl From<MostRecentReclaim> for RecentReclaim {
     fn from(reclaim: MostRecentReclaim) -> Self {
         Self {
+            event_token: Some(reclaim.event_token),
             incident_id: reclaim.incident_id,
             occurred_at_unix_millis: reclaim.occurred_at_unix_millis,
             state: reclaim.state,
@@ -94,6 +102,10 @@ pub enum AttentionKind {
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct AttentionItem {
+    #[serde(default, skip_serializing)]
+    pub event_token: Option<String>,
+    #[serde(default, skip_serializing)]
+    pub outcome: Option<CleanupOutcome>,
     pub kind: AttentionKind,
     pub reason_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -113,6 +125,8 @@ pub struct AttentionProjection {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct StorageRecoveryStatus {
     pub recovery_id: String,
+    #[serde(default, skip_serializing)]
+    pub public_token: String,
     pub occurred_at_unix_millis: u64,
     pub reason: StorageRecoveryReason,
     pub quarantined_sidecar_count: usize,
@@ -122,6 +136,7 @@ impl From<&StorageRecoveryOccurrence> for StorageRecoveryStatus {
     fn from(recovery: &StorageRecoveryOccurrence) -> Self {
         Self {
             recovery_id: recovery.recovery_id.clone(),
+            public_token: recovery.public_token.clone(),
             occurred_at_unix_millis: recovery.occurred_at_unix_millis,
             reason: recovery.reason,
             quarantined_sidecar_count: recovery.quarantined_sidecar_count,
@@ -180,6 +195,10 @@ pub struct DaemonStatus {
     pub cleanup_in_progress: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub paused_until_unix_millis: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cycle_started_at_unix_millis: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub latest_observation_at_unix_millis: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_scan_at_unix_millis: Option<u64>,
     pub confirmed_incidents: usize,
@@ -222,6 +241,8 @@ impl DaemonStatus {
             scan_in_progress: false,
             cleanup_in_progress: false,
             paused_until_unix_millis: None,
+            cycle_started_at_unix_millis: None,
+            latest_observation_at_unix_millis: None,
             last_scan_at_unix_millis: None,
             confirmed_incidents: 0,
             ambiguous_incidents: 0,
@@ -319,7 +340,9 @@ pub enum IpcPayload {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ControlError {
     InvalidArgument(String),
+    Conflict(String),
     NotFound(String),
+    AuthorityLost(String),
     Store(String),
     Unavailable(String),
 }
@@ -328,7 +351,9 @@ impl ControlError {
     fn code(&self) -> &'static str {
         match self {
             Self::InvalidArgument(_) => "invalid_argument",
+            Self::Conflict(_) => "conflict",
             Self::NotFound(_) => "not_found",
+            Self::AuthorityLost(_) => "authority_lost",
             Self::Store(_) => "store_error",
             Self::Unavailable(_) => "unavailable",
         }
@@ -337,7 +362,9 @@ impl ControlError {
     fn message(&self) -> &str {
         match self {
             Self::InvalidArgument(message)
+            | Self::Conflict(message)
             | Self::NotFound(message)
+            | Self::AuthorityLost(message)
             | Self::Store(message)
             | Self::Unavailable(message) => message,
         }
@@ -362,12 +389,48 @@ impl From<StoreError> for ControlError {
 pub struct ControlPlane {
     store: HistoryStore,
     status: Arc<Mutex<DaemonStatus>>,
-    /// Latest cycle's incident reports, published by the engine after owner
-    /// protection is applied. In-memory only, never serialized to history;
-    /// the public projection in `public_ipc` enforces redaction on the way
-    /// out. Feeds the read-only v2 `incidents` roster.
-    roster: Arc<Mutex<Vec<IncidentReport>>>,
+    /// Latest observation snapshot after owner protection is applied. The
+    /// active-cycle metadata keeps retained data honest while a replacement is
+    /// being assembled or a cycle fails before publication.
+    roster: Arc<Mutex<RosterState>>,
     cleanup_policy_revision: Arc<AtomicU64>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum RosterFreshness {
+    Current,
+    ScanInProgress,
+    StaleAfterFailure,
+    NeverObserved,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct RosterSnapshot {
+    pub cycle_token: Option<String>,
+    pub observed_at_unix_millis: Option<u64>,
+    pub freshness: RosterFreshness,
+    pub reports: Vec<IncidentReport>,
+}
+
+#[derive(Debug)]
+struct RosterState {
+    cycle_token: Option<String>,
+    observed_at_unix_millis: Option<u64>,
+    freshness: RosterFreshness,
+    reports: Vec<IncidentReport>,
+    active_cycle_token: Option<String>,
+}
+
+impl Default for RosterState {
+    fn default() -> Self {
+        Self {
+            cycle_token: None,
+            observed_at_unix_millis: None,
+            freshness: RosterFreshness::NeverObserved,
+            reports: Vec::new(),
+            active_cycle_token: None,
+        }
+    }
 }
 
 struct RestoredControlState {
@@ -375,6 +438,8 @@ struct RestoredControlState {
     most_recent_reclaim: Option<MostRecentReclaim>,
     attention: StoreAttentionProjection,
     protection: ProtectionProjection,
+    storage_recovery: Option<StorageRecoveryOccurrence>,
+    cleanup_policy_revision: u64,
 }
 
 impl RestoredControlState {
@@ -392,6 +457,12 @@ impl RestoredControlState {
             protection: store
                 .protection_projection(MAX_STATUS_ATTENTION_ITEMS)
                 .map_err(|error| restore_state_error("protection projection", error))?,
+            storage_recovery: store
+                .latest_storage_recovery()
+                .map_err(|error| restore_state_error("storage recovery", error))?,
+            cleanup_policy_revision: store
+                .cleanup_policy_revision()
+                .map_err(|error| restore_state_error("cleanup policy revision", error))?,
         })
     }
 }
@@ -408,7 +479,10 @@ impl ControlPlane {
         restored: RestoredControlState,
     ) -> Self {
         status.database_schema_version = HistoryStore::schema_version();
-        status.storage_recovery = store.startup_recovery().map(StorageRecoveryStatus::from);
+        status.storage_recovery = restored
+            .storage_recovery
+            .as_ref()
+            .map(StorageRecoveryStatus::from);
         status.paused_until_unix_millis = restored.pause_until_unix_millis;
         status.most_recent_reclaim = restored.most_recent_reclaim.map(RecentReclaim::from);
         apply_attention_projection(&mut status, restored.attention);
@@ -416,29 +490,192 @@ impl ControlPlane {
         Self {
             store,
             status: Arc::new(Mutex::new(status)),
-            roster: Arc::new(Mutex::new(Vec::new())),
-            cleanup_policy_revision: Arc::new(AtomicU64::new(1)),
+            roster: Arc::new(Mutex::new(RosterState::default())),
+            cleanup_policy_revision: Arc::new(AtomicU64::new(restored.cleanup_policy_revision)),
         }
     }
 
-    /// Replaces the current-incident roster with the latest cycle's reports.
-    /// Bounded like the attention projection; the roster is observability,
-    /// never a work queue.
-    pub fn publish_roster(&self, reports: Vec<IncidentReport>) {
+    pub fn begin_observation_cycle(
+        &self,
+        started_at_unix_millis: u64,
+    ) -> Result<String, ControlError> {
+        let cycle_token = fresh_cycle_token(started_at_unix_millis);
         let mut roster = match self.roster.lock() {
             Ok(guard) => guard,
             Err(poisoned) => poisoned.into_inner(),
         };
-        roster.clear();
-        roster.extend(reports.into_iter().take(MAX_ROSTER_ITEMS));
+        roster.active_cycle_token = Some(cycle_token.clone());
+        roster.freshness = RosterFreshness::ScanInProgress;
+        drop(roster);
+        self.update_status(|status| {
+            status.scan_in_progress = true;
+            status.cycle_started_at_unix_millis = Some(started_at_unix_millis);
+            if status.startup_state != StartupState::Failed {
+                status.last_error = None;
+            }
+        })?;
+        Ok(cycle_token)
     }
 
-    /// Returns a snapshot of the latest published roster.
-    pub fn roster_snapshot(&self) -> Vec<IncidentReport> {
-        match self.roster.lock() {
-            Ok(guard) => guard.clone(),
-            Err(poisoned) => poisoned.into_inner().clone(),
+    /// Replaces the observation roster for the active cycle. The cycle remains
+    /// `scan_in_progress` until outer reconciliation completes.
+    pub fn publish_roster(
+        &self,
+        cycle_token: &str,
+        observed_at_unix_millis: u64,
+        reports: Vec<IncidentReport>,
+    ) -> Result<(), ControlError> {
+        let mut roster = match self.roster.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        if roster.active_cycle_token.as_deref() != Some(cycle_token) {
+            return Err(ControlError::Unavailable(
+                "observation cycle token is no longer active".to_owned(),
+            ));
         }
+        roster.cycle_token = Some(cycle_token.to_owned());
+        roster.observed_at_unix_millis = Some(observed_at_unix_millis);
+        roster.reports.clear();
+        roster
+            .reports
+            .extend(reports.into_iter().take(MAX_ROSTER_ITEMS));
+        drop(roster);
+        self.update_status(|status| {
+            status.latest_observation_at_unix_millis = Some(observed_at_unix_millis);
+        })
+    }
+
+    pub fn finish_observation_cycle(&self, cycle_token: &str, succeeded: bool) {
+        let mut roster = match self.roster.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        if roster.active_cycle_token.as_deref() != Some(cycle_token) {
+            return;
+        }
+        let replacement_completed = roster.cycle_token.as_deref() == Some(cycle_token);
+        roster.freshness = if succeeded || replacement_completed {
+            RosterFreshness::Current
+        } else {
+            RosterFreshness::StaleAfterFailure
+        };
+        roster.active_cycle_token = None;
+    }
+
+    /// Returns the latest published observation plus its honest freshness.
+    pub(crate) fn roster_snapshot(&self) -> RosterSnapshot {
+        let roster = match self.roster.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        RosterSnapshot {
+            cycle_token: roster.cycle_token.clone(),
+            observed_at_unix_millis: roster.observed_at_unix_millis,
+            freshness: roster.freshness,
+            reports: roster.reports.clone(),
+        }
+    }
+
+    pub(crate) fn ordinary_mutation_unavailable_reason(
+        &self,
+        mutation: &OrdinaryMutation,
+    ) -> Result<Option<&'static str>, ControlError> {
+        let status = self.lock_status()?;
+        self.ordinary_mutation_unavailable_reason_with_status(&status, mutation)
+    }
+
+    fn ordinary_mutation_unavailable_reason_with_status(
+        &self,
+        status: &DaemonStatus,
+        mutation: &OrdinaryMutation,
+    ) -> Result<Option<&'static str>, ControlError> {
+        let runtime_facts = RuntimePolicyFacts {
+            draining: status.draining || status.startup_state == StartupState::Draining,
+            failed: status.startup_state == StartupState::Failed,
+        };
+        let store_facts = self
+            .store
+            .public_action_store_facts(mutation, current_wall_millis())?;
+        Ok(evaluate_action(runtime_facts, store_facts, mutation).unavailable_reason())
+    }
+
+    pub(crate) fn mutation_lookup(
+        &self,
+        context: &MutationContext,
+    ) -> Result<MutationLookup, ControlError> {
+        // This is the same serialization boundary used by mutation admission
+        // and lifecycle transitions. A status query therefore cannot overtake
+        // an already-admitted mutation and manufacture a transient not_found.
+        let _status = self.lock_status()?;
+        self.store.mutation_lookup(context).map_err(Into::into)
+    }
+
+    pub(crate) fn commit_public_mutation(
+        &self,
+        context: &MutationContext,
+        mutation: &OrdinaryMutation,
+        now_unix_millis: u64,
+    ) -> Result<MutationCommit, ControlError> {
+        let mut status = self.lock_status()?;
+        let runtime_facts = RuntimePolicyFacts {
+            draining: status.draining || status.startup_state == StartupState::Draining,
+            failed: status.startup_state == StartupState::Failed,
+        };
+        let commit = self
+            .store
+            .commit_public_ordinary_mutation(context, mutation, runtime_facts, now_unix_millis)
+            .map_err(map_store_error)?;
+        self.cleanup_policy_revision
+            .store(commit.receipt.policy_revision_after, Ordering::Release);
+        if !commit.state_changed {
+            return Ok(commit);
+        }
+
+        let MutationOutcome::Applied { result } = &commit.receipt.outcome else {
+            return Err(ControlError::Store(
+                "a state-changing mutation receipt lacked an applied result".to_owned(),
+            ));
+        };
+        match result {
+            unlinger_protocol::MutationResult::Paused { until_unix_millis } => {
+                status.paused_until_unix_millis = Some(*until_unix_millis)
+            }
+            unlinger_protocol::MutationResult::Resumed => {
+                status.paused_until_unix_millis = None;
+            }
+            unlinger_protocol::MutationResult::RetryScheduled { incident_id } => {
+                status.attention.items.retain(|item| {
+                    item.incident_id.as_deref() != Some(incident_id.as_str())
+                        || !matches!(
+                            item.kind,
+                            AttentionKind::CleanupFailed | AttentionKind::CleanupRevived
+                        )
+                });
+                status.attention.blocked_cleanup_count =
+                    status.attention.blocked_cleanup_count.saturating_sub(1);
+            }
+            unlinger_protocol::MutationResult::IncidentProtected { protection } => {
+                status
+                    .protected_incidents
+                    .retain(|item| item.incident_id != protection.incident_id);
+                status.protected_incidents.push(ProtectedIncidentSummary {
+                    incident_id: protection.incident_id.clone(),
+                    protected_at_unix_millis: protection.protected_at_unix_millis,
+                    last_exact_observed_at_unix_millis: protection
+                        .last_exact_observed_at_unix_millis,
+                    exact_absence_since_unix_millis: protection.exact_absence_since_unix_millis,
+                });
+                status.protected_incident_count = status.protected_incidents.len();
+            }
+            unlinger_protocol::MutationResult::IncidentUnprotected { incident_id } => {
+                status
+                    .protected_incidents
+                    .retain(|item| item.incident_id != *incident_id);
+                status.protected_incident_count = status.protected_incidents.len();
+            }
+        }
+        Ok(commit)
     }
 
     pub fn begin_managed(
@@ -1106,6 +1343,8 @@ fn apply_attention_projection(
             StorageRecoveryReason::RequiredSchemaInvalid => "storage.schema_recovered",
         };
         items.push(AttentionItem {
+            event_token: Some(recovery.public_token.clone()),
+            outcome: None,
             kind: AttentionKind::StorageRecovered,
             reason_id: reason_id.to_owned(),
             incident_id: None,
@@ -1115,6 +1354,8 @@ fn apply_attention_projection(
     }
     if !status.event_source_healthy {
         items.push(AttentionItem {
+            event_token: None,
+            outcome: None,
             kind: AttentionKind::EventSourceDegraded,
             reason_id: "runtime.event_source_degraded".to_owned(),
             incident_id: None,
@@ -1124,6 +1365,8 @@ fn apply_attention_projection(
     }
     if !status.healthy {
         items.push(AttentionItem {
+            event_token: None,
+            outcome: None,
             kind: AttentionKind::DaemonUnhealthy,
             reason_id: if status.last_error.is_some() {
                 "daemon.runtime_error"
@@ -1141,6 +1384,8 @@ fn apply_attention_projection(
             break;
         }
         items.push(AttentionItem {
+            event_token: blocked.event_token,
+            outcome: Some(blocked.outcome),
             kind: if blocked.state == unlinger_core::IncidentState::Revived {
                 AttentionKind::CleanupRevived
             } else {
@@ -1253,6 +1498,24 @@ fn fresh_enforcement_epoch(
     format!("g{activation_generation:x}-p{pid:x}-i{instance_id}-{now_unix_millis:x}-{sequence:x}")
 }
 
+fn fresh_cycle_token(now_unix_millis: u64) -> String {
+    let sequence = NEXT_CYCLE_TOKEN.fetch_add(1, Ordering::Relaxed);
+    let entropy =
+        (current_wall_nanos() as u64) ^ now_unix_millis.rotate_left(17) ^ sequence.rotate_left(41);
+    format!(
+        "{:016x}{:016x}",
+        splitmix64(entropy),
+        splitmix64(entropy ^ 0x9e37_79b9_7f4a_7c15)
+    )
+}
+
+const fn splitmix64(mut value: u64) -> u64 {
+    value = value.wrapping_add(0x9e37_79b9_7f4a_7c15);
+    value = (value ^ (value >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    value = (value ^ (value >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+    value ^ (value >> 31)
+}
+
 fn current_wall_millis() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -1275,6 +1538,13 @@ fn map_store_error(error: StoreError) -> ControlError {
     match error {
         StoreError::Invalid(message) | StoreError::Range(message) => {
             ControlError::InvalidArgument(bounded_message(&message))
+        }
+        StoreError::Conflict(message) => ControlError::Conflict(bounded_message(&message)),
+        StoreError::AuthorityLost(message) => {
+            ControlError::AuthorityLost(bounded_message(&message))
+        }
+        StoreError::NotFound(message) | StoreError::Capacity(message) => {
+            ControlError::Unavailable(bounded_message(&message))
         }
         other => ControlError::Store(bounded_message(&other.to_string())),
     }
@@ -1784,7 +2054,9 @@ fn bounded_message(message: &str) -> String {
 fn public_error_message(error: &ControlError) -> &'static str {
     match error {
         ControlError::InvalidArgument(_) => "request argument is invalid",
+        ControlError::Conflict(_) => "mutation identity conflicts with a committed request",
         ControlError::NotFound(_) => "requested local record was not found",
+        ControlError::AuthorityLost(_) => "mutation receipt authority is no longer available",
         ControlError::Store(_) => "local history is unavailable",
         ControlError::Unavailable(_) => "daemon operation is unavailable",
     }
@@ -1793,7 +2065,9 @@ fn public_error_message(error: &ControlError) -> &'static str {
 fn public_error_code(error: &ControlError) -> unlinger_protocol::ErrorCode {
     match error {
         ControlError::InvalidArgument(_) => unlinger_protocol::ErrorCode::InvalidArgument,
+        ControlError::Conflict(_) => unlinger_protocol::ErrorCode::Conflict,
         ControlError::NotFound(_) => unlinger_protocol::ErrorCode::NotFound,
+        ControlError::AuthorityLost(_) => unlinger_protocol::ErrorCode::AuthorityLost,
         ControlError::Store(_) => unlinger_protocol::ErrorCode::StoreError,
         ControlError::Unavailable(_) => unlinger_protocol::ErrorCode::Unavailable,
     }

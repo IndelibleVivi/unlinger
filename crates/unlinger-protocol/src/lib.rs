@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-pub const SCHEMA_VERSION: u32 = 2;
+pub const SCHEMA_VERSION: u32 = 3;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct RequestEnvelope {
@@ -26,15 +26,38 @@ impl RequestEnvelope {
 #[serde(tag = "command", rename_all = "snake_case")]
 pub enum Command {
     Status,
-    History { limit: usize },
-    Explain { incident_id: String },
+    History {
+        limit: usize,
+    },
+    Explain {
+        incident_id: String,
+    },
     Incidents,
-    Pause { duration_millis: u64 },
-    Resume,
-    RetryFailedCleanup { incident_id: String },
-    ProtectIncident { incident_id: String },
-    UnprotectIncident { incident_id: String },
-    ExportDiagnostics { incident_id: String },
+    MutationStatus {
+        context: MutationContext,
+    },
+    Pause {
+        context: MutationContext,
+        duration_millis: u64,
+    },
+    Resume {
+        context: MutationContext,
+    },
+    RetryFailedCleanup {
+        context: MutationContext,
+        incident_id: String,
+    },
+    ProtectIncident {
+        context: MutationContext,
+        incident_id: String,
+    },
+    UnprotectIncident {
+        context: MutationContext,
+        incident_id: String,
+    },
+    ExportDiagnostics {
+        incident_id: String,
+    },
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -88,7 +111,9 @@ pub enum ErrorCode {
     InvalidJson,
     UnsupportedSchema,
     InvalidArgument,
+    Conflict,
     NotFound,
+    AuthorityLost,
     StoreError,
     Unavailable,
 }
@@ -99,13 +124,91 @@ pub enum Payload {
     Status(PublicStatus),
     History(Vec<HistoryEvent>),
     Incident(IncidentDetail),
-    Incidents(Vec<CurrentIncident>),
-    Pause { until_unix_millis: u64 },
+    Incidents(ObservationRoster),
+    MutationStatus(MutationStatus),
+    MutationCommitted(MutationReceipt),
+    Diagnostics(DiagnosticsBundle),
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum MutationStatus {
+    NotFound { context: MutationContext },
+    AuthorityLost { context: MutationContext },
+    Committed { receipt: MutationReceipt },
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct MutationContext {
+    pub namespace_token: String,
+    pub mutation_id: String,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MutationKind {
+    Pause,
+    Resume,
+    RetryFailedCleanup,
+    ProtectIncident,
+    UnprotectIncident,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct MutationReceipt {
+    pub namespace_token: String,
+    pub mutation_id: String,
+    pub kind: MutationKind,
+    pub committed_at_unix_millis: u64,
+    pub retain_until_unix_millis: u64,
+    pub policy_revision_after: u64,
+    pub outcome: MutationOutcome,
+}
+
+/// Mutation IDs become durable database keys, so the wire representation has
+/// one deliberately narrow UUID-style shape shared by every client and server.
+#[must_use]
+pub fn is_valid_mutation_id(value: &str) -> bool {
+    if value.len() != 36 || !value.is_ascii() {
+        return false;
+    }
+    value.bytes().enumerate().all(|(index, byte)| {
+        if matches!(index, 8 | 13 | 18 | 23) {
+            byte == b'-'
+        } else {
+            byte.is_ascii_hexdigit()
+        }
+    })
+}
+
+/// Receipt-authority namespaces are public-safe opaque identifiers. Their
+/// exact generation is deliberately private to the daemon, while the bounded
+/// lowercase-hex shape keeps journal and IPC validation deterministic.
+#[must_use]
+pub fn is_valid_namespace_token(value: &str) -> bool {
+    value.len() == 32
+        && value.is_ascii()
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "outcome", rename_all = "snake_case")]
+pub enum MutationOutcome {
+    Applied { result: MutationResult },
+    NoChange { reason_id: String },
+    Rejected { reason_id: String },
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "result", rename_all = "snake_case")]
+pub enum MutationResult {
+    Paused { until_unix_millis: u64 },
     Resumed,
     RetryScheduled { incident_id: String },
     IncidentProtected { protection: ProtectionSummary },
     IncidentUnprotected { incident_id: String },
-    Diagnostics(DiagnosticsBundle),
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -135,6 +238,10 @@ pub struct PublicStatus {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub paused_until_unix_millis: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub cycle_started_at_unix_millis: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub latest_observation_at_unix_millis: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub last_scan_at_unix_millis: Option<u64>,
     pub confirmed_incident_count: usize,
     pub ambiguous_incident_count: usize,
@@ -144,11 +251,19 @@ pub struct PublicStatus {
     pub storage: StorageHealth,
     pub attention: AttentionProjection,
     pub protection: ProtectionProjection,
-    pub capabilities: Capabilities,
+    pub capabilities: GlobalCapabilities,
+    pub mutation_authority: MutationAuthority,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct MutationAuthority {
+    pub namespace_token: String,
+    pub minimum_reconciliation_window_millis: u64,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct RecentReclaim {
+    pub event_token: String,
     pub incident_id: String,
     pub occurred_at_unix_millis: u64,
     pub process_outcome: ProcessOutcome,
@@ -172,6 +287,7 @@ pub struct StorageHealth {
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct StorageRecovery {
+    pub recovery_token: String,
     pub occurred_at_unix_millis: u64,
     pub reason_id: String,
     pub quarantined_sidecar_count: usize,
@@ -204,6 +320,8 @@ pub struct AttentionItem {
     pub overall_outcome: Option<OverallOutcome>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub occurred_at_unix_millis: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub event_token: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
@@ -223,13 +341,9 @@ pub struct ProtectionSummary {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct Capabilities {
+pub struct GlobalCapabilities {
     pub pause: Capability,
     pub resume: Capability,
-    pub retry_failed_cleanup: Capability,
-    pub protect_incident: Capability,
-    pub unprotect_incident: Capability,
-    pub export_diagnostics: Capability,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -300,6 +414,7 @@ pub enum OverallOutcome {
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct HistoryEvent {
+    pub event_token: String,
     pub incident_id: String,
     pub occurred_at_unix_millis: u64,
     pub state: IncidentState,
@@ -390,6 +505,7 @@ pub struct Cleanup {
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ProcessAction {
+    pub action_token: String,
     pub stage: CleanupStage,
     pub signal: CleanupSignal,
     pub disposition: SignalDisposition,
@@ -423,6 +539,7 @@ pub enum SignalDisposition {
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ArtifactAction {
+    pub action_token: String,
     pub kind: RuntimeArtifactKind,
     pub disposition: ArtifactDisposition,
 }
@@ -477,9 +594,28 @@ pub struct IncidentDetail {
     pub capabilities: IncidentCapabilities,
 }
 
-/// One currently observed incident from the latest reconciliation cycle.
-/// Read-only roster entry: the observation projection is identical to the
-/// redacted history observation record and carries no process identity.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ObservationFreshness {
+    Current,
+    ScanInProgress,
+    StaleAfterFailure,
+    NeverObserved,
+}
+
+/// The latest completed, owner-protection-adjusted observation snapshot. It is
+/// read-only history-of-observation, not a cleanup work queue or a claim that
+/// every item is still live when this response is read.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ObservationRoster {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cycle_token: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub observed_at_unix_millis: Option<u64>,
+    pub freshness: ObservationFreshness,
+    pub items: Vec<CurrentIncident>,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct CurrentIncident {
     pub incident_id: String,
@@ -514,6 +650,16 @@ pub enum AppTransportState {
         readback_command: String,
         automatic_retry: bool,
     },
+    DaemonIncompatible {
+        reason_id: String,
+        suggested_action: String,
+    },
+    MutationUnresolved {
+        command: String,
+        reason_id: String,
+        automatic_retry: bool,
+        global_mutation_lock: bool,
+    },
 }
 
 #[cfg(test)]
@@ -527,7 +673,7 @@ mod tests {
 
         assert_eq!(
             encoded,
-            r#"{"schema_version":2,"request_id":7,"command":{"command":"status"}}"#
+            r#"{"schema_version":3,"request_id":7,"command":{"command":"status"}}"#
         );
         for forbidden in [
             "arm",
@@ -545,56 +691,43 @@ mod tests {
     }
 
     #[test]
-    fn canonical_frontend_fixtures_roundtrip_without_internal_fields() {
+    fn canonical_v3_frontend_fixtures_roundtrip_without_internal_fields() {
+        macro_rules! fixture {
+            ($name:literal) => {
+                include_str!(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/../../apps/UnlingerApp/Contract/v3/",
+                    $name,
+                    ".json"
+                ))
+            };
+        }
         let wire_fixtures = [
-            include_str!(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/../../apps/UnlingerApp/Contract/v2/status-all-clear.json"
-            )),
-            include_str!(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/../../apps/UnlingerApp/Contract/v2/status-report-only.json"
-            )),
-            include_str!(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/../../apps/UnlingerApp/Contract/v2/status-scanning.json"
-            )),
-            include_str!(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/../../apps/UnlingerApp/Contract/v2/status-paused.json"
-            )),
-            include_str!(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/../../apps/UnlingerApp/Contract/v2/status-recently-reclaimed.json"
-            )),
-            include_str!(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/../../apps/UnlingerApp/Contract/v2/status-needs-attention.json"
-            )),
-            include_str!(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/../../apps/UnlingerApp/Contract/v2/history-cleared.json"
-            )),
-            include_str!(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/../../apps/UnlingerApp/Contract/v2/history-cleared-with-residue.json"
-            )),
-            include_str!(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/../../apps/UnlingerApp/Contract/v2/incident-protected.json"
-            )),
-            include_str!(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/../../apps/UnlingerApp/Contract/v2/incident-revived.json"
-            )),
-            include_str!(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/../../apps/UnlingerApp/Contract/v2/incident-failed.json"
-            )),
-            include_str!(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/../../apps/UnlingerApp/Contract/v2/incidents-current.json"
-            )),
+            fixture!("status-all-clear"),
+            fixture!("status-report-only"),
+            fixture!("status-enforce"),
+            fixture!("status-scanning"),
+            fixture!("status-starting"),
+            fixture!("status-draining"),
+            fixture!("status-failed"),
+            fixture!("status-paused"),
+            fixture!("status-recently-reclaimed"),
+            fixture!("status-needs-attention"),
+            fixture!("status-storage-recovered"),
+            fixture!("history-cleared"),
+            fixture!("history-cleared-with-residue"),
+            fixture!("incident-protected"),
+            fixture!("incident-revived"),
+            fixture!("incident-failed"),
+            fixture!("incidents-current"),
+            fixture!("roster-current"),
+            fixture!("roster-scanning"),
+            fixture!("roster-stale"),
+            fixture!("roster-never-observed"),
+            fixture!("diagnostics"),
+            fixture!("mutation-committed"),
+            fixture!("mutation-not-found"),
+            fixture!("mutation-authority-lost"),
         ];
         for source in wire_fixtures {
             let decoded: ResponseEnvelope =
@@ -624,14 +757,10 @@ mod tests {
         }
 
         for source in [
-            include_str!(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/../../apps/UnlingerApp/Contract/v2/app-daemon-unavailable.json"
-            )),
-            include_str!(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/../../apps/UnlingerApp/Contract/v2/app-mutation-delivery-uncertain.json"
-            )),
+            fixture!("app-daemon-unavailable"),
+            fixture!("app-mutation-delivery-uncertain"),
+            fixture!("daemon-incompatible"),
+            fixture!("app-mutation-unresolved"),
         ] {
             let decoded: AppStateFixture =
                 serde_json::from_str(source).expect("decode canonical app-state fixture");

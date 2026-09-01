@@ -457,6 +457,7 @@ fn slow_receipt_worker_does_not_block_absence_tracking() {
 fn terminal_history_event(incident_id: &str, event_id: i64) -> HistoryEvent {
     HistoryEvent {
         event_id,
+        event_token: format!("{event_id:032x}"),
         attempt_id: Some(event_id),
         incident_id: incident_id.to_owned(),
         occurred_at_unix_millis: u64::try_from(event_id).expect("positive event ID"),

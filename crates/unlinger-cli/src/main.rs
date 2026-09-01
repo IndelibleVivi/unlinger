@@ -1388,6 +1388,7 @@ mod tests {
         status.last_event_source_error = Some("/Users/private/event-source".to_owned());
         status.storage_recovery = Some(unlinger_daemon::StorageRecoveryStatus {
             recovery_id: "private-recovery-id".to_owned(),
+            public_token: "public-recovery-token".to_owned(),
             occurred_at_unix_millis: 123,
             reason: unlinger_daemon::StorageRecoveryReason::IntegrityCheckFailed,
             quarantined_sidecar_count: 2,
@@ -1396,6 +1397,8 @@ mod tests {
             blocked_cleanup_count: 23,
             items: (0..20)
                 .map(|index| unlinger_daemon::AttentionItem {
+                    event_token: None,
+                    outcome: None,
                     kind: unlinger_daemon::AttentionKind::CleanupFailed,
                     reason_id: "cleanup.delivery_unknown".to_owned(),
                     incident_id: Some(format!("private-incident-{index}")),

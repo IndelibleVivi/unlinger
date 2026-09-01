@@ -227,28 +227,28 @@ impl<R: CleanupRuntime> ReconciliationEngine<R> {
         now_unix_millis: u64,
         mut should_stop: impl FnMut() -> bool,
     ) -> Result<CycleReport, EngineError> {
-        self.control.update_status(|status| {
-            status.scan_in_progress = true;
-            if status.startup_state != StartupState::Failed {
-                status.last_error = None;
-            }
-        })?;
-        let result = self.run_cycle_inner(now_unix_millis, &mut should_stop);
+        let cycle_token = self.control.begin_observation_cycle(now_unix_millis)?;
+        let result = self.run_cycle_inner(now_unix_millis, &cycle_token, &mut should_stop);
         match &result {
             Ok(_) => {
+                let completed_at_unix_millis = terminal_timestamp(&self.runtime, now_unix_millis);
+                self.control.finish_observation_cycle(&cycle_token, true);
                 self.control.update_status(|status| {
                     status.scan_in_progress = false;
                     status.cleanup_in_progress = false;
-                    status.last_scan_at_unix_millis = Some(now_unix_millis);
+                    status.last_scan_at_unix_millis = Some(completed_at_unix_millis);
                     if status.startup_state != StartupState::Failed {
                         status.last_error = None;
                     }
                 })?;
-                self.control.complete_successful_cycle(now_unix_millis)?;
+                self.control
+                    .complete_successful_cycle(completed_at_unix_millis)?;
             }
             Err(error) => {
                 let message = error.to_string();
-                let _ = self.control.fail_closed(now_unix_millis, &message);
+                let failed_at_unix_millis = terminal_timestamp(&self.runtime, now_unix_millis);
+                self.control.finish_observation_cycle(&cycle_token, false);
+                let _ = self.control.fail_closed(failed_at_unix_millis, &message);
                 let _ = self.control.update_status(|status| {
                     status.scan_in_progress = false;
                     status.cleanup_in_progress = false;
@@ -262,6 +262,7 @@ impl<R: CleanupRuntime> ReconciliationEngine<R> {
     fn run_cycle_inner(
         &mut self,
         now_unix_millis: u64,
+        cycle_token: &str,
         should_stop: &mut impl FnMut() -> bool,
     ) -> Result<CycleReport, EngineError> {
         let lifecycle = self.control.status_at(now_unix_millis)?;
@@ -290,48 +291,61 @@ impl<R: CleanupRuntime> ReconciliationEngine<R> {
         let needs_second_observation = first_reports
             .iter()
             .any(|report| report.state == IncidentState::Cooling);
-        let (mut incidents, observed_twice, latest_snapshot) = if needs_second_observation {
-            if self
-                .runtime
-                .wait_until(self.config.observation_gap, should_stop)?
-                == WaitOutcome::Interrupted
-            {
-                (first_reports, false, first_snapshot)
-            } else {
-                let second_snapshot = self.runtime.snapshot()?;
-                let second_clock = cooling_clock(self.runtime.clock_sample()?, &enforcement_epoch);
-                let second_reports = analyzer.observe(&second_snapshot)?;
-                let mut active_tracking_keys = BTreeSet::new();
-                let mut abandonment_confirmed = BTreeSet::new();
-                for report in second_reports
-                    .iter()
-                    .filter(|report| report.state == IncidentState::Cooling)
+        let (mut incidents, observed_twice, latest_snapshot, observed_at_unix_millis) =
+            if needs_second_observation {
+                if self
+                    .runtime
+                    .wait_until(self.config.observation_gap, should_stop)?
+                    == WaitOutcome::Interrupted
                 {
-                    active_tracking_keys.insert(report.tracking_key.clone());
-                    if self.control.store().track_cooling(
-                        report,
-                        &second_clock,
-                        abandonment_grace_millis,
-                        continuity_gap_millis,
-                    )? {
-                        abandonment_confirmed.insert(report.tracking_key.clone());
+                    (
+                        first_reports,
+                        false,
+                        first_snapshot,
+                        first_clock.wall_unix_millis,
+                    )
+                } else {
+                    let second_snapshot = self.runtime.snapshot()?;
+                    let second_clock =
+                        cooling_clock(self.runtime.clock_sample()?, &enforcement_epoch);
+                    let second_reports = analyzer.observe(&second_snapshot)?;
+                    let mut active_tracking_keys = BTreeSet::new();
+                    let mut abandonment_confirmed = BTreeSet::new();
+                    for report in second_reports
+                        .iter()
+                        .filter(|report| report.state == IncidentState::Cooling)
+                    {
+                        active_tracking_keys.insert(report.tracking_key.clone());
+                        if self.control.store().track_cooling(
+                            report,
+                            &second_clock,
+                            abandonment_grace_millis,
+                            continuity_gap_millis,
+                        )? {
+                            abandonment_confirmed.insert(report.tracking_key.clone());
+                        }
                     }
+                    self.control.store().retain_cooling(&active_tracking_keys)?;
+                    (
+                        analyzer.reconcile_with_abandonment(
+                            &first_reports,
+                            &second_reports,
+                            &abandonment_confirmed,
+                        ),
+                        true,
+                        second_snapshot,
+                        second_clock.wall_unix_millis,
+                    )
                 }
-                self.control.store().retain_cooling(&active_tracking_keys)?;
+            } else {
+                self.control.store().retain_cooling(&BTreeSet::new())?;
                 (
-                    analyzer.reconcile_with_abandonment(
-                        &first_reports,
-                        &second_reports,
-                        &abandonment_confirmed,
-                    ),
-                    true,
-                    second_snapshot,
+                    first_reports,
+                    false,
+                    first_snapshot,
+                    first_clock.wall_unix_millis,
                 )
-            }
-        } else {
-            self.control.store().retain_cooling(&BTreeSet::new())?;
-            (first_reports, false, first_snapshot)
-        };
+            };
 
         let observed_identities = incidents
             .iter()
@@ -360,16 +374,13 @@ impl<R: CleanupRuntime> ReconciliationEngine<R> {
             }
         }
 
-        // Publish the redacted-elsewhere current-incident roster after owner
-        // protection is applied, so the public v2 `incidents` surface shows
-        // what this cycle actually sees.
-        self.control.publish_roster(incidents.clone());
-
-        for report in &incidents {
-            self.control
-                .store()
-                .record_observation(now_unix_millis, report)?;
-        }
+        // Persist the complete protected snapshot first, then publish it. A
+        // batch failure leaves both history and the previous roster intact.
+        self.control
+            .store()
+            .record_observation_batch(observed_at_unix_millis, &incidents)?;
+        self.control
+            .publish_roster(cycle_token, observed_at_unix_millis, incidents.clone())?;
 
         let status = self.control.status_at(now_unix_millis)?;
         let paused = status
@@ -427,7 +438,7 @@ impl<R: CleanupRuntime> ReconciliationEngine<R> {
                     &self.config.cleanup_policy,
                 );
                 drop(gated_runtime);
-                let (receipt, completed_at) = match execution {
+                let (receipt, _) = match execution {
                     Ok(receipt) => {
                         let completed_at = terminal_timestamp(&self.runtime, now_unix_millis);
                         (
@@ -466,13 +477,13 @@ impl<R: CleanupRuntime> ReconciliationEngine<R> {
                     ));
                 }
                 if receipt.outcome().process == unlinger_core::ProcessOutcome::Cleared {
+                    let latest_reclaim = self
+                        .control
+                        .store()
+                        .most_recent_reclaim()?
+                        .map(RecentReclaim::from);
                     self.control.update_status(|status| {
-                        status.most_recent_reclaim = Some(RecentReclaim {
-                            incident_id: receipt.incident_id.clone(),
-                            occurred_at_unix_millis: completed_at,
-                            state: receipt.state,
-                            outcome: Some(receipt.outcome()),
-                        });
+                        status.most_recent_reclaim = latest_reclaim;
                     })?;
                 }
                 cleanup_receipts.push(receipt);

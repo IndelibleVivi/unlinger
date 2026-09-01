@@ -15,9 +15,19 @@ use unlinger_core::{
     CleanupStage, EvidenceItem, GateLedger, IncidentReport, IncidentState, ProcessOutcome,
     ProcessRoleCount, RootSummary, RuntimeArtifactKind, RuntimeFailure, SignalDisposition,
 };
+use unlinger_protocol::{
+    MutationContext, MutationKind, MutationOutcome, MutationReceipt, MutationResult,
+    ProtectionSummary as PublicProtectionSummary,
+};
 
-const SCHEMA_VERSION: i64 = 5;
+use crate::public_action_policy::{
+    PolicyDecision, RuntimePolicyFacts, StorePolicyFacts, evaluate_action,
+};
+
+const SCHEMA_VERSION: i64 = 6;
 const MAX_ATTENTION_SUMMARIES: usize = 50;
+const MAX_MUTATION_RECEIPTS: usize = 10_000;
+pub const MUTATION_RECONCILIATION_WINDOW_MILLIS: u64 = 14 * 24 * 60 * 60 * 1_000;
 const MAX_REDACTED_IDENTIFIER_CHARS: usize = 192;
 const MAX_REASON_ID_CHARS: usize = 128;
 const MAX_RESOURCE_RECEIPT_BYTES: usize = 4 * 1024;
@@ -91,6 +101,8 @@ pub enum EventPayload {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct HistoryEvent {
     pub event_id: i64,
+    #[serde(default, skip_serializing)]
+    pub event_token: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub attempt_id: Option<i64>,
     pub incident_id: String,
@@ -297,6 +309,7 @@ impl StorageRecoveryReason {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct StorageRecoveryOccurrence {
     pub recovery_id: String,
+    pub public_token: String,
     pub occurred_at_unix_millis: u64,
     pub reason: StorageRecoveryReason,
     pub quarantine_directory: PathBuf,
@@ -305,6 +318,7 @@ pub struct StorageRecoveryOccurrence {
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct MostRecentReclaim {
+    pub event_token: String,
     pub incident_id: String,
     pub occurred_at_unix_millis: u64,
     pub state: IncidentState,
@@ -332,10 +346,13 @@ impl From<&IncidentReport> for ObservedIncidentIdentity {
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct BlockedCleanupSummary {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub event_token: Option<String>,
     pub incident_id: String,
     pub state: IncidentState,
     pub blocked_at_unix_millis: u64,
     pub reason_id: String,
+    pub outcome: CleanupOutcome,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_exact_observed_at_unix_millis: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -356,6 +373,43 @@ pub struct ProtectedIncidentSummary {
     pub last_exact_observed_at_unix_millis: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub exact_absence_since_unix_millis: Option<u64>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum OrdinaryMutation {
+    Pause { duration_millis: u64 },
+    Resume,
+    RetryFailedCleanup { incident_id: String },
+    ProtectIncident { incident_id: String },
+    UnprotectIncident { incident_id: String },
+}
+
+impl OrdinaryMutation {
+    #[must_use]
+    pub const fn kind(&self) -> MutationKind {
+        match self {
+            Self::Pause { .. } => MutationKind::Pause,
+            Self::Resume => MutationKind::Resume,
+            Self::RetryFailedCleanup { .. } => MutationKind::RetryFailedCleanup,
+            Self::ProtectIncident { .. } => MutationKind::ProtectIncident,
+            Self::UnprotectIncident { .. } => MutationKind::UnprotectIncident,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MutationCommit {
+    pub receipt: MutationReceipt,
+    pub newly_committed: bool,
+    pub state_changed: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum MutationLookup {
+    Committed(MutationReceipt),
+    NotFound,
+    AuthorityLost,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
@@ -388,6 +442,10 @@ pub enum StoreError {
     Corrupt(String),
     Range(String),
     Invalid(String),
+    Conflict(String),
+    AuthorityLost(String),
+    NotFound(String),
+    Capacity(String),
     UnsupportedSchema(String),
     UnsafePath(String),
 }
@@ -401,6 +459,14 @@ impl Display for StoreError {
             Self::Corrupt(message) => write!(formatter, "history data is corrupt: {message}"),
             Self::Range(message) => write!(formatter, "history value is out of range: {message}"),
             Self::Invalid(message) => write!(formatter, "invalid history operation: {message}"),
+            Self::Conflict(message) => write!(formatter, "history operation conflicts: {message}"),
+            Self::AuthorityLost(message) => {
+                write!(formatter, "mutation receipt authority was lost: {message}")
+            }
+            Self::NotFound(message) => write!(formatter, "history target was not found: {message}"),
+            Self::Capacity(message) => {
+                write!(formatter, "history capacity is unavailable: {message}")
+            }
             Self::UnsupportedSchema(message) => {
                 write!(formatter, "unsupported history schema: {message}")
             }
@@ -461,10 +527,14 @@ impl HistoryStore {
                 initialize_store_file(&path)?;
                 let store = Self {
                     path: path.clone(),
-                    startup_recovery: Some(occurrence.clone()),
+                    startup_recovery: None,
                 };
                 store.persist_storage_recovery(&occurrence)?;
-                Some(occurrence)
+                Some(store.latest_storage_recovery()?.ok_or_else(|| {
+                    StoreError::Corrupt(
+                        "persisted storage recovery could not be read back".to_owned(),
+                    )
+                })?)
             }
             Err(error) => return Err(error),
         };
@@ -499,7 +569,7 @@ impl HistoryStore {
         let connection = self.connection()?;
         let row = connection
             .query_row(
-                "SELECT recovery_id, occurred_at_ms, reason_id,
+                "SELECT recovery_id, public_token, occurred_at_ms, reason_id,
                         quarantine_directory_name, quarantined_sidecar_count
                  FROM storage_recoveries
                  ORDER BY occurred_at_ms DESC, id DESC LIMIT 1",
@@ -507,19 +577,21 @@ impl HistoryStore {
                 |row| {
                     Ok((
                         row.get::<_, String>(0)?,
-                        row.get::<_, i64>(1)?,
-                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, i64>(2)?,
                         row.get::<_, String>(3)?,
-                        row.get::<_, i64>(4)?,
+                        row.get::<_, String>(4)?,
+                        row.get::<_, i64>(5)?,
                     ))
                 },
             )
             .optional()?;
         row.map(
-            |(recovery_id, occurred_at, reason, quarantine_name, sidecar_count)| {
+            |(recovery_id, public_token, occurred_at, reason, quarantine_name, sidecar_count)| {
                 let parent = self.path.parent().unwrap_or_else(|| Path::new("."));
                 Ok(StorageRecoveryOccurrence {
                     recovery_id,
+                    public_token,
                     occurred_at_unix_millis: u64::try_from(occurred_at).map_err(|_| {
                         StoreError::Corrupt("negative storage recovery timestamp".to_owned())
                     })?,
@@ -559,9 +631,9 @@ impl HistoryStore {
         let connection = self.connection()?;
         connection.execute(
             "INSERT INTO storage_recoveries (
-                 recovery_id, occurred_at_ms, reason_id,
+                 recovery_id, public_token, occurred_at_ms, reason_id,
                  quarantine_directory_name, quarantined_sidecar_count
-             ) VALUES (?1, ?2, ?3, ?4, ?5)",
+             ) VALUES (?1, lower(hex(randomblob(16))), ?2, ?3, ?4, ?5)",
             params![
                 occurrence.recovery_id,
                 occurred_at,
@@ -968,6 +1040,33 @@ impl HistoryStore {
             report.state,
             &EventPayload::Observation { report: redacted },
         )
+    }
+
+    /// Commits one complete owner-protection-adjusted observation snapshot.
+    /// A failed row or token insert rolls the whole cycle back, so callers can
+    /// never publish a fresh roster backed by partial durable history.
+    pub fn record_observation_batch(
+        &self,
+        occurred_at_unix_millis: u64,
+        reports: &[IncidentReport],
+    ) -> Result<Vec<i64>, StoreError> {
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let mut event_ids = Vec::with_capacity(reports.len());
+        for report in reports {
+            let redacted = ObservationRecord::from(report);
+            event_ids.push(insert_event_transaction(
+                &transaction,
+                None,
+                occurred_at_unix_millis,
+                &report.incident_id,
+                EventKind::Observation,
+                report.state,
+                &EventPayload::Observation { report: redacted },
+            )?);
+        }
+        transaction.commit()?;
+        Ok(event_ids)
     }
 
     pub fn begin_cleanup_attempt(
@@ -1576,6 +1675,198 @@ impl HistoryStore {
             .is_some())
     }
 
+    pub fn incident_has_observation(&self, incident_id: &str) -> Result<bool, StoreError> {
+        let connection = self.connection()?;
+        Ok(connection
+            .query_row(
+                "SELECT 1 FROM events
+                 WHERE incident_id = ?1 AND kind = 'observation' LIMIT 1",
+                params![incident_id],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_some())
+    }
+
+    pub fn mutation_namespace_token(&self) -> Result<String, StoreError> {
+        let connection = self.connection()?;
+        current_mutation_namespace(&connection)
+    }
+
+    pub fn cleanup_policy_revision(&self) -> Result<u64, StoreError> {
+        let connection = self.connection()?;
+        cleanup_policy_revision_connection(&connection)
+    }
+
+    pub fn mutation_lookup(&self, context: &MutationContext) -> Result<MutationLookup, StoreError> {
+        let connection = self.connection()?;
+        if let Some(receipt) = mutation_receipt_connection(&connection, context)? {
+            return Ok(MutationLookup::Committed(receipt));
+        }
+        if current_mutation_namespace(&connection)? == context.namespace_token {
+            Ok(MutationLookup::NotFound)
+        } else {
+            Ok(MutationLookup::AuthorityLost)
+        }
+    }
+
+    pub(crate) fn public_action_store_facts(
+        &self,
+        mutation: &OrdinaryMutation,
+        now_unix_millis: u64,
+    ) -> Result<StorePolicyFacts, StoreError> {
+        let connection = self.connection()?;
+        store_policy_facts_connection(&connection, mutation, now_unix_millis)
+    }
+
+    /// Atomically applies one ordinary owner mutation and records its public,
+    /// redacted result. A duplicate canonical request returns the first receipt
+    /// without repeating the state change; a conflicting reuse of an ID fails.
+    pub fn commit_ordinary_mutation(
+        &self,
+        context: &MutationContext,
+        mutation: &OrdinaryMutation,
+        committed_at_unix_millis: u64,
+    ) -> Result<MutationCommit, StoreError> {
+        self.commit_public_ordinary_mutation(
+            context,
+            mutation,
+            RuntimePolicyFacts::default(),
+            committed_at_unix_millis,
+        )
+    }
+
+    pub(crate) fn commit_public_ordinary_mutation(
+        &self,
+        context: &MutationContext,
+        mutation: &OrdinaryMutation,
+        runtime_facts: RuntimePolicyFacts,
+        committed_at_unix_millis: u64,
+    ) -> Result<MutationCommit, StoreError> {
+        let committed_at = sqlite_millis(committed_at_unix_millis, "mutation timestamp")?;
+        let retain_until_unix_millis = committed_at_unix_millis
+            .checked_add(MUTATION_RECONCILIATION_WINDOW_MILLIS)
+            .ok_or_else(|| {
+                StoreError::Range("mutation retention deadline overflowed u64".to_owned())
+            })?;
+        let retain_until = sqlite_millis(retain_until_unix_millis, "mutation retention deadline")?;
+        let command_json = serde_json::to_string(mutation)?;
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+
+        if let Some((canonical_version, stored_command, receipt_json)) = transaction
+            .query_row(
+                "SELECT canonical_version, command_json, receipt_json
+                 FROM ordinary_mutation_receipts
+                 WHERE namespace_token = ?1 AND mutation_id = ?2",
+                params![context.namespace_token, context.mutation_id],
+                |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                },
+            )
+            .optional()?
+        {
+            if canonical_version != 1 || stored_command != command_json {
+                return Err(StoreError::Conflict(
+                    "mutation ID was already committed for a different canonical request"
+                        .to_owned(),
+                ));
+            }
+            let receipt: MutationReceipt = serde_json::from_str(&receipt_json)?;
+            validate_stored_mutation_receipt(&receipt, context, mutation.kind())?;
+            transaction.commit()?;
+            return Ok(MutationCommit {
+                receipt,
+                newly_committed: false,
+                state_changed: false,
+            });
+        }
+
+        if current_mutation_namespace(&transaction)? != context.namespace_token {
+            return Err(StoreError::AuthorityLost(
+                "request namespace is no longer current and has no retained receipt".to_owned(),
+            ));
+        }
+
+        reserve_mutation_receipt_slot(&transaction)?;
+        let store_facts =
+            store_policy_facts_connection(&transaction, mutation, committed_at_unix_millis)?;
+        let decision = evaluate_action(runtime_facts, store_facts, mutation);
+        let (outcome, state_changed) = match decision {
+            PolicyDecision::Allow => (
+                MutationOutcome::Applied {
+                    result: apply_ordinary_mutation(
+                        &transaction,
+                        mutation,
+                        committed_at_unix_millis,
+                    )?,
+                },
+                true,
+            ),
+            PolicyDecision::NoChange(reason_id) => (
+                MutationOutcome::NoChange {
+                    reason_id: reason_id.to_owned(),
+                },
+                false,
+            ),
+            PolicyDecision::Reject(reason_id) => (
+                MutationOutcome::Rejected {
+                    reason_id: reason_id.to_owned(),
+                },
+                false,
+            ),
+        };
+
+        let current_revision = cleanup_policy_revision_connection(&transaction)?;
+        let policy_revision_after = if state_changed {
+            let next = current_revision.checked_add(1).ok_or_else(|| {
+                StoreError::Range("cleanup policy revision overflowed u64".to_owned())
+            })?;
+            transaction.execute(
+                "UPDATE control_metadata
+                 SET cleanup_policy_revision = ?1 WHERE singleton = 1",
+                params![sqlite_millis(next, "cleanup policy revision")?],
+            )?;
+            next
+        } else {
+            current_revision
+        };
+        let receipt = MutationReceipt {
+            namespace_token: context.namespace_token.clone(),
+            mutation_id: context.mutation_id.clone(),
+            kind: mutation.kind(),
+            committed_at_unix_millis,
+            retain_until_unix_millis,
+            policy_revision_after,
+            outcome,
+        };
+        let receipt_json = serde_json::to_string(&receipt)?;
+        transaction.execute(
+            "INSERT INTO ordinary_mutation_receipts (
+                 namespace_token, mutation_id, canonical_version, command_json,
+                 receipt_json, committed_at_ms, retain_until_ms
+             ) VALUES (?1, ?2, 1, ?3, ?4, ?5, ?6)",
+            params![
+                context.namespace_token,
+                context.mutation_id,
+                command_json,
+                receipt_json,
+                committed_at,
+                retain_until
+            ],
+        )?;
+        transaction.commit()?;
+        Ok(MutationCommit {
+            receipt,
+            newly_committed: true,
+            state_changed,
+        })
+    }
+
     pub fn authorize_retry(
         &self,
         incident_id: &str,
@@ -1619,8 +1910,9 @@ impl HistoryStore {
             StoreError::Range("event timestamp cannot be represented by SQLite".to_owned())
         })?;
         let payload_json = serde_json::to_string(payload)?;
-        let connection = self.connection()?;
-        connection.execute(
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        transaction.execute(
             "INSERT INTO events (
                  attempt_id, incident_id, occurred_at_ms, kind, state, payload_json
              ) VALUES (NULL, ?1, ?2, ?3, ?4, ?5)",
@@ -1632,7 +1924,10 @@ impl HistoryStore {
                 payload_json
             ],
         )?;
-        Ok(connection.last_insert_rowid())
+        let event_id = transaction.last_insert_rowid();
+        insert_public_event_token(&transaction, event_id)?;
+        transaction.commit()?;
+        Ok(event_id)
     }
 
     pub fn history(&self, limit: usize) -> Result<Vec<HistoryEvent>, StoreError> {
@@ -1642,8 +1937,12 @@ impl HistoryStore {
         let limit = i64::try_from(limit.min(10_000))
             .map_err(|_| StoreError::Range("history limit overflowed i64".to_owned()))?;
         self.query_events(
-            "SELECT id, attempt_id, incident_id, occurred_at_ms, kind, state, payload_json \
-             FROM events ORDER BY occurred_at_ms DESC, id DESC LIMIT ?1",
+            "SELECT events.id, events.attempt_id, events.incident_id,
+                    events.occurred_at_ms, events.kind, events.state,
+                    events.payload_json, tokens.event_token
+             FROM events
+             JOIN public_event_tokens AS tokens ON tokens.event_id = events.id
+             ORDER BY events.occurred_at_ms DESC, events.id DESC LIMIT ?1",
             params![limit],
         )
     }
@@ -1651,8 +1950,10 @@ impl HistoryStore {
     pub fn most_recent_reclaim(&self) -> Result<Option<MostRecentReclaim>, StoreError> {
         let mut events = self.query_events(
             "SELECT events.id, events.attempt_id, events.incident_id,
-                    events.occurred_at_ms, events.kind, events.state, events.payload_json
+                    events.occurred_at_ms, events.kind, events.state,
+                    events.payload_json, tokens.event_token
              FROM events
+             JOIN public_event_tokens AS tokens ON tokens.event_id = events.id
              LEFT JOIN cleanup_attempts ON cleanup_attempts.id = events.attempt_id
              WHERE events.kind = 'cleanup'
                AND (
@@ -1683,6 +1984,7 @@ impl HistoryStore {
             ));
         }
         Ok(Some(MostRecentReclaim {
+            event_token: event.event_token,
             incident_id: project_identifier(&receipt.incident_id, "redacted-incident"),
             occurred_at_unix_millis: event.occurred_at_unix_millis,
             state: receipt.state,
@@ -1974,7 +2276,24 @@ impl HistoryStore {
         let mut statement = connection.prepare(
             "SELECT blocks.incident_id, attempts.terminal_state, blocks.blocked_at_ms,
                     blocks.reason_id, blocks.last_exact_observed_at_ms,
-                    blocks.absence_since_ms
+                    blocks.absence_since_ms,
+                    (
+                        SELECT tokens.event_token
+                        FROM events
+                        JOIN public_event_tokens AS tokens ON tokens.event_id = events.id
+                        WHERE events.attempt_id = blocks.source_attempt_id
+                          AND events.kind = 'cleanup'
+                          AND events.state = attempts.terminal_state
+                        ORDER BY events.occurred_at_ms DESC, events.id DESC LIMIT 1
+                    ),
+                    (
+                        SELECT events.payload_json
+                        FROM events
+                        WHERE events.attempt_id = blocks.source_attempt_id
+                          AND events.kind = 'cleanup'
+                          AND events.state = attempts.terminal_state
+                        ORDER BY events.occurred_at_ms DESC, events.id DESC LIMIT 1
+                    )
              FROM cleanup_retry_blocks AS blocks
              JOIN cleanup_attempts AS attempts ON attempts.id = blocks.source_attempt_id
              ORDER BY blocks.blocked_at_ms DESC, blocks.incident_id ASC
@@ -1988,11 +2307,22 @@ impl HistoryStore {
                 row.get::<_, Option<String>>(3)?,
                 row.get::<_, Option<i64>>(4)?,
                 row.get::<_, Option<i64>>(5)?,
+                row.get::<_, Option<String>>(6)?,
+                row.get::<_, Option<String>>(7)?,
             ))
         })?;
         let mut blocked_cleanups = Vec::new();
         for row in rows {
-            let (incident_id, state, blocked_at, reason_id, last_observed, absence_since) = row?;
+            let (
+                incident_id,
+                state,
+                blocked_at,
+                reason_id,
+                last_observed,
+                absence_since,
+                event_token,
+                payload_json,
+            ) = row?;
             let state = parse_state(&state)?;
             if !matches!(state, IncidentState::Failed | IncidentState::Revived) {
                 return Err(StoreError::Corrupt(format!(
@@ -2000,7 +2330,17 @@ impl HistoryStore {
                     state_name(state)
                 )));
             }
+            let payload_json = payload_json.ok_or_else(|| {
+                StoreError::Corrupt("retry block has no matching terminal cleanup event".to_owned())
+            })?;
+            let EventPayload::Cleanup { receipt } = serde_json::from_str(&payload_json)? else {
+                return Err(StoreError::Corrupt(
+                    "retry block selected a non-cleanup event payload".to_owned(),
+                ));
+            };
+            let outcome = receipt.outcome();
             blocked_cleanups.push(BlockedCleanupSummary {
+                event_token,
                 incident_id: project_identifier(&incident_id, "redacted-incident"),
                 state,
                 blocked_at_unix_millis: parse_nonnegative_millis(
@@ -2008,6 +2348,7 @@ impl HistoryStore {
                     "retry block timestamp",
                 )?,
                 reason_id: project_reason_id(reason_id.as_deref()),
+                outcome,
                 last_exact_observed_at_unix_millis: last_observed
                     .map(|value| parse_nonnegative_millis(value, "last exact observation"))
                     .transpose()?,
@@ -2125,8 +2466,13 @@ impl HistoryStore {
 
     pub fn explain(&self, incident_id: &str) -> Result<Option<IncidentDetail>, StoreError> {
         let events = self.query_events(
-            "SELECT id, attempt_id, incident_id, occurred_at_ms, kind, state, payload_json \
-             FROM events WHERE incident_id = ?1 ORDER BY occurred_at_ms ASC, id ASC",
+            "SELECT events.id, events.attempt_id, events.incident_id,
+                    events.occurred_at_ms, events.kind, events.state,
+                    events.payload_json, tokens.event_token
+             FROM events
+             JOIN public_event_tokens AS tokens ON tokens.event_id = events.id
+             WHERE events.incident_id = ?1
+             ORDER BY events.occurred_at_ms ASC, events.id ASC",
             params![incident_id],
         )?;
         if events.is_empty() {
@@ -2151,7 +2497,7 @@ impl HistoryStore {
         let max_events = i64::try_from(policy.max_events)
             .map_err(|_| StoreError::Range("retention event limit overflowed i64".to_owned()))?;
         let mut connection = self.connection()?;
-        let transaction = connection.transaction()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         transaction.execute(
             "DELETE FROM events WHERE occurred_at_ms < ?1",
             params![cutoff],
@@ -2166,6 +2512,18 @@ impl HistoryStore {
             "DELETE FROM cooling_candidates WHERE last_wall_ms < ?1",
             params![cutoff],
         )?;
+        let now = sqlite_millis(now_unix_millis, "mutation receipt prune timestamp")?;
+        let deleted_receipts = transaction.execute(
+            "DELETE FROM ordinary_mutation_receipts WHERE retain_until_ms <= ?1",
+            params![now],
+        )?;
+        if deleted_receipts > 0 {
+            transaction.execute(
+                "UPDATE mutation_authority
+                 SET namespace_token = lower(hex(randomblob(16))) WHERE singleton = 1",
+                [],
+            )?;
+        }
         transaction.execute(
             "DELETE FROM cleanup_actions
              WHERE attempt_id IN (
@@ -2423,11 +2781,27 @@ impl HistoryStore {
                 row.get::<_, String>(4)?,
                 row.get::<_, String>(5)?,
                 row.get::<_, String>(6)?,
+                row.get::<_, String>(7)?,
             ))
         })?;
         let mut events = Vec::new();
         for row in raw_rows {
-            let (event_id, attempt_id, incident_id, occurred_at, kind, state, payload_json) = row?;
+            let (
+                event_id,
+                attempt_id,
+                incident_id,
+                occurred_at,
+                kind,
+                state,
+                payload_json,
+                event_token,
+            ) = row?;
+            if event_token.len() != 32 || !event_token.bytes().all(|byte| byte.is_ascii_hexdigit())
+            {
+                return Err(StoreError::Corrupt(format!(
+                    "event {event_id} has an invalid public token"
+                )));
+            }
             let occurred_at_unix_millis = u64::try_from(occurred_at)
                 .map_err(|_| StoreError::Corrupt("negative event timestamp".to_owned()))?;
             let kind = EventKind::parse(&kind)?;
@@ -2440,6 +2814,7 @@ impl HistoryStore {
             }
             events.push(HistoryEvent {
                 event_id,
+                event_token,
                 attempt_id,
                 incident_id,
                 occurred_at_unix_millis,
@@ -2726,6 +3101,7 @@ fn validate_required_schema(connection: &Connection) -> Result<(), StoreError> {
             &[
                 "id",
                 "recovery_id",
+                "public_token",
                 "occurred_at_ms",
                 "reason_id",
                 "quarantine_directory_name",
@@ -2741,6 +3117,24 @@ fn validate_required_schema(connection: &Connection) -> Result<(), StoreError> {
                 "protected_at_ms",
                 "last_exact_observed_at_ms",
                 "absence_since_ms",
+            ],
+        ),
+        ("public_event_tokens", &["event_id", "event_token"]),
+        ("mutation_authority", &["singleton", "namespace_token"]),
+        (
+            "control_metadata",
+            &["singleton", "cleanup_policy_revision"],
+        ),
+        (
+            "ordinary_mutation_receipts",
+            &[
+                "namespace_token",
+                "mutation_id",
+                "canonical_version",
+                "command_json",
+                "receipt_json",
+                "committed_at_ms",
+                "retain_until_ms",
             ],
         ),
     ];
@@ -2857,6 +3251,7 @@ fn quarantine_database(
     sync_directory(parent)?;
     Ok(StorageRecoveryOccurrence {
         recovery_id: format!("storage-recovery-{occurred_at_unix_millis}-{sequence}"),
+        public_token: String::new(),
         occurred_at_unix_millis,
         reason,
         quarantine_directory,
@@ -2941,6 +3336,23 @@ fn initialize_schema(connection: &mut Connection) -> Result<(), StoreError> {
         if user_version < 5 {
             transaction.execute_batch(MIGRATION_V5_SQL)?;
         }
+        if user_version < 6 {
+            let has_events = transaction
+                .query_row(
+                    "SELECT 1 FROM sqlite_master
+                     WHERE type = 'table' AND name = 'events'",
+                    [],
+                    |_| Ok(()),
+                )
+                .optional()?
+                .is_some();
+            if !has_events {
+                return Err(StoreError::Corrupt(
+                    "schema-v6 migration requires the events table".to_owned(),
+                ));
+            }
+            transaction.execute_batch(MIGRATION_V6_SQL)?;
+        }
     }
     transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     transaction.commit()?;
@@ -3006,6 +3418,44 @@ const MIGRATION_V5_SQL: &str = "DELETE FROM cooling_candidates;
      );
      CREATE INDEX cleanup_artifact_actions_attempt_sequence
          ON cleanup_artifact_actions (attempt_id, sequence);";
+
+const MIGRATION_V6_SQL: &str = "CREATE TABLE public_event_tokens (
+         event_id INTEGER PRIMARY KEY REFERENCES events(id) ON DELETE CASCADE,
+         event_token TEXT NOT NULL UNIQUE CHECK (length(event_token) = 32)
+     );
+     INSERT INTO public_event_tokens (event_id, event_token)
+         SELECT id, lower(hex(randomblob(16))) FROM events;
+     ALTER TABLE storage_recoveries ADD COLUMN public_token TEXT;
+     UPDATE storage_recoveries
+         SET public_token = lower(hex(randomblob(16)))
+         WHERE public_token IS NULL;
+     CREATE UNIQUE INDEX storage_recoveries_public_token
+         ON storage_recoveries (public_token);
+     CREATE TABLE mutation_authority (
+         singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+         namespace_token TEXT NOT NULL UNIQUE CHECK (length(namespace_token) = 32)
+     );
+     INSERT INTO mutation_authority (singleton, namespace_token)
+         VALUES (1, lower(hex(randomblob(16))));
+     CREATE TABLE control_metadata (
+         singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+         cleanup_policy_revision INTEGER NOT NULL
+             CHECK (cleanup_policy_revision >= 1)
+     );
+     INSERT INTO control_metadata (singleton, cleanup_policy_revision)
+         VALUES (1, 1);
+     CREATE TABLE ordinary_mutation_receipts (
+         namespace_token TEXT NOT NULL CHECK (length(namespace_token) = 32),
+         mutation_id TEXT NOT NULL CHECK (length(mutation_id) = 36),
+         canonical_version INTEGER NOT NULL CHECK (canonical_version = 1),
+         command_json TEXT NOT NULL,
+         receipt_json TEXT NOT NULL,
+         committed_at_ms INTEGER NOT NULL CHECK (committed_at_ms >= 0),
+         retain_until_ms INTEGER NOT NULL CHECK (retain_until_ms >= committed_at_ms),
+         PRIMARY KEY (namespace_token, mutation_id)
+     );
+     CREATE INDEX ordinary_mutation_receipts_recent
+         ON ordinary_mutation_receipts (committed_at_ms DESC, namespace_token, mutation_id);";
 
 const MIGRATION_V3_FOUNDATIONS_SQL: &str = "CREATE TABLE IF NOT EXISTS cleanup_attempts (
          id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -3220,6 +3670,7 @@ const SCHEMA_SQL: &str = "CREATE TABLE cleanup_attempts (
      CREATE TABLE storage_recoveries (
          id INTEGER PRIMARY KEY AUTOINCREMENT,
          recovery_id TEXT NOT NULL UNIQUE,
+         public_token TEXT NOT NULL UNIQUE CHECK (length(public_token) = 32),
          occurred_at_ms INTEGER NOT NULL CHECK (occurred_at_ms >= 0),
          reason_id TEXT NOT NULL CHECK (
              reason_id IN ('integrity_check_failed', 'required_schema_invalid')
@@ -3240,7 +3691,36 @@ const SCHEMA_SQL: &str = "CREATE TABLE cleanup_attempts (
          absence_since_ms INTEGER CHECK (absence_since_ms >= protected_at_ms)
      );
      CREATE INDEX incident_protections_recent
-         ON incident_protections (protected_at_ms DESC, incident_id ASC);";
+         ON incident_protections (protected_at_ms DESC, incident_id ASC);
+     CREATE TABLE public_event_tokens (
+         event_id INTEGER PRIMARY KEY REFERENCES events(id) ON DELETE CASCADE,
+         event_token TEXT NOT NULL UNIQUE CHECK (length(event_token) = 32)
+     );
+     CREATE TABLE mutation_authority (
+         singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+         namespace_token TEXT NOT NULL UNIQUE CHECK (length(namespace_token) = 32)
+     );
+     INSERT INTO mutation_authority (singleton, namespace_token)
+         VALUES (1, lower(hex(randomblob(16))));
+     CREATE TABLE control_metadata (
+         singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+         cleanup_policy_revision INTEGER NOT NULL
+             CHECK (cleanup_policy_revision >= 1)
+     );
+     INSERT INTO control_metadata (singleton, cleanup_policy_revision)
+         VALUES (1, 1);
+     CREATE TABLE ordinary_mutation_receipts (
+         namespace_token TEXT NOT NULL CHECK (length(namespace_token) = 32),
+         mutation_id TEXT NOT NULL CHECK (length(mutation_id) = 36),
+         canonical_version INTEGER NOT NULL CHECK (canonical_version = 1),
+         command_json TEXT NOT NULL,
+         receipt_json TEXT NOT NULL,
+         committed_at_ms INTEGER NOT NULL CHECK (committed_at_ms >= 0),
+         retain_until_ms INTEGER NOT NULL CHECK (retain_until_ms >= committed_at_ms),
+         PRIMARY KEY (namespace_token, mutation_id)
+     );
+     CREATE INDEX ordinary_mutation_receipts_recent
+         ON ordinary_mutation_receipts (committed_at_ms DESC, namespace_token, mutation_id);";
 
 const MANAGED_LIFECYCLE_SQL: &str = "CREATE TABLE IF NOT EXISTS managed_lifecycle (
          singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
@@ -3283,6 +3763,271 @@ fn events_have_attempt_id(transaction: &Transaction<'_>) -> Result<bool, StoreEr
     Ok(false)
 }
 
+fn reserve_mutation_receipt_slot(transaction: &Transaction<'_>) -> Result<(), StoreError> {
+    let count = transaction.query_row(
+        "SELECT COUNT(*) FROM ordinary_mutation_receipts",
+        [],
+        |row| row.get::<_, i64>(0),
+    )?;
+    let max_receipts = i64::try_from(MAX_MUTATION_RECEIPTS)
+        .map_err(|_| StoreError::Range("mutation receipt limit overflowed i64".to_owned()))?;
+    if count < max_receipts {
+        return Ok(());
+    }
+    Err(StoreError::Capacity(format!(
+        "the mutation receipt authority has reached its {MAX_MUTATION_RECEIPTS}-receipt admission limit"
+    )))
+}
+
+fn current_mutation_namespace(connection: &Connection) -> Result<String, StoreError> {
+    connection
+        .query_row(
+            "SELECT namespace_token FROM mutation_authority WHERE singleton = 1",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .map_err(StoreError::from)
+        .and_then(|token| {
+            if unlinger_protocol::is_valid_namespace_token(&token) {
+                Ok(token)
+            } else {
+                Err(StoreError::Corrupt(
+                    "mutation authority namespace has an invalid shape".to_owned(),
+                ))
+            }
+        })
+}
+
+fn cleanup_policy_revision_connection(connection: &Connection) -> Result<u64, StoreError> {
+    let revision = connection.query_row(
+        "SELECT cleanup_policy_revision FROM control_metadata WHERE singleton = 1",
+        [],
+        |row| row.get::<_, i64>(0),
+    )?;
+    u64::try_from(revision)
+        .map_err(|_| StoreError::Corrupt("cleanup policy revision is negative".to_owned()))
+}
+
+fn mutation_receipt_connection(
+    connection: &Connection,
+    context: &MutationContext,
+) -> Result<Option<MutationReceipt>, StoreError> {
+    let receipt_json = connection
+        .query_row(
+            "SELECT receipt_json FROM ordinary_mutation_receipts
+             WHERE namespace_token = ?1 AND mutation_id = ?2",
+            params![context.namespace_token, context.mutation_id],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?;
+    receipt_json
+        .map(|json| {
+            let receipt: MutationReceipt = serde_json::from_str(&json)?;
+            validate_stored_mutation_receipt(&receipt, context, receipt.kind)?;
+            Ok(receipt)
+        })
+        .transpose()
+}
+
+fn validate_stored_mutation_receipt(
+    receipt: &MutationReceipt,
+    context: &MutationContext,
+    expected_kind: MutationKind,
+) -> Result<(), StoreError> {
+    if receipt.namespace_token != context.namespace_token
+        || receipt.mutation_id != context.mutation_id
+        || receipt.kind != expected_kind
+        || receipt.retain_until_unix_millis < receipt.committed_at_unix_millis
+    {
+        return Err(StoreError::Corrupt(
+            "stored mutation receipt disagrees with its durable index or canonical request"
+                .to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+fn store_policy_facts_connection(
+    connection: &Connection,
+    mutation: &OrdinaryMutation,
+    now_unix_millis: u64,
+) -> Result<StorePolicyFacts, StoreError> {
+    let now = sqlite_millis(now_unix_millis, "policy evaluation timestamp")?;
+    let paused = connection
+        .query_row(
+            "SELECT integer_value FROM settings WHERE key = 'pause_until_ms'",
+            [],
+            |row| row.get::<_, Option<i64>>(0),
+        )
+        .optional()?
+        .flatten()
+        .is_some_and(|deadline| deadline > now);
+    let mut facts = StorePolicyFacts {
+        paused,
+        ..StorePolicyFacts::default()
+    };
+    let incident_id = match mutation {
+        OrdinaryMutation::Pause { .. } | OrdinaryMutation::Resume => return Ok(facts),
+        OrdinaryMutation::RetryFailedCleanup { incident_id }
+        | OrdinaryMutation::ProtectIncident { incident_id }
+        | OrdinaryMutation::UnprotectIncident { incident_id } => incident_id,
+    };
+    facts.cleanup_blocked = connection
+        .query_row(
+            "SELECT 1 FROM cleanup_retry_blocks WHERE incident_id = ?1",
+            params![incident_id],
+            |_| Ok(()),
+        )
+        .optional()?
+        .is_some();
+    facts.incident_observed = connection
+        .query_row(
+            "SELECT 1 FROM events
+             WHERE incident_id = ?1 AND kind = 'observation' LIMIT 1",
+            params![incident_id],
+            |_| Ok(()),
+        )
+        .optional()?
+        .is_some();
+    facts.incident_protected = connection
+        .query_row(
+            "SELECT 1 FROM incident_protections WHERE incident_id = ?1",
+            params![incident_id],
+            |_| Ok(()),
+        )
+        .optional()?
+        .is_some();
+    Ok(facts)
+}
+
+fn apply_ordinary_mutation(
+    transaction: &Transaction<'_>,
+    mutation: &OrdinaryMutation,
+    committed_at_unix_millis: u64,
+) -> Result<MutationResult, StoreError> {
+    let committed_at = sqlite_millis(committed_at_unix_millis, "mutation timestamp")?;
+    match mutation {
+        OrdinaryMutation::Pause { duration_millis } => {
+            let deadline = committed_at_unix_millis
+                .checked_add(*duration_millis)
+                .ok_or_else(|| StoreError::Range("pause deadline overflowed u64".to_owned()))?;
+            let deadline_sqlite = sqlite_millis(deadline, "pause deadline")?;
+            transaction.execute(
+                "INSERT INTO settings (key, integer_value) VALUES ('pause_until_ms', ?1)
+                 ON CONFLICT(key) DO UPDATE SET integer_value = excluded.integer_value",
+                params![deadline_sqlite],
+            )?;
+            Ok(MutationResult::Paused {
+                until_unix_millis: deadline,
+            })
+        }
+        OrdinaryMutation::Resume => {
+            let changed =
+                transaction.execute("DELETE FROM settings WHERE key = 'pause_until_ms'", [])?;
+            if changed != 1 {
+                return Err(StoreError::Corrupt(
+                    "resume policy allowed without an exact durable pause".to_owned(),
+                ));
+            }
+            Ok(MutationResult::Resumed)
+        }
+        OrdinaryMutation::RetryFailedCleanup { incident_id } => {
+            let tracking_key = transaction
+                .query_row(
+                    "SELECT tracking_key FROM cleanup_retry_blocks WHERE incident_id = ?1",
+                    params![incident_id],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()?
+                .ok_or_else(|| {
+                    StoreError::Corrupt(
+                        "retry policy allowed without an exact cleanup block".to_owned(),
+                    )
+                })?;
+            transaction.execute(
+                "DELETE FROM cleanup_retry_blocks WHERE incident_id = ?1",
+                params![incident_id],
+            )?;
+            transaction.execute(
+                "DELETE FROM cooling_candidates WHERE tracking_key = ?1",
+                params![tracking_key],
+            )?;
+            Ok(MutationResult::RetryScheduled {
+                incident_id: incident_id.clone(),
+            })
+        }
+        OrdinaryMutation::ProtectIncident { incident_id } => {
+            let payload_json = transaction
+                .query_row(
+                    "SELECT payload_json FROM events
+                     WHERE incident_id = ?1 AND kind = 'observation'
+                     ORDER BY occurred_at_ms DESC, id DESC LIMIT 1",
+                    params![incident_id],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()?
+                .ok_or_else(|| {
+                    StoreError::Corrupt(
+                        "protection policy allowed without an exact observation".to_owned(),
+                    )
+                })?;
+            let EventPayload::Observation { report } =
+                serde_json::from_str::<EventPayload>(&payload_json)?
+            else {
+                return Err(StoreError::Corrupt(
+                    "observation index selected a non-observation payload".to_owned(),
+                ));
+            };
+            if report.incident_id != *incident_id {
+                return Err(StoreError::Corrupt(
+                    "observation incident ID disagrees with its index".to_owned(),
+                ));
+            }
+            transaction.execute(
+                "INSERT INTO incident_protections (
+                     incident_id, root_identity_fingerprint,
+                     member_fingerprint, protected_at_ms
+                 ) VALUES (?1, ?2, ?3, ?4)",
+                params![
+                    report.incident_id,
+                    report.root.identity_fingerprint,
+                    report.member_fingerprint,
+                    committed_at
+                ],
+            )?;
+            let protection =
+                protection_summary_transaction(transaction, incident_id)?.ok_or_else(|| {
+                    StoreError::Corrupt(
+                        "incident protection disappeared during creation".to_owned(),
+                    )
+                })?;
+            Ok(MutationResult::IncidentProtected {
+                protection: PublicProtectionSummary {
+                    incident_id: protection.incident_id,
+                    protected_at_unix_millis: protection.protected_at_unix_millis,
+                    last_exact_observed_at_unix_millis: protection
+                        .last_exact_observed_at_unix_millis,
+                    exact_absence_since_unix_millis: protection.exact_absence_since_unix_millis,
+                },
+            })
+        }
+        OrdinaryMutation::UnprotectIncident { incident_id } => {
+            let changed = transaction.execute(
+                "DELETE FROM incident_protections WHERE incident_id = ?1",
+                params![incident_id],
+            )?;
+            if changed != 1 {
+                return Err(StoreError::Corrupt(
+                    "unprotect policy allowed without an exact protection".to_owned(),
+                ));
+            }
+            Ok(MutationResult::IncidentUnprotected {
+                incident_id: incident_id.clone(),
+            })
+        }
+    }
+}
+
 fn insert_event_transaction(
     transaction: &Transaction<'_>,
     attempt_id: Option<i64>,
@@ -3307,7 +4052,21 @@ fn insert_event_transaction(
             payload_json
         ],
     )?;
-    Ok(transaction.last_insert_rowid())
+    let event_id = transaction.last_insert_rowid();
+    insert_public_event_token(transaction, event_id)?;
+    Ok(event_id)
+}
+
+fn insert_public_event_token(
+    transaction: &Transaction<'_>,
+    event_id: i64,
+) -> Result<(), StoreError> {
+    transaction.execute(
+        "INSERT INTO public_event_tokens (event_id, event_token)
+         VALUES (?1, lower(hex(randomblob(16))))",
+        params![event_id],
+    )?;
+    Ok(())
 }
 
 fn actions_for_attempt(

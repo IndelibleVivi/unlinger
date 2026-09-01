@@ -1,0 +1,107 @@
+{
+  "schema_version": 1,
+  "platform": {
+    "source_target": {
+      "os": "macos",
+      "minimum_major": 14
+    },
+    "architectures": [
+      {
+        "id": "arm64",
+        "source_verified": true,
+        "controlled_field_verified": true,
+        "release_verified": false
+      },
+      {
+        "id": "x86_64",
+        "source_verified": false,
+        "controlled_field_verified": false,
+        "release_verified": false
+      }
+    ],
+    "universal_binary_verified": false
+  },
+  "recognized_families": [
+    {
+      "id": "agent-browser",
+      "deterministic_classification": true,
+      "automatic_process_eligibility": {
+        "bundle_id": "com.google.chrome.for.testing",
+        "exact_versions": ["151.0.7922.34"],
+        "controller_present": false
+      },
+      "always_protected": [
+        "controller_bearing",
+        "headed_or_attached",
+        "standard_or_persistent_profile",
+        "unknown_mixed_or_wrong_version"
+      ],
+      "synthetic_verified": true,
+      "controlled_field_verified": false,
+      "ambient_field_verified": false
+    },
+    {
+      "id": "playwright",
+      "deterministic_classification": true,
+      "automatic_process_eligibility": {
+        "bundle_id": "com.google.chrome.for.testing",
+        "exact_versions": ["151.0.7922.34"],
+        "controller_present": false
+      },
+      "always_protected": [
+        "controller_bearing",
+        "headed_or_attached",
+        "standard_or_persistent_profile",
+        "unknown_mixed_or_wrong_version"
+      ],
+      "synthetic_verified": true,
+      "controlled_field_verified": true,
+      "ambient_field_verified": false
+    },
+    {
+      "id": "puppeteer",
+      "deterministic_classification": true,
+      "automatic_process_eligibility": {
+        "bundle_id": "com.google.chrome.for.testing",
+        "exact_versions": ["151.0.7922.34"],
+        "controller_present": false
+      },
+      "always_protected": [
+        "controller_bearing",
+        "headed_or_attached",
+        "standard_or_persistent_profile",
+        "unknown_mixed_or_wrong_version"
+      ],
+      "synthetic_verified": true,
+      "controlled_field_verified": false,
+      "ambient_field_verified": false
+    }
+  ],
+  "artifacts": [
+    {
+      "kind": "devtools_active_port",
+      "automatic_eligibility": "exact_admitted_file_after_tree_gone_and_both_revival_checks",
+      "synthetic_verified": true,
+      "controlled_field_verified": true,
+      "ambient_field_verified": false,
+      "known_residuals": [
+        "crash_after_quarantine_rename_can_strand_exact_quarantine_entry",
+        "same_uid_swap_toctou_between_final_revalidation_and_unlinkat"
+      ]
+    }
+  ],
+  "protocol": {
+    "source_app_schema": 3,
+    "source_operator_schema": 1,
+    "historical_app_schema": 2,
+    "server_accepts": [1, 3],
+    "installed_generation": 9,
+    "installed_schemas": [1],
+    "installed_v3_integration": false
+  },
+  "acceptance": {
+    "ambient_enforcement_accepted": false,
+    "multi_day_dogfood_accepted": false,
+    "public_release": false
+  }
+}

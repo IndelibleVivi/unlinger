@@ -11,9 +11,11 @@ use unlinger_core::{
     ProcessTarget, ResourceSnapshot, RootSummary, RuntimeArtifactKind, SignalDisposition,
 };
 use unlinger_daemon::{
-    CoolingClock, EventKind, EventPayload, HistoryStore, ManagedStartupPhase, ObservationRecord,
-    ObservedIncidentIdentity, RetentionPolicy, StorageRecoveryReason, StoreError,
+    CoolingClock, EventKind, EventPayload, HistoryStore, ManagedStartupPhase, MutationLookup,
+    ObservationRecord, ObservedIncidentIdentity, OrdinaryMutation, RetentionPolicy,
+    StorageRecoveryReason, StoreError,
 };
+use unlinger_protocol::{MutationContext, MutationKind, MutationOutcome, MutationResult};
 
 struct TempDatabase(PathBuf);
 
@@ -284,7 +286,11 @@ fn downgrade_current_database_to_v4(path: &PathBuf) {
     let connection = Connection::open(path).expect("open current database for v4 fixture");
     connection
         .execute_batch(
-            "DROP TABLE cleanup_artifact_actions;
+            "DROP TABLE ordinary_mutation_receipts;
+             DROP TABLE control_metadata;
+             DROP TABLE mutation_authority;
+             DROP TABLE public_event_tokens;
+             DROP TABLE cleanup_artifact_actions;
              DROP TABLE incident_protections;
              DROP TABLE storage_recoveries;
              ALTER TABLE cleanup_attempts DROP COLUMN resources_json;
@@ -328,6 +334,42 @@ fn downgrade_current_database_to_v4(path: &PathBuf) {
              PRAGMA user_version = 4;",
         )
         .expect("build schema-v4 fixture");
+}
+
+fn downgrade_current_database_to_v5(path: &PathBuf) {
+    let connection = Connection::open(path).expect("open current database for v5 fixture");
+    connection
+        .execute_batch(
+            "DROP TABLE ordinary_mutation_receipts;
+             DROP TABLE control_metadata;
+             DROP TABLE mutation_authority;
+             DROP TABLE public_event_tokens;
+             DROP INDEX storage_recoveries_recent;
+             ALTER TABLE storage_recoveries RENAME TO storage_recoveries_v6;
+             CREATE TABLE storage_recoveries (
+                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                 recovery_id TEXT NOT NULL UNIQUE,
+                 occurred_at_ms INTEGER NOT NULL CHECK (occurred_at_ms >= 0),
+                 reason_id TEXT NOT NULL CHECK (
+                     reason_id IN ('integrity_check_failed', 'required_schema_invalid')
+                 ),
+                 quarantine_directory_name TEXT NOT NULL,
+                 quarantined_sidecar_count INTEGER NOT NULL
+                     CHECK (quarantined_sidecar_count >= 0)
+             );
+             INSERT INTO storage_recoveries (
+                 id, recovery_id, occurred_at_ms, reason_id,
+                 quarantine_directory_name, quarantined_sidecar_count
+             ) SELECT
+                 id, recovery_id, occurred_at_ms, reason_id,
+                 quarantine_directory_name, quarantined_sidecar_count
+             FROM storage_recoveries_v6;
+             DROP TABLE storage_recoveries_v6;
+             CREATE INDEX storage_recoveries_recent
+                 ON storage_recoveries (occurred_at_ms DESC, id DESC);
+             PRAGMA user_version = 5;",
+        )
+        .expect("build schema-v5 fixture");
 }
 
 #[test]
@@ -475,7 +517,7 @@ fn migrates_v2_history_and_pause_but_resets_legacy_wall_clock_cooling() {
     let synchronous: i64 = connection
         .pragma_query_value(None, "synchronous", |row| row.get(0))
         .expect("read synchronous mode");
-    assert_eq!(version, 5);
+    assert_eq!(version, 6);
     assert_eq!(journal_mode, "wal");
     assert_eq!(synchronous, 2);
     drop(connection);
@@ -494,7 +536,7 @@ fn migrates_v2_history_and_pause_but_resets_legacy_wall_clock_cooling() {
 }
 
 #[test]
-fn v3_to_v5_adds_lifecycle_and_resets_signature_unknown_cooling() {
+fn v3_to_v6_adds_lifecycle_public_identity_and_resets_signature_unknown_cooling() {
     let database = TempDatabase::new();
     let store = HistoryStore::open(&database.0).expect("create current store");
     let report = cooling_report("inc-v3");
@@ -540,7 +582,7 @@ fn v3_to_v5_adds_lifecycle_and_resets_signature_unknown_cooling() {
 }
 
 #[test]
-fn v4_to_v5_preserves_history_and_retry_block_but_resets_incompatible_cooling() {
+fn v4_to_v6_preserves_history_and_retry_block_but_resets_incompatible_cooling() {
     let database = TempDatabase::new();
     let store = HistoryStore::open(&database.0).expect("create current store");
     let cooling = cooling_report("inc-v4-cooling");
@@ -574,7 +616,7 @@ fn v4_to_v5_preserves_history_and_retry_block_but_resets_incompatible_cooling() 
     downgrade_current_database_to_v4(&database.0);
 
     let migrated = HistoryStore::open(&database.0).expect("migrate v4 to v5");
-    assert_eq!(HistoryStore::schema_version(), 5);
+    assert_eq!(HistoryStore::schema_version(), 6);
     let connection = Connection::open(&database.0).expect("inspect migrated artifact journal");
     let artifact_columns = connection
         .prepare("PRAGMA table_info(cleanup_artifact_actions)")
@@ -613,6 +655,73 @@ fn v4_to_v5_preserves_history_and_retry_block_but_resets_incompatible_cooling() 
             )
             .expect("signature-unknown v4 cooling resets")
     );
+}
+
+#[test]
+fn v5_to_v6_backfills_event_tokens_and_creates_mutation_authority() {
+    let database = TempDatabase::new();
+    let store = HistoryStore::open(&database.0).expect("create current store");
+    store
+        .record_observation(1_010, &confirmed_report("history-v5"))
+        .expect("record history before v5 fixture");
+    drop(store);
+    downgrade_current_database_to_v5(&database.0);
+
+    let migrated = HistoryStore::open(&database.0).expect("migrate v5 to v6");
+    let history = migrated.history(10).expect("preserved history");
+    assert_eq!(history.len(), 1);
+    assert_eq!(history[0].event_token.len(), 32);
+    assert_eq!(
+        migrated
+            .mutation_namespace_token()
+            .expect("namespace")
+            .len(),
+        32
+    );
+    assert_eq!(migrated.cleanup_policy_revision().expect("revision"), 1);
+    drop(migrated);
+
+    let connection = Connection::open(&database.0).expect("inspect migrated schema");
+    let version: i64 = connection
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .expect("read migrated version");
+    assert_eq!(version, 6);
+}
+
+#[test]
+fn v5_to_v6_failure_rolls_back_the_entire_migration_transaction() {
+    let database = TempDatabase::new();
+    let store = HistoryStore::open(&database.0).expect("create current store");
+    drop(store);
+    downgrade_current_database_to_v5(&database.0);
+    let connection = Connection::open(&database.0).expect("damage v5 fixture");
+    connection
+        .execute_batch("DROP TABLE events;")
+        .expect("remove required v5 events table");
+    drop(connection);
+
+    let error = HistoryStore::open(&database.0).expect_err("migration must fail atomically");
+    assert!(matches!(error, StoreError::Corrupt(_)));
+    let preserved = Connection::open(&database.0).expect("inspect rolled-back v5 fixture");
+    let version: i64 = preserved
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .expect("read preserved version");
+    assert_eq!(version, 5);
+    for table in [
+        "public_event_tokens",
+        "mutation_authority",
+        "control_metadata",
+        "ordinary_mutation_receipts",
+    ] {
+        let count: i64 = preserved
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
+                [table],
+                |row| row.get(0),
+            )
+            .expect("query rolled-back table");
+        assert_eq!(count, 0, "{table} must not survive failed migration");
+    }
 }
 
 #[test]
@@ -2057,12 +2166,15 @@ fn post_migration_shape_failure_is_returned_without_fresh_start() {
     drop(connection);
 
     let error = HistoryStore::open(&database).expect_err("post-migration shape must fail");
-    assert!(matches!(error, StoreError::Corrupt(_)));
+    assert!(
+        matches!(error, StoreError::Corrupt(_)),
+        "unexpected migration failure: {error:?}"
+    );
     let preserved = Connection::open(&database).expect("inspect failed candidate");
     let version: i64 = preserved
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .expect("read attempted migration version");
-    assert_eq!(version, 5);
+    assert_eq!(version, 4);
     let events: i64 = preserved
         .query_row(
             "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'events'",
@@ -2171,6 +2283,14 @@ fn most_recent_reclaim_uses_a_dedicated_query_not_history_presentation_limit() {
                 ],
             )
             .expect("insert newer observation");
+        let event_id = transaction.last_insert_rowid();
+        transaction
+            .execute(
+                "INSERT INTO public_event_tokens (event_id, event_token)
+                 VALUES (?1, lower(hex(randomblob(16))))",
+                params![event_id],
+            )
+            .expect("insert public event token");
     }
     transaction.commit().expect("commit bulk fixture");
     drop(connection);
@@ -2610,5 +2730,364 @@ fn retry_blocks_project_bounded_redacted_attention_and_retire_only_after_exact_a
         store
             .cleanup_blocked("inc-revived")
             .expect("named isolation")
+    );
+}
+
+#[test]
+fn ordinary_pause_receipt_is_atomic_durable_idempotent_and_conflict_checked() {
+    let database = TempDatabase::new();
+    let store = HistoryStore::open(&database.0).expect("open store");
+    let context = MutationContext {
+        namespace_token: store.mutation_namespace_token().expect("namespace"),
+        mutation_id: "11111111-1111-4111-8111-111111111111".to_owned(),
+    };
+    let mutation = OrdinaryMutation::Pause {
+        duration_millis: 500,
+    };
+
+    let first = store
+        .commit_ordinary_mutation(&context, &mutation, 1_000)
+        .expect("commit pause and receipt");
+    assert!(first.newly_committed);
+    assert!(first.state_changed);
+    assert_eq!(first.receipt.kind, MutationKind::Pause);
+    assert!(matches!(
+        first.receipt.outcome,
+        MutationOutcome::Applied {
+            result: MutationResult::Paused {
+                until_unix_millis: 1_500
+            }
+        }
+    ));
+    assert_eq!(first.receipt.policy_revision_after, 2);
+    assert_eq!(
+        first.receipt.retain_until_unix_millis,
+        1_000 + unlinger_daemon::MUTATION_RECONCILIATION_WINDOW_MILLIS
+    );
+    assert_eq!(
+        store.pause_until().expect("read committed pause"),
+        Some(1_500)
+    );
+
+    let duplicate = store
+        .commit_ordinary_mutation(&context, &mutation, 9_000)
+        .expect("return original receipt");
+    assert!(!duplicate.newly_committed);
+    assert!(!duplicate.state_changed);
+    assert_eq!(duplicate.receipt, first.receipt);
+    assert_eq!(
+        store.pause_until().expect("pause is not extended"),
+        Some(1_500)
+    );
+
+    let conflict = store
+        .commit_ordinary_mutation(
+            &context,
+            &OrdinaryMutation::Pause {
+                duration_millis: 700,
+            },
+            10_000,
+        )
+        .expect_err("same ID with different arguments must conflict");
+    assert!(matches!(conflict, StoreError::Conflict(_)));
+    drop(store);
+
+    let reopened = HistoryStore::open(&database.0).expect("reopen store");
+    assert_eq!(
+        reopened
+            .mutation_lookup(&context)
+            .expect("read durable receipt"),
+        MutationLookup::Committed(first.receipt)
+    );
+    assert_eq!(
+        reopened.pause_until().expect("read durable state"),
+        Some(1_500)
+    );
+}
+
+#[test]
+fn duplicate_retry_receipt_does_not_clear_a_new_cooling_candidate() {
+    let database = TempDatabase::new();
+    let store = HistoryStore::open(&database.0).expect("open store");
+    let report = confirmed_report("inc-retry-receipt");
+    let attempt = store
+        .begin_cleanup_attempt(1_000, &report, "epoch-a")
+        .expect("begin failed cleanup");
+    store
+        .complete_cleanup_attempt(
+            &attempt,
+            1_100,
+            &failed_receipt(
+                "inc-retry-receipt",
+                IncidentState::Failed,
+                "cleanup.signal_rejected",
+            ),
+        )
+        .expect("create retry block");
+    let context = MutationContext {
+        namespace_token: store.mutation_namespace_token().expect("namespace"),
+        mutation_id: "22222222-2222-4222-8222-222222222222".to_owned(),
+    };
+    let mutation = OrdinaryMutation::RetryFailedCleanup {
+        incident_id: "inc-retry-receipt".to_owned(),
+    };
+    assert!(
+        store
+            .commit_ordinary_mutation(&context, &mutation, 2_000)
+            .expect("authorize retry")
+            .state_changed
+    );
+
+    let mut cooling = report;
+    cooling.state = IncidentState::Cooling;
+    cooling.gates.confirmed_abandonment = false;
+    assert!(
+        !store
+            .track_cooling(
+                &cooling,
+                &cooling_clock(3_000, 3_000, "boot-a", "epoch-a"),
+                90_000,
+                120_000,
+            )
+            .expect("start fresh cooling after authorization")
+    );
+    assert!(
+        !store
+            .commit_ordinary_mutation(&context, &mutation, 4_000)
+            .expect("duplicate returns receipt")
+            .state_changed
+    );
+    assert!(
+        store
+            .track_cooling(
+                &cooling,
+                &cooling_clock(93_000, 93_000, "boot-a", "epoch-a"),
+                90_000,
+                120_000,
+            )
+            .expect("duplicate must not clear cooling again")
+    );
+}
+
+#[test]
+fn protect_and_unprotect_receipt_replays_cannot_mutate_later_state() {
+    let database = TempDatabase::new();
+    let store = HistoryStore::open(&database.0).expect("open store");
+    let report = confirmed_report("inc-protection-receipt");
+    store
+        .record_observation(100, &report)
+        .expect("record exact observation");
+    let namespace_token = store.mutation_namespace_token().expect("namespace");
+    let protect_context = MutationContext {
+        namespace_token: namespace_token.clone(),
+        mutation_id: "33333333-3333-4333-8333-333333333333".to_owned(),
+    };
+    let protect = OrdinaryMutation::ProtectIncident {
+        incident_id: report.incident_id.clone(),
+    };
+    let first_protect = store
+        .commit_ordinary_mutation(&protect_context, &protect, 200)
+        .expect("protect exact incident");
+    let duplicate_protect = store
+        .commit_ordinary_mutation(&protect_context, &protect, 300)
+        .expect("replay protection receipt");
+    assert!(!duplicate_protect.newly_committed);
+    assert_eq!(duplicate_protect.receipt, first_protect.receipt);
+
+    let unprotect_context = MutationContext {
+        namespace_token: namespace_token.clone(),
+        mutation_id: "44444444-4444-4444-8444-444444444444".to_owned(),
+    };
+    let unprotect = OrdinaryMutation::UnprotectIncident {
+        incident_id: report.incident_id.clone(),
+    };
+    assert!(
+        store
+            .commit_ordinary_mutation(&unprotect_context, &unprotect, 400)
+            .expect("remove exact protection")
+            .state_changed
+    );
+    store
+        .commit_ordinary_mutation(
+            &MutationContext {
+                namespace_token,
+                mutation_id: "55555555-5555-4555-8555-555555555555".to_owned(),
+            },
+            &protect,
+            500,
+        )
+        .expect("create a later protection");
+    assert!(
+        !store
+            .commit_ordinary_mutation(&unprotect_context, &unprotect, 600)
+            .expect("old unprotect receipt replays")
+            .state_changed
+    );
+    assert_eq!(
+        store
+            .protection_for_incident(&report.incident_id)
+            .expect("query later protection")
+            .expect("later protection survives")
+            .protected_at_unix_millis,
+        500
+    );
+}
+
+#[test]
+fn receipt_prune_rotates_namespace_atomically_and_never_fabricates_not_found() {
+    let database = TempDatabase::new();
+    let store = HistoryStore::open(&database.0).expect("open store");
+    let original_namespace = store.mutation_namespace_token().expect("namespace");
+    let context = MutationContext {
+        namespace_token: original_namespace.clone(),
+        mutation_id: "66666666-6666-4666-8666-666666666666".to_owned(),
+    };
+    store
+        .commit_ordinary_mutation(
+            &context,
+            &OrdinaryMutation::Pause {
+                duration_millis: 1_000,
+            },
+            100_000,
+        )
+        .expect("commit receipt");
+    store
+        .prune(
+            100_001,
+            RetentionPolicy {
+                max_age_millis: 1,
+                max_events: 0,
+            },
+        )
+        .expect("prune inside reconciliation window");
+    assert!(matches!(
+        store.mutation_lookup(&context).expect("read young receipt"),
+        MutationLookup::Committed(_)
+    ));
+    assert_eq!(
+        store.mutation_namespace_token().expect("same namespace"),
+        original_namespace
+    );
+
+    store
+        .prune(
+            100_000 + unlinger_daemon::MUTATION_RECONCILIATION_WINDOW_MILLIS,
+            RetentionPolicy {
+                max_age_millis: 1,
+                max_events: 0,
+            },
+        )
+        .expect("prune beyond reconciliation window");
+    assert_ne!(
+        store.mutation_namespace_token().expect("rotated namespace"),
+        original_namespace
+    );
+    assert_eq!(
+        store
+            .mutation_lookup(&context)
+            .expect("old authority lookup"),
+        MutationLookup::AuthorityLost
+    );
+}
+
+#[test]
+fn old_namespace_missing_receipt_request_is_rejected_without_state_change() {
+    let database = TempDatabase::new();
+    let store = HistoryStore::open(&database.0).expect("open store");
+    let original_namespace = store.mutation_namespace_token().expect("namespace");
+    let expiring = MutationContext {
+        namespace_token: original_namespace.clone(),
+        mutation_id: "77777777-7777-4777-8777-777777777777".to_owned(),
+    };
+    store
+        .commit_ordinary_mutation(
+            &expiring,
+            &OrdinaryMutation::Pause {
+                duration_millis: 10,
+            },
+            1_000,
+        )
+        .expect("commit expiring receipt");
+    store
+        .prune(
+            1_000 + unlinger_daemon::MUTATION_RECONCILIATION_WINDOW_MILLIS,
+            RetentionPolicy::default(),
+        )
+        .expect("expire receipt and rotate namespace");
+    let old_context = MutationContext {
+        namespace_token: original_namespace,
+        mutation_id: "88888888-8888-4888-8888-888888888888".to_owned(),
+    };
+    let error = store
+        .commit_ordinary_mutation(&old_context, &OrdinaryMutation::Resume, 2_000)
+        .expect_err("old namespace request cannot apply");
+    assert!(matches!(error, StoreError::AuthorityLost(_)));
+}
+
+#[test]
+fn public_event_tokens_are_unique_and_stable_across_reopen() {
+    let database = TempDatabase::new();
+    let store = HistoryStore::open(&database.0).expect("open store");
+    store
+        .record_observation(1_000, &confirmed_report("inc-token-a"))
+        .expect("record first event");
+    store
+        .record_observation(1_001, &confirmed_report("inc-token-b"))
+        .expect("record second event");
+    let first = store.history(10).expect("read event tokens");
+    assert_eq!(first.len(), 2);
+    assert_ne!(first[0].event_token, first[1].event_token);
+    assert!(first.iter().all(|event| event.event_token.len() == 32));
+    let tokens = first
+        .iter()
+        .map(|event| event.event_token.clone())
+        .collect::<Vec<_>>();
+    drop(store);
+
+    let reopened = HistoryStore::open(&database.0).expect("reopen store");
+    assert_eq!(
+        reopened
+            .history(10)
+            .expect("read stable tokens")
+            .into_iter()
+            .map(|event| event.event_token)
+            .collect::<Vec<_>>(),
+        tokens
+    );
+}
+
+#[test]
+fn observation_batch_rolls_back_every_event_when_one_insert_fails() {
+    let database = TempDatabase::new();
+    let store = HistoryStore::open(&database.0).expect("open store");
+    let connection = Connection::open(&database.0).expect("open trigger fixture");
+    connection
+        .execute_batch(
+            "CREATE TRIGGER reject_second_observation
+             BEFORE INSERT ON events
+             WHEN NEW.incident_id = 'inc-batch-b'
+             BEGIN
+                 SELECT RAISE(ABORT, 'injected batch failure');
+             END;",
+        )
+        .expect("install failure trigger");
+    drop(connection);
+
+    let error = store
+        .record_observation_batch(
+            1_000,
+            &[
+                confirmed_report("inc-batch-a"),
+                confirmed_report("inc-batch-b"),
+            ],
+        )
+        .expect_err("second insert aborts the batch");
+    assert!(error.to_string().contains("injected batch failure"));
+    assert!(
+        store
+            .history(10)
+            .expect("read rolled-back history")
+            .is_empty(),
+        "the first observation must not survive a failed batch"
     );
 }

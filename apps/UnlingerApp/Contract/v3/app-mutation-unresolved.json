@@ -1,0 +1,1 @@
+{"fixture_schema_version":1,"state":"mutation_unresolved","command":"pause","reason_id":"transport.mutation_delivery_uncertain","automatic_retry":false,"global_mutation_lock":true}

@@ -1458,6 +1458,92 @@ mod tests {
         short_version: String,
     }
 
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct SupportMatrix {
+        schema_version: u32,
+        platform: SupportPlatform,
+        recognized_families: Vec<SupportedFamily>,
+        artifacts: Vec<SupportedArtifact>,
+        protocol: ProtocolSupport,
+        acceptance: AcceptanceSupport,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct SupportPlatform {
+        source_target: SourceTarget,
+        architectures: Vec<ArchitectureSupport>,
+        universal_binary_verified: bool,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct SourceTarget {
+        os: String,
+        minimum_major: u32,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct ArchitectureSupport {
+        id: String,
+        source_verified: bool,
+        controlled_field_verified: bool,
+        release_verified: bool,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct SupportedFamily {
+        id: String,
+        deterministic_classification: bool,
+        automatic_process_eligibility: ProcessEligibility,
+        always_protected: Vec<String>,
+        synthetic_verified: bool,
+        controlled_field_verified: bool,
+        ambient_field_verified: bool,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct ProcessEligibility {
+        bundle_id: String,
+        exact_versions: Vec<String>,
+        controller_present: bool,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct SupportedArtifact {
+        kind: String,
+        automatic_eligibility: String,
+        synthetic_verified: bool,
+        controlled_field_verified: bool,
+        ambient_field_verified: bool,
+        known_residuals: Vec<String>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct ProtocolSupport {
+        source_app_schema: u32,
+        source_operator_schema: u32,
+        historical_app_schema: u32,
+        server_accepts: Vec<u32>,
+        installed_generation: u64,
+        installed_schemas: Vec<u32>,
+        installed_v3_integration: bool,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct AcceptanceSupport {
+        ambient_enforcement_accepted: bool,
+        multi_day_dogfood_accepted: bool,
+        public_release: bool,
+    }
+
     fn default_uid() -> u32 {
         501
     }
@@ -1629,6 +1715,98 @@ mod tests {
                 && pack.recorder_executable_basenames == ["ffmpeg"]
                 && matches!(pack.version_policy, VersionPolicy::ExactAllowlist { .. })
         }));
+    }
+
+    #[test]
+    fn machine_readable_support_matrix_matches_embedded_authority() {
+        let matrix: SupportMatrix =
+            serde_json::from_str(include_str!("../../../docs/support-matrix.v1.json"))
+                .expect("support matrix must decode strictly");
+        let rules = RuleSet::embedded().expect("embedded rules");
+
+        assert_eq!(matrix.schema_version, 1);
+        assert_eq!(matrix.platform.source_target.os, "macos");
+        assert_eq!(matrix.platform.source_target.minimum_major, 14);
+        assert!(!matrix.platform.universal_binary_verified);
+        assert_eq!(matrix.platform.architectures.len(), 2);
+        let arm64 = matrix
+            .platform
+            .architectures
+            .iter()
+            .find(|architecture| architecture.id == "arm64")
+            .expect("arm64 support row");
+        assert!(arm64.source_verified);
+        assert!(arm64.controlled_field_verified);
+        assert!(!arm64.release_verified);
+        let x86_64 = matrix
+            .platform
+            .architectures
+            .iter()
+            .find(|architecture| architecture.id == "x86_64")
+            .expect("x86_64 support row");
+        assert!(!x86_64.source_verified);
+        assert!(!x86_64.controlled_field_verified);
+        assert!(!x86_64.release_verified);
+
+        let matrix_ids = matrix
+            .recognized_families
+            .iter()
+            .map(|family| family.id.as_str())
+            .collect::<Vec<_>>();
+        let pack_ids = rules
+            .packs()
+            .iter()
+            .map(|pack| pack.id.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(matrix_ids, pack_ids);
+        for (family, pack) in matrix.recognized_families.iter().zip(rules.packs()) {
+            assert!(family.deterministic_classification);
+            assert!(family.synthetic_verified);
+            assert!(!family.ambient_field_verified);
+            assert!(!family.automatic_process_eligibility.controller_present);
+            assert!(
+                family
+                    .always_protected
+                    .iter()
+                    .any(|shape| shape == "controller_bearing")
+            );
+            let VersionPolicy::ExactAllowlist {
+                bundle_id,
+                versions,
+            } = &pack.version_policy
+            else {
+                panic!("{} must retain exact version admission", pack.id);
+            };
+            assert_eq!(family.automatic_process_eligibility.bundle_id, *bundle_id);
+            assert_eq!(
+                family.automatic_process_eligibility.exact_versions,
+                *versions
+            );
+            assert_eq!(family.controlled_field_verified, family.id == "playwright");
+        }
+
+        assert_eq!(matrix.artifacts.len(), 1);
+        let artifact = &matrix.artifacts[0];
+        assert_eq!(artifact.kind, "devtools_active_port");
+        assert_eq!(
+            artifact.automatic_eligibility,
+            "exact_admitted_file_after_tree_gone_and_both_revival_checks"
+        );
+        assert!(artifact.synthetic_verified);
+        assert!(artifact.controlled_field_verified);
+        assert!(!artifact.ambient_field_verified);
+        assert_eq!(artifact.known_residuals.len(), 2);
+
+        assert_eq!(matrix.protocol.source_app_schema, 3);
+        assert_eq!(matrix.protocol.source_operator_schema, 1);
+        assert_eq!(matrix.protocol.historical_app_schema, 2);
+        assert_eq!(matrix.protocol.server_accepts, [1, 3]);
+        assert_eq!(matrix.protocol.installed_generation, 9);
+        assert_eq!(matrix.protocol.installed_schemas, [1]);
+        assert!(!matrix.protocol.installed_v3_integration);
+        assert!(!matrix.acceptance.ambient_enforcement_accepted);
+        assert!(!matrix.acceptance.multi_day_dogfood_accepted);
+        assert!(!matrix.acceptance.public_release);
     }
 
     #[test]
