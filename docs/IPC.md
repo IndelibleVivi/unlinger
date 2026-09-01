@@ -219,9 +219,9 @@ V1 may expose bounded internal diagnostic identities needed by CLI/service trans
 
 ## Version skew and installed boundary
 
-Source server accepts schemas 1 and 3. Installed generation 9 accepts only schema 1 and returns a trusted schema-v1 `unsupported_schema` envelope to a v3 request. The App renders this as incompatible and does nothing else.
+The current generation-12 server accepts schemas 1 and 3. The retained generation-9 rollback target accepts only schema 1 and returns a trusted schema-v1 `unsupported_schema` envelope to a v3 request. The App renders such a legacy endpoint as incompatible and does nothing else.
 
-Source stores migrate SQLite databases to v6. Generation 9 supports v5 and cannot reopen a v6 database. The service source now retains the prior v5 snapshot and exact generation identity after candidate readiness, blocks mode/install/uninstall mutations during that lease, and exposes explicit report-only restart, accept and rollback commands. This does not itself prove installed v3 integration: the real generation-9 rollback/open and packaged App/restart runbook remain required, and the lane never arms.
+Generation 12 migrated the active candidate copy to SQLite v6. Generation 9 supports v5 and cannot reopen a v6 database, so the service retains its prior v5 snapshot and exact generation identity after candidate readiness, blocks mode/install/uninstall mutations during that lease, and exposes explicit report-only restart, accept and rollback commands. The real rollback restored generation 9, whose exact old CLI/daemon opened the v5 store and returned healthy ReadyReportOnly; generation 12 was then reinstalled and passed packaged App/daemon restart reconciliation. The lease remains pending and the lane never arms.
 
 ## Verification anchors
 

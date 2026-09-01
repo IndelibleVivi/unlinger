@@ -50,6 +50,6 @@ For manual source-only UI work, `scripts/demo-window.sh` runs an isolated report
 
 ## Installed boundary
 
-Installed generation 9 remains v1-only, report-only and unarmed until the owner-authorized installed runbook begins. Service source now retains generation 9's manifest/plist/v5 database through explicit candidate accept/rollback and provides an exact report-only restart. The App may enter the installed lane only through [`../../docs/INSTALLED_DOGFOOD.md`](../../docs/INSTALLED_DOGFOOD.md), including a real generation-9 rollback/open before the candidate is reinstalled for dogfood.
+Generation 12 and the ad-hoc-signed App are installed for private report-only dogfood. The service retains generation 9's manifest/plist/v5 database through explicit candidate accept/rollback and provides an exact report-only restart. [`../../docs/INSTALLED_DOGFOOD.md`](../../docs/INSTALLED_DOGFOOD.md) passed, including a real generation-9 rollback/open before generation 12 was installed and the App/daemon restart paths were reconciled.
 
-Until that runbook passes, the strongest claim remains **pre-v0.1 source candidate — isolated report-only verified**. It is not an ambient-enforcement acceptance or a public release.
+The strongest claim is **pre-v0.1 installed report-only candidate**. The lease remains pending; this is not an ambient-enforcement acceptance, a signed distribution candidate or a public release.

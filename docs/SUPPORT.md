@@ -41,10 +41,10 @@ The controlled DAP result is one exact point. It does not establish broad artifa
 | Rust CLI/service operator protocol | schema v1; lifecycle authority remains here |
 | Native App source protocol | schema v3 only |
 | Schema v2 | historical fixtures retained; superseded before installation; current server returns typed `unsupported_schema` |
-| Installed generation 9 | v1-only, report-only, unarmed |
-| Installed App/v3 integration | not yet performed; owner-authorized report-only runbook pending |
+| Installed generation 12 | schema v1 operator + v3 App endpoint; SQLite v6; report-only, unarmed; lease to generation 9/v5 retained |
+| Installed App/v3 integration | ad-hoc-signed private App installed; live socket and daemon/App restart reconciliation passed |
 
-Source SQLite schema v6 is incompatible with the generation-9 binary. The service source now implements the prior-generation manifest/plist/database lease, explicit accept/rollback and exact report-only restart. Installed v3 integration remains unproved until the real v5 rollback/open and packaged App/restart runbook passes without arm.
+SQLite schema v6 is incompatible with the generation-9 binary. The service therefore retains the prior-generation manifest/plist/v5 database lease and provides explicit accept/rollback plus exact report-only restart. The real v5 rollback/open and packaged App/restart runbook passed without arm; generation 12 remains unaccepted so that rollback stays available during dogfood.
 
 ## Acceptance meaning
 

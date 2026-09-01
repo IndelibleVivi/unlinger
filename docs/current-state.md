@@ -4,15 +4,15 @@
 
 **Programme:** Unlinger 0.1
 
-**Source:** private pre-v0.1 schema-v3 candidate; isolated report-only verified; acceptance rollback lease implemented locally
+**Source:** private pre-v0.1 schema-v3 candidate; installed report-only integration verified
 
-**Remote:** private origin `main`; the prior source tranche is green, while the rollback-lease diff is local and awaiting push/exact-head CI
+**Remote:** private origin `main` at `9d9d76535d329ea9cb1c34388e5b750262fa7778`; exact-head `backend` run `33483324021` is green
 
-**Installed runtime:** generation 9, v1-only, last verified healthy at a stable report-only floor
+**Installed runtime:** generation 12, schema-v3/v6 capable, healthy at a stable report-only floor; acceptance lease retains generation 9/v5
 
-**Activation:** unarmed; owner authorized the installed report-only runbook, but no installation has occurred at this source checkpoint
+**Activation:** unarmed; generation 12 and the packaged App are active for private report-only dogfood
 
-**Highest claim currently permitted:** **pre-v0.1 source candidate — isolated report-only verified** (acceptance level 2)
+**Highest claim currently permitted:** **pre-v0.1 installed report-only candidate** (acceptance level 3)
 
 ## Source truth
 
@@ -38,11 +38,15 @@ Notifications are best-effort local projections over bounded polling. They have 
 
 The service source now extends its durable install transaction through `CandidateReadyReportOnly`, `AcceptanceInProgress` and `Accepted`. A ready candidate retains the prior manifest, report-only plist and SQLite snapshot; install, uninstall and mode changes remain blocked until explicit `accept-candidate` or `rollback-candidate`. `restart-report-only` restarts only the exact active generation at the report-only floor and preserves a pending lease. Focused CLI tests cover phase disposition, rollback-material retention, invalid backup projection, install-time enforce rejection and command parsing.
 
-## Installed gate
+## Installed evidence
 
-Installed generation 9 uses schema-v1 IPC and a SQLite-v5-capable binary. Source v3 migrates the active database to v6, which generation 9 cannot reopen directly. The source rollback lease now preserves a SQLite-consistent v5 snapshot and exact prior generation through the post-ready App acceptance window.
+Generation 12 is the active exact-head candidate. Its daemon exposes frontend schema v3 over the owner-private socket, uses SQLite v6, is healthy and quiescent ReadyReportOnly, has no armed generation or enforcement epoch, and retains `candidate_ready_report_only` rollback authority to generation 9. The current lease reports the prior generation and SQLite backup present with `rollback_available: true`; it has not been accepted.
 
-Installed v3 integration remains unproved until the owner-authorized [`INSTALLED_DOGFOOD.md`](INSTALLED_DOGFOOD.md) lane passes exact-head CI, installs without arm, exercises the lease, proves the generation-9 CLI/daemon opens the restored v5 database and returns healthy ReadyReportOnly, then reinstalls the same candidate and completes packaged App/daemon restart reconciliation. The second rollback lease remains pending during initial dogfood.
+The rollback lease was exercised rather than inspected. Generation 10 migrated the active copy to v6, passed installed v3 reads/mutations and daemon restart, then `rollback-candidate` restored generation 9 and the SQLite-v5 snapshot. The exact generation-9 CLI/daemon reopened that database and returned healthy, quiescent ReadyReportOnly with exact PID/generation/binary/permission agreement. Candidate v6 database state was preserved separately as failed-generation evidence.
+
+The first candidate reinstall exposed an acceptance-only race: `restart-report-only` required two separate quiescent reads and could repeatedly collide with periodic scan start. That generation was never accepted and was rolled back. Commit `9d9d765` allows exact healthy report-only restart during an observation-only scan while still refusing cleanup, arm or enforcement authority. After exact-head CI passed, the candidate was reinstalled as generation 12. A controlled readback observed `scan_in_progress: true`, invoked the fixed command, and replaced PID 7399 with PID 8047; the replacement returned healthy, quiescent ReadyReportOnly with the lease intact.
+
+The ad-hoc-signed App is installed in the owner-local Applications folder and running as the only Unlinger menu client. Installed live-socket tests passed 6/6 before and after daemon replacement; the packaged App survived the daemon restart, then its own process recreation succeeded with a fresh PID. Final notification authorization and visual preference remain owner-observed dogfood details, not daemon safety authority.
 
 ## Safety and field truth
 
@@ -66,7 +70,7 @@ The level-2 source gate passed on 2026-09-01:
 - the tracked candidate/diff scan found no Faye-specific absolute path, attached-audit filename or identifier, secret-shaped addition, whitespace error or generated build payload; generic `/Users/example` and `/Users/private` strings remain only in synthetic fixtures and redaction/path tests; and
 - a separate read-only installed-status check found generation 9 healthy, ready, v1/v5, quiescent, report-only and unarmed with exact PID/generation/binary/permission agreement. It did not reload, migrate or otherwise mutate the installed service.
 
-The private GitHub `backend` workflow also passed at the pushed exact head on macOS: formatting, strict clippy, workspace tests, release workspace build, native frontend tests and native frontend bundle.
+The private GitHub `backend` workflow passed at both rollback-lease head `ea7c5bd` (run `33482121339`) and the scan-race fix head `9d9d765` (run `33483324021`) on macOS: formatting, strict clippy, workspace tests, release workspace build, native frontend tests and native frontend bundle.
 
 The reproducible commands were:
 
@@ -83,13 +87,12 @@ scripts/bundle.sh
 scripts/pre-v0.1-smoke.sh
 ```
 
-Owner-only `cft_fieldlab` and `managed_cft_fieldlab` remained ignored and were not run. No source-v3 binary opened the active generation-9 database.
+Owner-only `cft_fieldlab` and `managed_cft_fieldlab` remained ignored and were not run. The installed lane remained report-only throughout; no signal authority was created. The source-v3 binary opened the active database only inside the acceptance lease, and the real rollback restored the v5 copy before generation 9 reopened it.
 
 ## Open gates
 
-- exact-head acceptance-lease CI plus real generation-9 database rollback/open proof;
-- installed v3 daemon/App integration and restart reconciliation without arm;
 - multi-day report-only dogfood and an ambient real eligible incident;
+- owner visual/notification observation for the installed App;
 - separately owner-authorized narrow enforcement acceptance for a future candidate;
 - resolution or explicit product acceptance of both artifact P2 residuals;
 - broader family/version/controller field evidence, chaos, sleep/wake and sustained-pressure evidence;

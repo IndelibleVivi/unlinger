@@ -10,7 +10,7 @@
 
 ## Backend truth
 
-Unlinger 是 local-only macOS runtime-hygiene utility。Direct daemon与安装中的 generation 9默认/当前都保持 report-only；generation 9是 v1-only、unarmed。Frontend 只投影 backend truth，不拥有 signal authorization、service installation/update/rollback、daemon mode switching或 lifecycle recovery。
+Unlinger 是 local-only macOS runtime-hygiene utility。Direct daemon与安装中的 generation 12默认/当前都保持 report-only；generation 12提供 schema-v3 App endpoint、SQLite v6，且是 unarmed。它保留到 generation 9/v5 的 rollback lease。Frontend 只投影 backend truth，不拥有 signal authorization、service installation/update/rollback、daemon mode switching或 lifecycle recovery。
 
 Schema v3提供 status/history/explain/incidents/diagnostics、mutation status，以及 pause/resume/named retry/exact protect/unprotect。所有 actions使用 backend capabilities，并由同一 backend policy在 commit前重新授权。UI缺失 capability时 fail closed，不从 stage、score、reason string或 roster presence自行猜补。
 
@@ -51,6 +51,6 @@ Click routing复用 shared `AppRouter` 和 compact `WindowGroup`，进入 exact 
 
 ## Live boundary
 
-Active generation-9 database属于安装服务。Source v3使用 SQLite v6，不能被 generation-9 binary直接打开。Service source现已提供 acceptance-scoped prior manifest/plist/v5 DB lease、explicit accept/rollback和exact report-only restart；只有 [`../../docs/INSTALLED_DOGFOOD.md`](../../docs/INSTALLED_DOGFOOD.md) 的owner-authorized lane可以复用active database，且必须先完成generation-9真实rollback/open、全程不arm。
+Active generation-12 database属于安装服务并使用 SQLite v6；generation-9 binary只能打开 lease 中保留的 v5 snapshot。Acceptance-scoped prior manifest/plist/v5 DB lease、explicit accept/rollback和exact report-only restart已经通过 [`../../docs/INSTALLED_DOGFOOD.md`](../../docs/INSTALLED_DOGFOOD.md) 的真实 installed proof：generation 9 rollback/open成功，generation 12重新安装，App与daemon restart完成reconciliation，全程没有arm。Lease在initial dogfood期间继续保留。
 
 使用 [`scripts/pre-v0.1-smoke.sh`](scripts/pre-v0.1-smoke.sh) 获得可重复的 isolated report-only integration。Owner-only CfT harness、ambient enforcement与 installed dogfood proof仍不属于 frontend source validation。

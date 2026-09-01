@@ -2,7 +2,7 @@
 
 This document separates source, runtime, field, and release truth. A higher level includes all earlier requirements; passing a source suite never silently advances installation, enforcement, dogfood, or publication.
 
-Levels 1 and 2 are verified. The owner has now authorized work toward level 3 inside the exact report-only runbook; this does not authorize enforcement. Levels 4–7 remain separate future owner decisions.
+Levels 1–3 are verified. Generation 12 and the packaged App are installed for private report-only dogfood with the generation-9 rollback lease retained; this does not authorize enforcement. Levels 4–7 remain separate future owner decisions.
 
 ## Claim levels
 
@@ -25,8 +25,8 @@ Levels 1 and 2 are verified. The owner has now authorized work toward level 3 in
 - An ad-hoc-signed private bundle is not Developer ID signing or notarization.
 - A private remote or pushed commit is not a release.
 
-## Current gate for level 3
+## Level-3 evidence and current gate
 
-The source daemon migrates stores to SQLite schema v6 while installed generation 9 understands schema v5 only. Source now implements an acceptance-scoped lease that retains the prior manifest, report-only plist and SQLite snapshot after candidate readiness. It blocks install, uninstall and mode changes until explicit accept or rollback, and provides an exact `restart-report-only` acceptance path.
+The candidate daemon migrates stores to SQLite schema v6 while the retained generation 9 understands schema v5 only. The acceptance-scoped lease retains the prior manifest, report-only plist and SQLite snapshot after candidate readiness. It blocks install, uninstall and mode changes until explicit accept or rollback, and provides an exact `restart-report-only` acceptance path.
 
-Level 3 remains unproved until [`INSTALLED_DOGFOOD.md`](INSTALLED_DOGFOOD.md) actually restores generation 9 and its v5 database, the exact old CLI/daemon returns healthy ReadyReportOnly, the same exact-head candidate is reinstalled, and the packaged v3 App passes installed/restart reconciliation. Until then the strongest permissible claim remains level 2.
+[`INSTALLED_DOGFOOD.md`](INSTALLED_DOGFOOD.md) passed: a real candidate migration was rolled back to generation 9 and its v5 database, the exact old CLI/daemon returned healthy ReadyReportOnly, the exact-head candidate was reinstalled as generation 12, and the packaged v3 App passed installed live-socket and App/daemon restart reconciliation. The strongest permissible claim is therefore level 3. The lease stays pending during initial dogfood; accepting it, arming enforcement or advancing a release claim requires its own decision and evidence.
