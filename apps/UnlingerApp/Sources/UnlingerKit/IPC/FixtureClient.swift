@@ -1,5 +1,13 @@
 import Foundation
 
+private struct FixtureEnvelopeHeader: Decodable {
+    let requestID: UInt64
+
+    private enum CodingKeys: String, CodingKey {
+        case requestID = "request_id"
+    }
+}
+
 /// Drives the app from canonical fixtures: SwiftUI previews, tests, and
 /// offline development against every documented state without a daemon.
 ///
@@ -43,37 +51,101 @@ public struct FixtureClient: UnlingerClient {
         return try decodeFixture(incidentFixture, command: .explain(incidentID: incidentID))
     }
 
-    public func incidents() async throws(ClientError) -> [CurrentIncident] {
-        guard let incidentsFixture else { return [] }
+    public func incidents() async throws(ClientError) -> ObservationRoster {
+        guard let incidentsFixture else {
+            return ObservationRoster(
+                cycleToken: nil,
+                observedAtUnixMillis: nil,
+                freshness: .neverObserved,
+                items: []
+            )
+        }
         return try decodeFixture(incidentsFixture, command: .incidents)
     }
 
-    public func pause(durationMillis: UInt64) async throws(ClientError) -> UInt64 {
-        try takeMutationResult()
-        return UInt64(Date().timeIntervalSince1970 * 1000) + durationMillis
+    public func mutationStatus(context: MutationContext) async throws(ClientError) -> MutationStatus {
+        .notFound(context)
     }
 
-    public func resume() async throws(ClientError) {
+    public func pause(context: MutationContext, durationMillis: UInt64) async throws(ClientError) -> MutationReceipt {
         try takeMutationResult()
+        let deadline = UInt64(Date().timeIntervalSince1970 * 1000) + durationMillis
+        return receipt(context: context, kind: .pause, result: .paused(untilUnixMillis: deadline))
     }
 
-    public func retryFailedCleanup(incidentID: String) async throws(ClientError) {
+    public func resume(context: MutationContext) async throws(ClientError) -> MutationReceipt {
         try takeMutationResult()
+        return receipt(context: context, kind: .resume, result: .resumed)
     }
 
-    public func protectIncident(incidentID: String) async throws(ClientError) {
+    public func retryFailedCleanup(context: MutationContext, incidentID: String) async throws(ClientError) -> MutationReceipt {
         try takeMutationResult()
+        return receipt(
+            context: context,
+            kind: .retryFailedCleanup,
+            result: .retryScheduled(incidentID: incidentID)
+        )
     }
 
-    public func unprotectIncident(incidentID: String) async throws(ClientError) {
+    public func protectIncident(context: MutationContext, incidentID: String) async throws(ClientError) -> MutationReceipt {
         try takeMutationResult()
+        return receipt(
+            context: context,
+            kind: .protectIncident,
+            result: .incidentProtected(
+                ProtectedIncidentSummary(
+                    incidentId: incidentID,
+                    protectedAtUnixMillis: UInt64(Date().timeIntervalSince1970 * 1000),
+                    lastExactObservedAtUnixMillis: nil,
+                    exactAbsenceSinceUnixMillis: nil
+                )
+            )
+        )
+    }
+
+    public func unprotectIncident(context: MutationContext, incidentID: String) async throws(ClientError) -> MutationReceipt {
+        try takeMutationResult()
+        return receipt(
+            context: context,
+            kind: .unprotectIncident,
+            result: .incidentUnprotected(incidentID: incidentID)
+        )
     }
 
     public func exportDiagnostics(incidentID: String) async throws(ClientError) -> DiagnosticsExport {
-        try takeMutationResult()
+        guard let incidentFixture else {
+            throw .serverError(code: "not_found", message: "no incident fixture")
+        }
+        let status: PublicStatus = try decodeFixture(statusFixture, command: .status)
+        let incident: IncidentDetail = try decodeFixture(
+            incidentFixture,
+            command: .explain(incidentID: incidentID)
+        )
         return DiagnosticsExport(
-            bundle: DiagnosticsBundle(schemaVersion: 2, generatedAtUnixMillis: nil, status: nil, incident: nil),
+            bundle: DiagnosticsBundle(
+                documentSchemaVersion: 3,
+                generatedAtUnixMillis: UInt64(Date().timeIntervalSince1970 * 1000),
+                status: status,
+                incident: incident
+            ),
             rawJSON: nil
+        )
+    }
+
+    private func receipt(
+        context: MutationContext,
+        kind: MutationKind,
+        result: MutationResult
+    ) -> MutationReceipt {
+        let committedAt = UInt64(Date().timeIntervalSince1970 * 1000)
+        return MutationReceipt(
+            namespaceToken: context.namespaceToken,
+            mutationId: context.mutationId,
+            kind: kind,
+            committedAtUnixMillis: committedAt,
+            retainUntilUnixMillis: committedAt + 14 * 24 * 60 * 60 * 1_000,
+            policyRevisionAfter: 2,
+            outcome: .applied(result)
         )
     }
 
@@ -95,10 +167,8 @@ public struct FixtureClient: UnlingerClient {
         }
         // Canonical fixtures embed their own request_id; echo it so envelope
         // validation runs exactly as it does over the wire.
-        let requestID: UInt64 = (try? JSONSerialization.jsonObject(with: data))
-            .flatMap { $0 as? [String: Any] }
-            .flatMap { $0["request_id"] as? NSNumber }?
-            .uint64Value ?? 0
+        let requestID = (try? JSONDecoder()
+            .decode(FixtureEnvelopeHeader.self, from: data).requestID) ?? 0
         return try Self.decode(T.self, for: command, requestID: requestID, line: data)
     }
 }

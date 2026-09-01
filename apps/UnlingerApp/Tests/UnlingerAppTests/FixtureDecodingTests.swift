@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import UnlingerKit
 
-/// Every canonical wire fixture in `Contract/v2/` must decode through the
+/// Every canonical wire fixture in `Contract/v3/` must decode through the
 /// same envelope validation the socket client uses.
 @Suite("Canonical fixture decoding")
 struct FixtureDecodingTests {
@@ -11,10 +11,15 @@ struct FixtureDecodingTests {
         let names = [
             "status-all-clear",
             "status-report-only",
+            "status-enforce",
             "status-scanning",
+            "status-starting",
+            "status-draining",
+            "status-failed",
             "status-paused",
             "status-recently-reclaimed",
-            "status-needs-attention"
+            "status-needs-attention",
+            "status-storage-recovered"
         ]
         for name in names {
             let data = try FixtureStore.data(named: name)
@@ -26,6 +31,65 @@ struct FixtureDecodingTests {
                 line: data
             )
             #expect(status.daemonVersion == "0.1.0")
+        }
+    }
+
+    @Test("all roster freshness fixtures decode without invented time")
+    func rosterFreshnessFixtures() throws {
+        for name in ["roster-current", "roster-scanning", "roster-stale", "roster-never-observed"] {
+            let data = try FixtureStore.data(named: name)
+            let requestID = try #require(Self.requestID(in: data))
+            _ = try ResponseDecoder.decode(
+                ObservationRoster.self,
+                expectedPayloadType: "incidents",
+                requestID: requestID,
+                line: data
+            )
+        }
+        let neverData = try FixtureStore.data(named: "roster-never-observed")
+        let never = try ResponseDecoder.decode(
+            ObservationRoster.self,
+            expectedPayloadType: "incidents",
+            requestID: try #require(Self.requestID(in: neverData)),
+            line: neverData
+        )
+        #expect(never.freshness == .neverObserved)
+        #expect(never.cycleToken == nil)
+        #expect(never.observedAtUnixMillis == nil)
+    }
+
+    @Test("diagnostics fixture has an exact typed document version")
+    func diagnosticsFixture() throws {
+        let data = try FixtureStore.data(named: "diagnostics")
+        let diagnostics = try ResponseDecoder.decode(
+            DiagnosticsBundle.self,
+            expectedPayloadType: "diagnostics",
+            requestID: try #require(Self.requestID(in: data)),
+            line: data
+        )
+        #expect(diagnostics.documentSchemaVersion == 3)
+        #expect(diagnostics.incident.incidentId == "redacted-incident-5")
+    }
+
+    @Test("mutation receipts and namespace-aware statuses decode")
+    func mutationFixtures() throws {
+        let committedData = try FixtureStore.data(named: "mutation-committed")
+        let committed = try ResponseDecoder.decode(
+            MutationReceipt.self,
+            expectedPayloadType: "mutation_committed",
+            requestID: try #require(Self.requestID(in: committedData)),
+            line: committedData
+        )
+        #expect(committed.policyRevisionAfter == 2)
+
+        for name in ["mutation-not-found", "mutation-authority-lost"] {
+            let data = try FixtureStore.data(named: name)
+            _ = try ResponseDecoder.decode(
+                MutationStatus.self,
+                expectedPayloadType: "mutation_status",
+                requestID: try #require(Self.requestID(in: data)),
+                line: data
+            )
         }
     }
 
@@ -59,19 +123,19 @@ struct FixtureDecodingTests {
         }
     }
 
-    @Test("incidents roster fixture decodes as [CurrentIncident]")
+    @Test("incidents roster fixture decodes as ObservationRoster")
     func incidentsFixture() throws {
         let data = try FixtureStore.data(named: "incidents-current")
         let requestID = try #require(Self.requestID(in: data))
         let roster = try ResponseDecoder.decode(
-            [CurrentIncident].self,
+            ObservationRoster.self,
             expectedPayloadType: "incidents",
             requestID: requestID,
             line: data
         )
-        #expect(roster.count == 2)
-        #expect(roster.first?.observation.state == .confirmed)
-        #expect(roster.last?.observation.state == .ambiguous)
+        #expect(roster.items.count == 2)
+        #expect(roster.items.first?.observation.state == .confirmed)
+        #expect(roster.items.last?.observation.state == .ambiguous)
     }
 
     @Test("cleared_with_residue coexists with whole-plan FAILED")
@@ -98,7 +162,7 @@ struct FixtureDecodingTests {
 
     @Test("envelope mutual exclusion is enforced")
     func mutualExclusion() throws {
-        let both = Data(#"{"schema_version":2,"request_id":1,"ok":true,"payload":{"type":"status","data":{}},"error":{"code":"x","message":"y"}}"#.utf8)
+        let both = Data(#"{"schema_version":3,"request_id":1,"ok":true,"payload":{"type":"status","data":{}},"error":{"code":"x","message":"y"}}"#.utf8)
         #expect(throws: ClientError.self) {
             try ResponseDecoder.decode(
                 PublicStatus.self,
@@ -146,6 +210,42 @@ struct FixtureDecodingTests {
             with: FixtureStore.data(named: "app-mutation-delivery-uncertain")
         ) as? [String: Any]
         #expect(uncertain?["automatic_retry"] as? Bool == false)
+
+        for name in ["daemon-incompatible", "app-mutation-unresolved"] {
+            let value = try JSONSerialization.jsonObject(with: FixtureStore.data(named: name))
+            #expect(value is [String: Any])
+        }
+    }
+
+    @Test("envelope integers are exact, not coerced")
+    func exactIntegerEnvelope() throws {
+        for invalid in [
+            #"{"schema_version":3.0,"request_id":1,"ok":true,"payload":{"type":"status","data":{}}}"#,
+            #"{"schema_version":3,"request_id":1.5,"ok":true,"payload":{"type":"status","data":{}}}"#,
+            #"{"schema_version":"3","request_id":1,"ok":true,"payload":{"type":"status","data":{}}}"#
+        ] {
+            #expect(throws: ClientError.self) {
+                try ResponseDecoder.decode(
+                    PublicStatus.self,
+                    expectedPayloadType: "status",
+                    requestID: 1,
+                    line: Data(invalid.utf8)
+                )
+            }
+        }
+    }
+
+    @Test("missing required v3 DTO facts are rejected")
+    func requirednessIsStrict() throws {
+        let incomplete = Data(#"{"schema_version":3,"request_id":1,"ok":true,"payload":{"type":"incidents","data":{"freshness":"current","items":[{"incident_id":"i","observation":{"family":"x"}}]}}}"#.utf8)
+        #expect(throws: ClientError.self) {
+            try ResponseDecoder.decode(
+                ObservationRoster.self,
+                expectedPayloadType: "incidents",
+                requestID: 1,
+                line: incomplete
+            )
+        }
     }
 
     private static func requestID(in data: Data) -> UInt64? {

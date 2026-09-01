@@ -14,6 +14,8 @@
 "unavailable.title" = "Can't reach the background service";
 "unavailable.body" = "Unlinger runs as a local background service. It may not be installed or running — nothing is being observed right now.";
 "unavailable.retry" = "Try again";
+"incompatible.title" = "The background service is too old";
+"incompatible.body" = "The App is running, but this service does not support its protocol. Automatic cleanup state cannot be inferred here; update the backend with the operator CLI.";
 
 /* Attention items */
 "attention.section" = "Needs attention";
@@ -42,6 +44,12 @@
 "roster.state.confirmed" = "Confirmed abandoned";
 "roster.state.ambiguous" = "Borderline";
 "roster.hint" = "Read-only — these are just being watched.";
+"roster.latest_observation" = "Latest completed observation";
+"roster.freshness.current" = "Current as of the completed observation above.";
+"roster.freshness.scan_in_progress" = "A new check is in progress; these are the last completed results.";
+"roster.freshness.stale_after_failure" = "Kept from the last successful check; current state could not be refreshed.";
+"roster.freshness.never_observed" = "No completed observation yet.";
+"roster.freshness.unknown" = "Observation freshness is unknown.";
 
 /* Protections */
 "protection.count" = "%lld protected — left alone on purpose";
@@ -83,6 +91,12 @@
 "detail.action.artifact.removed" = "Removed a leftover file";
 "detail.action.artifact.kept" = "Kept a leftover file";
 "detail.not_found" = "This incident is no longer recorded.";
+"detail.unavailable" = "The background service could not be reached. Previously loaded details, if any, may be stale.";
+"detail.incompatible" = "The connected service cannot provide this detail to this App version.";
+"detail.local_history_unavailable" = "The service could not read its local incident history.";
+"detail.protocol_failure" = "The incident response did not match the trusted protocol.";
+"detail.stale" = "Showing the last loaded detail because refresh failed.";
+"detail.retry" = "Retry";
 
 /* Mutations */
 "mutation.in_flight" = "Working…";
@@ -91,6 +105,9 @@
 "mutation.uncertain.body" = "The request may still have gone through. Current state has been re-read and the request will not be sent again automatically. Use the currently available actions if another request is appropriate.";
 "mutation.failed" = "The action couldn't be completed.";
 "mutation.dismiss" = "OK";
+"mutation.check_again" = "Check again";
+"mutation.not_applied" = "The service authoritatively reports that this request was not applied.";
+"mutation.authority_lost" = "The service can no longer prove whether this request committed. The record stays locked for manual reconciliation.";
 
 /* Capability unavailability */
 "cap.action.not_paused" = "Not paused right now";
@@ -112,7 +129,41 @@
 "action.unprotect" = "Stop leaving alone";
 "action.export" = "Export diagnostics…";
 "action.exported" = "Diagnostics exported.";
-"action.quit" = "Quit Unlinger";
+"action.quit" = "Quit Unlinger App";
+
+/* Settings */
+"settings.title" = "Settings & About";
+"settings.notifications" = "Notifications";
+"settings.notification_mode" = "Notify me about";
+"settings.notification.off" = "Nothing";
+"settings.notification.attention" = "Items needing attention";
+"settings.notification.reclaims" = "Attention and successful reclaims";
+"settings.notifications_denied" = "Notifications are disabled in System Settings.";
+"settings.startup" = "Startup";
+"settings.launch_at_login" = "Launch the Unlinger App at login";
+"settings.login_requires_approval" = "macOS requires approval in Login Items.";
+"settings.login_not_found" = "This private App bundle cannot be registered from its current location.";
+"settings.login_failed" = "Launch-at-login registration failed; it was not reported as enabled.";
+"settings.login_unknown" = "Launch-at-login status could not be confirmed.";
+"settings.about" = "About";
+"settings.app_version" = "App version";
+"settings.daemon_version" = "Connected service version";
+"settings.not_connected" = "Not connected";
+"settings.quit_daemon_continues" = "Quitting this menu-bar App does not stop or change the background daemon.";
+
+/* Local notifications */
+"notification.title.attention" = "Unlinger needs attention";
+"notification.title.reclaim" = "Unlinger reclaimed a process tree";
+"notification.cleanup_failed" = "A cleanup did not finish and will not be retried automatically.";
+"notification.cleanup_delivery_unknown" = "A cleanup delivery result could not be confirmed; automatic retry is blocked.";
+"notification.cleanup_revived" = "A cleaned process tree was restarted by its supervisor.";
+"notification.cleared_with_residue" = "Processes were cleared; one low-risk leftover was kept.";
+"notification.reclaimed" = "An abandoned process tree was reclaimed.";
+"notification.storage_recovered" = "Local history storage recovered from a problem.";
+"notification.daemon_failed" = "The background service reported a fail-closed problem.";
+"notification.event_source_degraded" = "Live scheduling hints are degraded; periodic checks continue.";
+"notification.daemon_unavailable" = "The App has been unable to connect to the local background service.";
+"notification.generic_attention" = "A durable backend event needs attention.";
 
 /* Language menu */
 "language.menu" = "Language";

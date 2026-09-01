@@ -1,19 +1,16 @@
 import SwiftUI
 
-enum Route: Hashable {
-    case history
-    case incident(String)
-}
-
 /// Root of the menu-bar popover: status, attention, recent reclaim,
 /// protections, history link, and status-level actions.
 public struct MenuPopover: View {
     @Environment(AppState.self) private var state
+    @Environment(AppRouter.self) private var router
 
     public init() {}
 
     public var body: some View {
-        NavigationStack {
+        @Bindable var router = router
+        NavigationStack(path: $router.path) {
             Group {
                 switch state.connection {
                 case .connecting:
@@ -27,6 +24,8 @@ public struct MenuPopover: View {
                     .frame(maxWidth: .infinity, minHeight: 120)
                 case .unavailable:
                     unavailable
+                case .incompatibleDaemon:
+                    incompatible
                 case .live:
                     live
                 }
@@ -36,6 +35,8 @@ public struct MenuPopover: View {
                 switch route {
                 case .history:
                     HistoryView()
+                case .settings:
+                    SettingsView()
                 case .incident(let incidentID):
                     IncidentDetailView(incidentID: incidentID)
                 }
@@ -58,6 +59,20 @@ public struct MenuPopover: View {
         }
     }
 
+    private var incompatible: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label(L10n.text("incompatible.title"), systemImage: "exclamationmark.triangle")
+                .font(.headline)
+            Text(L10n.text("incompatible.body"))
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+            Button(L10n.text("unavailable.retry")) {
+                Task { await state.refresh() }
+            }
+            .padding(.top, 4)
+        }
+    }
+
     private var live: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 12) {
@@ -66,7 +81,7 @@ public struct MenuPopover: View {
 
                     if !state.currentIncidents.isEmpty {
                         Divider()
-                        RosterSection(incidents: state.currentIncidents)
+                        RosterSection(roster: state.observationRoster)
                     }
 
                     if !viewModel.attention.isEmpty {
@@ -116,6 +131,12 @@ public struct MenuPopover: View {
 
                     Divider()
                     ActionControls(capabilities: state.status?.capabilities)
+
+                    Divider()
+                    NavigationLink(value: Route.settings) {
+                        Label(L10n.text("settings.title"), systemImage: "gearshape")
+                            .font(.subheadline)
+                    }
                 }
             }
         }

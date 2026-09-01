@@ -1,29 +1,43 @@
 import SwiftUI
 
-/// Read-only roster of what the latest reconciliation cycle is actually
-/// seeing. Observability only: rows open the incident detail, and no action
-/// availability is derived from this list.
+/// Read-only latest observation snapshot. Rows may be retained or stale; this
+/// surface never claims they are still live after cleanup/revival checks.
 public struct RosterSection: View {
-    let incidents: [CurrentIncident]
+    let roster: ObservationRoster
 
-    public init(incidents: [CurrentIncident]) {
-        self.incidents = incidents
+    public init(roster: ObservationRoster) {
+        self.roster = roster
     }
 
     public var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Label(L10n.text("roster.title"), systemImage: "eye")
+            Label(L10n.text("roster.latest_observation"), systemImage: "eye")
                 .font(.caption)
                 .foregroundStyle(.tertiary)
-            ForEach(incidents) { incident in
+            if let observedAt = roster.observedAtUnixMillis {
+                Text(Format.relativeTime(Date(unixMillis: observedAt)))
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            }
+            ForEach(roster.items) { incident in
                 NavigationLink(value: Route.incident(incident.incidentId)) {
                     row(incident)
                 }
                 .buttonStyle(.plain)
             }
-            Text(L10n.text("roster.hint"))
+            Text(L10n.text(freshnessCopyKey))
                 .font(.caption)
                 .foregroundStyle(.tertiary)
+        }
+    }
+
+    private var freshnessCopyKey: String {
+        switch roster.freshness {
+        case .current: "roster.freshness.current"
+        case .scanInProgress: "roster.freshness.scan_in_progress"
+        case .staleAfterFailure: "roster.freshness.stale_after_failure"
+        case .neverObserved: "roster.freshness.never_observed"
+        case .unknown: "roster.freshness.unknown"
         }
     }
 
@@ -69,17 +83,21 @@ public struct RosterSection: View {
     }
 
     private func title(for observation: ObservationRecord) -> String {
-        observation.family ?? observation.executableBasename ?? L10n.text("roster.item.unknown")
+        observation.family
     }
 
     private func subtitle(for observation: ObservationRecord) -> String? {
         var parts: [String] = []
-        if let basename = observation.executableBasename, basename != observation.family {
-            parts.append(basename)
+        if observation.executableBasename != observation.family {
+            parts.append(observation.executableBasename)
         }
-        if let count = observation.memberCount, let rss = observation.residentMemoryBytes {
-            parts.append(L10n.text("detail.members", count, Format.bytes(rss)))
-        }
+        parts.append(
+            L10n.text(
+                "detail.members",
+                observation.memberCount,
+                Format.bytes(observation.residentMemoryBytes)
+            )
+        )
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 

@@ -53,12 +53,13 @@ public enum OutcomeCopy {
         }
     }
 
-    public static func roleLabel(_ role: String) -> String {
+    public static func roleLabel(_ role: ProcessRole) -> String {
         switch role {
-        case "controller": L10n.text("detail.roles.controller")
-        case "browser_root": L10n.text("detail.roles.browser_root")
-        case "renderer": L10n.text("detail.roles.renderer")
-        default: role
+        case .controller: L10n.text("detail.roles.controller")
+        case .browserRoot: L10n.text("detail.roles.browser_root")
+        case .renderer: L10n.text("detail.roles.renderer")
+        case .unknown(let raw): raw
+        default: role.wire
         }
     }
 }

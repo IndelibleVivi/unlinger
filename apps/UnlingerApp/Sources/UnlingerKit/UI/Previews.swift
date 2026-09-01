@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// Fixture-driven previews: every documented state renders from the canonical
-/// `Contract/v2` wire truth, never hand-built view data.
+/// `Contract/v3` wire truth, never hand-built view data.
 
 @MainActor
 private func previewState(
@@ -25,14 +25,20 @@ private func previewState(
     return state
 }
 
-#Preview("All clear (report-only)") {
+@MainActor
+private func previewRoot(_ state: AppState) -> some View {
     MenuPopover()
-        .environment(previewState("status-all-clear"))
+        .environment(state)
+        .environment(AppRouter())
+        .environment(AppSettings())
+}
+
+#Preview("All clear (report-only)") {
+    previewRoot(previewState("status-all-clear"))
 }
 
 #Preview("Needs attention") {
-    MenuPopover()
-        .environment(previewState(
+    previewRoot(previewState(
             "status-needs-attention",
             historyFixture: "history-cleared-with-residue",
             incidentFixture: "incident-failed",
@@ -41,8 +47,7 @@ private func previewState(
 }
 
 #Preview("Current roster") {
-    MenuPopover()
-        .environment(previewState(
+    previewRoot(previewState(
             "status-report-only",
             incidentFixture: "incident-protected",
             incidentsFixture: "incidents-current"
@@ -50,13 +55,11 @@ private func previewState(
 }
 
 #Preview("Paused") {
-    MenuPopover()
-        .environment(previewState("status-paused"))
+    previewRoot(previewState("status-paused"))
 }
 
 #Preview("Recently reclaimed") {
-    MenuPopover()
-        .environment(previewState("status-recently-reclaimed", historyFixture: "history-cleared"))
+    previewRoot(previewState("status-recently-reclaimed", historyFixture: "history-cleared"))
 }
 
 #Preview("History") {
@@ -79,8 +82,7 @@ private func previewState(
 }
 
 #Preview("Mutation delivery uncertain") {
-    MenuPopover()
-        .environment(previewState(
+    previewRoot(previewState(
             "status-all-clear",
             mutation: .pause(durationMillis: 7_200_000, label: "2h")
         ))

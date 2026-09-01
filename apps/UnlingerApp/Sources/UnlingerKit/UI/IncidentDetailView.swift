@@ -7,9 +7,20 @@ public struct IncidentDetailView: View {
     @Environment(AppState.self) private var state
     let incidentID: String
 
-    @State private var detail: IncidentDetail?
-    @State private var loadFailed = false
+    @State private var loadState: DetailLoadState = .loading
     @State private var exported = false
+    @State private var exportFailed = false
+    @State private var loadGeneration: UInt64 = 0
+
+    private enum DetailLoadState {
+        case loading
+        case loaded(IncidentDetail, staleError: IncidentDetailFailure?)
+        case notFound
+        case unavailable
+        case incompatible
+        case localHistoryUnavailable
+        case protocolFailure
+    }
 
     public init(incidentID: String) {
         self.incidentID = incidentID
@@ -18,18 +29,41 @@ public struct IncidentDetailView: View {
     public var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 12) {
-                if let detail {
+                switch loadState {
+                case .loaded(let detail, let staleError):
+                    if let staleError {
+                        staleBanner(staleError)
+                    }
                     ForEach(detail.events) { event in
                         EventCard(event: event)
                     }
                     Divider()
                     actions(detail.capabilities)
                     MutationBanner()
-                } else if loadFailed {
+                case .notFound:
                     Text(L10n.text("detail.not_found"))
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
-                } else {
+                case .unavailable:
+                    Text(L10n.text("detail.unavailable"))
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                    retryButton
+                case .incompatible:
+                    Text(L10n.text("detail.incompatible"))
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                case .localHistoryUnavailable:
+                    Text(L10n.text("detail.local_history_unavailable"))
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                    retryButton
+                case .protocolFailure:
+                    Text(L10n.text("detail.protocol_failure"))
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                    retryButton
+                case .loading:
                     ProgressView()
                         .controlSize(.small)
                         .frame(maxWidth: .infinity, minHeight: 120)
@@ -42,19 +76,62 @@ public struct IncidentDetailView: View {
         // A mutation confirmed from the shared banner (e.g. explicit retry)
         // also leaves capabilities stale; reload on confirmation.
         .onChange(of: state.mutationState) { _, new in
-            if case .confirmed = new {
+            if case .confirmed(_, let receipt) = new,
+               receipt.affectsIncident(incidentID)
+            {
                 Task { await reload() }
             }
         }
     }
 
     private func reload() async {
-        do {
-            detail = try await state.explain(incidentID: incidentID)
-            loadFailed = false
-        } catch {
-            loadFailed = true
+        loadGeneration &+= 1
+        let generation = loadGeneration
+        let previousDetail: IncidentDetail? = if case .loaded(let detail, _) = loadState {
+            detail
+        } else {
+            nil
         }
+        if previousDetail == nil { loadState = .loading }
+        do {
+            let detail = try await state.explain(incidentID: incidentID)
+            guard generation == loadGeneration, !Task.isCancelled else { return }
+            loadState = .loaded(detail, staleError: nil)
+        } catch let error {
+            guard generation == loadGeneration, !Task.isCancelled else { return }
+            let failure = IncidentDetailFailure.classify(error)
+            if failure == .notFound {
+                loadState = .notFound
+            } else if let previousDetail {
+                loadState = .loaded(previousDetail, staleError: failure)
+            } else {
+                loadState = switch failure {
+                case .notFound: .notFound
+                case .unavailable: .unavailable
+                case .incompatible: .incompatible
+                case .localHistoryUnavailable: .localHistoryUnavailable
+                case .protocolFailure: .protocolFailure
+                }
+            }
+        }
+    }
+
+    private var retryButton: some View {
+        Button(L10n.text("detail.retry")) {
+            Task { await reload() }
+        }
+    }
+
+    private func staleBanner(_ failure: IncidentDetailFailure) -> some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text(L10n.text("detail.stale"))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Spacer()
+            retryButton
+                .font(.caption)
+        }
+        .help(L10n.text(failure.copyKey))
     }
 
     @ViewBuilder
@@ -85,13 +162,24 @@ public struct IncidentDetailView: View {
                 L10n.text("action.export"),
                 capability: capabilities.exportDiagnostics
             ) {
-                await state.perform(.exportDiagnostics(incidentID: incidentID))
-                if let export = state.lastExport, DiagnosticsExporter.export(export) {
-                    exported = true
+                exported = false
+                exportFailed = false
+                do {
+                    let export = try await state.exportDiagnostics(incidentID: incidentID)
+                    exported = DiagnosticsExporter.export(export)
+                    exportFailed = !exported
+                } catch {
+                    exported = false
+                    exportFailed = true
                 }
             }
             if exported {
                 Text(L10n.text("action.exported"))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            if exportFailed {
+                Text(L10n.text("action.export_failed"))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -108,6 +196,46 @@ public struct IncidentDetailView: View {
         }
         .disabled(!capability.available)
         .help(capability.available ? "" : CapabilityCopy.unavailableReason(capability.unavailableReasonId))
+    }
+}
+
+public enum IncidentDetailFailure: Equatable, Sendable {
+    case notFound
+    case unavailable
+    case incompatible
+    case localHistoryUnavailable
+    case protocolFailure
+
+    public static func classify(_ error: ClientError) -> IncidentDetailFailure {
+        switch error {
+        case .serverError(let code, _) where code == "not_found": .notFound
+        case .serverError(let code, _) where code == "store_error": .localHistoryUnavailable
+        case .unavailable: .unavailable
+        case .incompatibleDaemon: .incompatible
+        default: .protocolFailure
+        }
+    }
+
+    var copyKey: String {
+        switch self {
+        case .notFound: "detail.not_found"
+        case .unavailable: "detail.unavailable"
+        case .incompatible: "detail.incompatible"
+        case .localHistoryUnavailable: "detail.local_history_unavailable"
+        case .protocolFailure: "detail.protocol_failure"
+        }
+    }
+}
+
+private extension MutationReceipt {
+    func affectsIncident(_ incidentID: String) -> Bool {
+        guard case .applied(let result) = outcome else { return false }
+        return switch result {
+        case .retryScheduled(let affected): affected == incidentID
+        case .incidentProtected(let protection): protection.incidentId == incidentID
+        case .incidentUnprotected(let affected): affected == incidentID
+        case .paused, .resumed, .unknown: false
+        }
     }
 }
 
@@ -139,20 +267,16 @@ struct EventCard: View {
 
     @ViewBuilder
     private func observationBody(_ record: ObservationRecord) -> some View {
-        if let memberCount = record.memberCount {
-            Text(L10n.text("detail.members", memberCount,
-                           Format.bytes(record.residentMemoryBytes ?? 0)))
+        Text(L10n.text("detail.members", record.memberCount,
+                       Format.bytes(record.residentMemoryBytes)))
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        if !record.roles.isEmpty {
+            Text(record.roles.map { "\(OutcomeCopy.roleLabel($0.role)) × \($0.count)" }.joined(separator: ", "))
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
-        if let roles = record.roles, !roles.isEmpty {
-            Text(roles.map { "\(OutcomeCopy.roleLabel($0.role)) × \($0.count)" }.joined(separator: ", "))
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-        if let gates = record.gates {
-            GateLedgerView(gates: gates)
-        }
+        GateLedgerView(gates: record.gates)
     }
 
     @ViewBuilder
@@ -167,21 +291,20 @@ struct EventCard: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
-        if let resources = receipt.resources,
-           let reclaimed = resources.estimatedReclaimedMemoryBytes, reclaimed > 0
+        if let reclaimed = receipt.resources.estimatedReclaimedMemoryBytes, reclaimed > 0
         {
             Text(L10n.text("detail.resources.reclaimed", Format.bytes(reclaimed)))
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
-        if !receipt.processActions.isEmpty {
+        if !receipt.processActions.isEmpty || !receipt.artifactActions.isEmpty {
             VStack(alignment: .leading, spacing: 2) {
-                ForEach(receipt.processActions, id: \.stage) { action in
+                ForEach(receipt.processActions) { action in
                     Text(actionLabel(signal: action.signal, disposition: action.disposition))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
-                ForEach(receipt.artifactActions, id: \.kind) { action in
+                ForEach(receipt.artifactActions) { action in
                     Text(artifactLabel(disposition: action.disposition))
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -190,22 +313,22 @@ struct EventCard: View {
         }
     }
 
-    private func actionLabel(signal: String, disposition: String) -> String {
+    private func actionLabel(signal: CleanupSignal, disposition: SignalDisposition) -> String {
         let base = switch signal {
-        case "term": L10n.text("detail.action.term")
-        case "kill": L10n.text("detail.action.kill")
-        default: signal
+        case .term: L10n.text("detail.action.term")
+        case .kill: L10n.text("detail.action.kill")
+        case .unknown(let raw): raw
         }
         return switch disposition {
-        case "delivered": base
-        case "delivery_unknown": L10n.text("detail.action.delivery_unknown", base)
+        case .delivered: base
+        case .deliveryUnknown: L10n.text("detail.action.delivery_unknown", base)
         default: L10n.text("detail.action.not_delivered", base)
         }
     }
 
-    private func artifactLabel(disposition: String) -> String {
+    private func artifactLabel(disposition: ArtifactDisposition) -> String {
         switch disposition {
-        case "removed": L10n.text("detail.action.artifact.removed")
+        case .removed: L10n.text("detail.action.artifact.removed")
         default: L10n.text("detail.action.artifact.kept")
         }
     }
@@ -221,8 +344,9 @@ struct GateLedgerView: View {
             ("isolated", gates.isolatedSession),
             ("stable", gates.stableAcrossTwoObservations),
             ("identity", gates.processIdentityUnchanged),
-            ("provenance", gates.strongAutomationProvenance)
-        ].compactMap { name, value in value.map { (name, $0) } }
+            ("provenance", gates.strongAutomationProvenance),
+            ("unprotected", gates.noProtectionRule)
+        ]
 
         if !entries.isEmpty {
             HStack(spacing: 6) {

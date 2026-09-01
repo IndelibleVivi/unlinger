@@ -42,7 +42,7 @@ fi
 # so fixture scenarios work from a standalone .app away from the source tree.
 if [[ -d "$RES_BUNDLE" ]]; then
     mkdir -p "$OUT/Contents/Resources/UnlingerApp_UnlingerKit.bundle/Fixtures"
-    cp Contract/v2/*.json "$OUT/Contents/Resources/UnlingerApp_UnlingerKit.bundle/Fixtures/"
+    cp Contract/v3/*.json "$OUT/Contents/Resources/UnlingerApp_UnlingerKit.bundle/Fixtures/"
 fi
 
 echo "==> ad-hoc codesign"
@@ -53,5 +53,21 @@ codesign --verify --deep --strict "$OUT"
 plutil -lint "$OUT/Contents/Info.plist"
 codesign -dv "$OUT" 2>&1 | grep -E "Identifier|Signature" || true
 /usr/libexec/PlistBuddy -c "Print :LSUIElement" "$OUT/Contents/Info.plist"
+APP_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$OUT/Contents/Info.plist")"
+[[ -n "$APP_VERSION" ]] || { echo "missing app version" >&2; exit 1; }
+
+FIXTURE_DIR="$OUT/Contents/Resources/UnlingerApp_UnlingerKit.bundle/Fixtures"
+[[ -f "$FIXTURE_DIR/status-all-clear.json" ]] || { echo "missing v3 status fixture" >&2; exit 1; }
+[[ -f "$FIXTURE_DIR/mutation-committed.json" ]] || { echo "missing v3 mutation fixture" >&2; exit 1; }
+[[ -f "$FIXTURE_DIR/diagnostics.json" ]] || { echo "missing v3 diagnostics fixture" >&2; exit 1; }
+if rg -l '"schema_version":2' "$FIXTURE_DIR" >/dev/null; then
+    echo "stale v2 daemon fixture packaged as active" >&2
+    exit 1
+fi
+
+EN_COPY="$OUT/Contents/Resources/UnlingerApp_UnlingerKit.bundle/en.lproj/Localizable.strings"
+ZH_COPY="$OUT/Contents/Resources/UnlingerApp_UnlingerKit.bundle/zh-Hans.lproj/Localizable.strings"
+[[ -f "$EN_COPY" && -f "$ZH_COPY" ]] || { echo "missing localization payload" >&2; exit 1; }
+plutil -lint "$EN_COPY" "$ZH_COPY"
 
 echo "done: $OUT"

@@ -1,6 +1,6 @@
 import Foundation
 
-/// Locates the canonical v2 fixtures that live in `Contract/v2/` next to this
+/// Locates the canonical v3 fixtures that live in `Contract/v3/` next to this
 /// package. Fixtures are read in place — never copied into the app bundle —
 /// so previews and tests always exercise the Rust-roundtripped wire truth.
 ///
@@ -14,7 +14,7 @@ public enum FixtureStore {
         .deletingLastPathComponent() // UnlingerKit/
         .deletingLastPathComponent() // Sources/
         .deletingLastPathComponent() // UnlingerApp/
-        .appending(path: "Contract/v2", directoryHint: .isDirectory)
+        .appending(path: "Contract/v3", directoryHint: .isDirectory)
 
     public static func url(named name: String) -> URL {
         let sourceURL = sourceTreeDirectory.appending(path: "\(name).json")

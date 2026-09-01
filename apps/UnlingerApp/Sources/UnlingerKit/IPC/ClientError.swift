@@ -8,11 +8,15 @@ import Foundation
 ///   timed out, hit EOF, or dropped before a trusted response. The daemon may
 ///   already have committed the mutation. Never auto-resend; read back first.
 /// - `serverError`: a structured `error.code` response from the daemon.
+/// - `incompatibleDaemon`: a trusted schema-v1 unsupported-schema response;
+///   the installed daemon is real but does not speak the App's schema v3.
 /// - `protocolError`: framing/envelope violation or a response that fails
 ///   schema/request-id/mutual-exclusion validation.
 public enum ClientError: Error, Equatable, Sendable {
     case unavailable
+    case failedBeforeSend(String)
     case deliveryUncertain
+    case incompatibleDaemon(String)
     case serverError(code: String, message: String)
     case protocolError(String)
 }

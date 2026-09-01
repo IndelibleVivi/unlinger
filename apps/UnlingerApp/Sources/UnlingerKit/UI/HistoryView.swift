@@ -67,6 +67,6 @@ struct HistoryRow: View {
 
     private var reclaimedBytes: UInt64? {
         guard case .cleanup(let receipt) = event.payload else { return nil }
-        return receipt.resources?.estimatedReclaimedMemoryBytes
+        return receipt.resources.estimatedReclaimedMemoryBytes
     }
 }

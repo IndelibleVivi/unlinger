@@ -14,6 +14,8 @@
 "unavailable.title" = "连不上后台服务";
 "unavailable.body" = "Unlinger 以后台服务形式在本机运行。服务可能未安装或未在运行——当前没有在进行任何观察。";
 "unavailable.retry" = "重试";
+"incompatible.title" = "后台服务版本过旧";
+"incompatible.body" = "App 正在运行，但该服务不支持当前协议。这里无法推断自动清理状态；请通过 operator CLI 更新 backend。";
 
 /* Attention items */
 "attention.section" = "需要关注";
@@ -42,6 +44,12 @@
 "roster.state.confirmed" = "已确认遗弃";
 "roster.state.ambiguous" = "拿不准";
 "roster.hint" = "只读列表——这些只是正在观察的对象。";
+"roster.latest_observation" = "最近一次已完成的观察";
+"roster.freshness.current" = "内容对应上方这次已完成观察。";
+"roster.freshness.scan_in_progress" = "新一轮检查正在进行；当前显示上次完成的结果。";
+"roster.freshness.stale_after_failure" = "保留自上次成功检查；当前状态未能刷新。";
+"roster.freshness.never_observed" = "还没有完成过观察。";
+"roster.freshness.unknown" = "无法确认观察结果的新鲜度。";
 
 /* Protections */
 "protection.count" = "%lld 个被保护——有意保留不动";
@@ -83,6 +91,12 @@
 "detail.action.artifact.removed" = "移除了一个残留文件";
 "detail.action.artifact.kept" = "保留了一个残留文件";
 "detail.not_found" = "这条事件已不在记录中。";
+"detail.unavailable" = "无法连接后台服务。此前载入的详情（如有）可能已过时。";
+"detail.incompatible" = "当前服务无法向这个 App 版本提供该详情。";
+"detail.local_history_unavailable" = "服务无法读取本地事件历史。";
+"detail.protocol_failure" = "事件响应不符合可信协议。";
+"detail.stale" = "刷新失败，正在显示上次载入的详情。";
+"detail.retry" = "重试";
 
 /* Mutations */
 "mutation.in_flight" = "正在执行…";
@@ -91,6 +105,9 @@
 "mutation.uncertain.body" = "请求可能已经生效。当前状态已重新读取，系统不会自动重发；如需再次请求，请使用当前仍可用的操作。";
 "mutation.failed" = "操作未能完成。";
 "mutation.dismiss" = "好的";
+"mutation.check_again" = "再次核对";
+"mutation.not_applied" = "服务已权威确认：这次请求没有生效。";
+"mutation.authority_lost" = "服务已无法证明这次请求是否提交。记录会继续锁定，等待人工核对。";
 
 /* Capability unavailability */
 "cap.action.not_paused" = "当前没有暂停";
@@ -112,7 +129,41 @@
 "action.unprotect" = "取消保留";
 "action.export" = "导出诊断…";
 "action.exported" = "诊断已导出。";
-"action.quit" = "退出 Unlinger";
+"action.quit" = "退出 Unlinger App";
+
+/* Settings */
+"settings.title" = "设置与关于";
+"settings.notifications" = "通知";
+"settings.notification_mode" = "通知我";
+"settings.notification.off" = "关闭通知";
+"settings.notification.attention" = "需要关注的事项";
+"settings.notification.reclaims" = "关注事项与成功回收";
+"settings.notifications_denied" = "通知已在系统设置中关闭。";
+"settings.startup" = "启动";
+"settings.launch_at_login" = "登录时启动 Unlinger App";
+"settings.login_requires_approval" = "macOS 要求你在“登录项”中批准。";
+"settings.login_not_found" = "当前目录中的这个私有 App bundle 无法注册。";
+"settings.login_failed" = "登录启动注册失败；系统没有把它误报为已启用。";
+"settings.login_unknown" = "无法确认登录启动状态。";
+"settings.about" = "关于";
+"settings.app_version" = "App 版本";
+"settings.daemon_version" = "已连接服务版本";
+"settings.not_connected" = "未连接";
+"settings.quit_daemon_continues" = "退出菜单栏 App 不会停止或改变后台 daemon。";
+
+/* Local notifications */
+"notification.title.attention" = "Unlinger 有事项需要关注";
+"notification.title.reclaim" = "Unlinger 回收了一棵进程树";
+"notification.cleanup_failed" = "一次清理没有完成，也不会自动重试。";
+"notification.cleanup_delivery_unknown" = "一次清理的送达结果无法确认；自动重试已被阻止。";
+"notification.cleanup_revived" = "一棵已清理的进程树被监管进程重新拉起。";
+"notification.cleared_with_residue" = "进程已清理；一个低风险残留被保留。";
+"notification.reclaimed" = "一棵被遗弃的进程树已回收。";
+"notification.storage_recovered" = "本地历史存储已从问题中恢复。";
+"notification.daemon_failed" = "后台服务报告了一个 fail-closed 问题。";
+"notification.event_source_degraded" = "实时调度信号暂时退化；定时检查仍在继续。";
+"notification.daemon_unavailable" = "App 已持续无法连接本地后台服务。";
+"notification.generic_attention" = "一个持久化 backend 事件需要关注。";
 
 /* Language menu */
 "language.menu" = "语言";

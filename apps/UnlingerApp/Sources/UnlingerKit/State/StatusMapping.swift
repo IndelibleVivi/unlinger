@@ -18,12 +18,15 @@ public enum StatusTone: String, Equatable, Sendable {
 }
 
 public struct AttentionViewData: Equatable, Sendable, Identifiable {
+    public var eventToken: String?
     public var copyKey: String
     public var incidentID: String?
     public var overallOutcome: OverallOutcome?
     public var occurredAt: Date?
 
-    public var id: String { "\(copyKey)|\(incidentID ?? "")|\(occurredAt?.timeIntervalSince1970 ?? 0)" }
+    public var id: String {
+        eventToken ?? "\(copyKey)|\(incidentID ?? "")|\(occurredAt?.timeIntervalSince1970 ?? 0)"
+    }
 }
 
 public struct ReclaimViewData: Equatable, Sendable {
@@ -51,18 +54,37 @@ public struct StatusViewModel: Equatable, Sendable {
 }
 
 public enum StatusMapper {
-    public static func viewModel(for status: PublicStatus, now: Date = Date()) -> StatusViewModel {
+    public static func viewModel(
+        for status: PublicStatus,
+        rosterFreshness: ObservationFreshness,
+        now: Date = Date()
+    ) -> StatusViewModel {
         let tone: StatusTone
         let headlineKey: String
-        if !status.healthy || status.readiness == .failed || status.attention.totalCount > 0 {
+        if !status.healthy || status.attention.totalCount > 0 {
             tone = .attention
             headlineKey = "status.headline.attention"
-        } else if status.scanInProgress || status.cleanupInProgress {
-            tone = .activity
-            headlineKey = "status.headline.activity"
         } else {
-            tone = .quiet
-            headlineKey = "status.headline.quiet"
+            switch status.readiness {
+            case .ready where status.scanInProgress || status.cleanupInProgress:
+                tone = .activity
+                headlineKey = "status.headline.activity"
+            case .ready where rosterFreshness == .current:
+                tone = .quiet
+                headlineKey = "status.headline.quiet"
+            case .ready where rosterFreshness == .staleAfterFailure:
+                tone = .attention
+                headlineKey = "status.headline.attention"
+            case .ready:
+                tone = .activity
+                headlineKey = "status.headline.activity"
+            case .starting:
+                tone = .activity
+                headlineKey = "status.headline.activity"
+            case .draining, .failed, .unknown:
+                tone = .attention
+                headlineKey = "status.headline.attention"
+            }
         }
 
         let detailKey: String? = if !status.eventSource.healthy {
@@ -116,6 +138,7 @@ public enum StatusMapper {
             "attention.generic"
         }
         return AttentionViewData(
+            eventToken: item.eventToken,
             copyKey: key,
             incidentID: item.incidentId,
             overallOutcome: item.overallOutcome,

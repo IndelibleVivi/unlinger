@@ -103,11 +103,38 @@ public struct MutationBanner: View {
             Label(L10n.text("mutation.confirmed"), systemImage: "checkmark.circle")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-        case .uncertain:
+        case .unresolved(let pending):
             VStack(alignment: .leading, spacing: 6) {
                 Label(L10n.text("mutation.uncertain.title"), systemImage: "questionmark.circle")
                     .font(.subheadline)
                 Text(L10n.text("mutation.uncertain.body"))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                HStack {
+                    Button(L10n.text("mutation.check_again")) {
+                        Task { await state.checkAgain(mutationID: pending.mutationID) }
+                    }
+                    Button(L10n.text("mutation.dismiss")) {
+                        state.dismissMutationState()
+                    }
+                }
+                .font(.caption)
+            }
+            .padding(8)
+            .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
+        case .authorityLost:
+            HStack(spacing: 12) {
+                Label(L10n.text("mutation.authority_lost"), systemImage: "exclamationmark.triangle")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                Button(L10n.text("mutation.dismiss")) {
+                    state.dismissMutationState()
+                }
+                .font(.caption)
+            }
+        case .definitelyNotApplied:
+            HStack(spacing: 12) {
+                Label(L10n.text("mutation.not_applied"), systemImage: "minus.circle")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Button(L10n.text("mutation.dismiss")) {
@@ -115,9 +142,7 @@ public struct MutationBanner: View {
                 }
                 .font(.caption)
             }
-            .padding(8)
-            .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
-        case .failed:
+        case .rejected, .failedBeforeSend:
             HStack(spacing: 12) {
                 Label(L10n.text("mutation.failed"), systemImage: "xmark.circle")
                     .font(.caption)
