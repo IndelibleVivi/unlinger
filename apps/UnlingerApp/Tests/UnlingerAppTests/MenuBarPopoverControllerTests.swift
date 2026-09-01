@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import Testing
 @testable import UnlingerKit
@@ -7,6 +8,7 @@ import Testing
 struct MenuBarPopoverControllerTests {
     @Test("owns an actionable status item and explicit popover size")
     func configuresStatusItemAndPopover() {
+        _ = NSApplication.shared
         let controller = MenuBarPopoverController(
             title: "Unlinger",
             icon: nil
