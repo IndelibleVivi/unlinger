@@ -1,29 +1,31 @@
-# Unlinger frontend contract v3
+# Unlinger frontend contract v4
 
-这里是 native App 唯一消费的 backend wire surface。Rust authority 是 [`crates/unlinger-protocol`](../../../crates/unlinger-protocol)，daemon projection 位于 [`crates/unlinger-daemon/src/public_ipc.rs`](../../../crates/unlinger-daemon/src/public_ipc.rs)，active canonical fixtures 位于 [`v3/`](v3/) 并由 Rust 与 Swift tests 共同 decode。
+这里是native App消费的backend wire surface。Rust authority是[`crates/unlinger-protocol`](../../../crates/unlinger-protocol)，daemon projection位于[`crates/unlinger-daemon/src/public_ipc.rs`](../../../crates/unlinger-daemon/src/public_ipc.rs)。[`v4/`](v4/)保存active browser-product fixtures；[`v3/`](v3/)保存仍受source daemon支持的transitional shared-command fixtures。两组都由Rust与Swift tests共同decode。
 
 协议边界：
 
-- `schema_version: 3`：当前 App public contract；strict DTO、ordinary commands、durable mutation receipts；
-- `schema_version: 1`：Rust CLI/service operator compatibility；包含 internal lifecycle facts，不供 App 使用；
-- `schema_version: 2`：保留在 [`v2/`](v2/) 作为历史审计证据；它在安装前已被 v3 supersede，当前 server 对 v2 返回 v1-framed typed `unsupported_schema`；
-- App 只发送 v3，不会 silent downgrade 或改走 v1 mutation/lifecycle path。
+- `schema_version: 4`：current source App contract；新增atomic `browser_overview`，其余public DTO、ordinary commands与durable mutation semantics继承v3；
+- `schema_version: 3`：transitional compatibility endpoint；原有request必须保留v3 response schema与meaning，但`browser_overview`返回typed `invalid_request`，不得downgrade或拼装替代payload；
+- `schema_version: 1`：Rust CLI/service operator compatibility；包含internal lifecycle facts，不供App使用；
+- `schema_version: 2`：保留在[`v2/`](v2/)作为历史审计证据；当前server在dispatch前以schema-v1 framing返回typed `unsupported_schema`；
+- source App只发送v4，不会silent downgrade到v3或改走v1 mutation/lifecycle path。
 
-安装中的 generation 9 仍是 v1-only、report-only、unarmed。它不是 v3 live endpoint。Active App fixtures、isolated smoke 与 source tests 不改变 installed truth。
+安装中的generation 12仍是schema-v3/v6、report-only、unarmed，并保留generation 9/v5 rollback lease。它和先前installed App没有被source v4 validation替换；current v4 App不能把v3 installed endpoint误报成已升级。
 
 ## Transport and trust
 
-- per-user Unix-domain stream socket；无 TCP、account、telemetry 或 normal-operation network traffic；
-- 每个 connection 恰好一个 LF-delimited JSON request 和一个 response；request 上限 64 KiB，response 上限 4 MiB；
-- App request envelope 是 `{"schema_version":3,"request_id":17,"command":{"command":"status"}}`；
-- response header 用 exact integer types 验证 `schema_version` 和 `request_id`，并验证 `ok/payload/error` 互斥；
-- client 每个 request 只发送一次。Mutation request 任意字节可能写出后发生 timeout、EOF、reset、oversize、bad JSON、wrong schema/request ID/payload 或 DTO decode failure，都属于 delivery uncertain；绝不 automatic resend；
-- encode/connect/明确 zero-byte write failure 是 failed-before-send；exact v3 error envelope 是 trusted rejection；仅 exact v1 `unsupported_schema` + exact request ID 可建立 incompatible-daemon truth。
+- per-user Unix-domain stream socket；无TCP、account、telemetry或normal-operation network traffic；
+- 每个connection恰好一个LF-delimited JSON request和一个response；request上限64 KiB，response上限4 MiB；
+- source App request envelope是`{"schema_version":4,"request_id":17,"command":{"command":"browser_overview"}}`；
+- response header用exact integer types验证`schema_version`和`request_id`，并验证`ok/payload/error`互斥；
+- client每个request只发送一次。Mutation request任意字节可能写出后发生timeout、EOF、reset、oversize、bad JSON、wrong schema/request ID/payload或DTO decode failure，都属于delivery uncertain；绝不automatic resend；
+- encode/connect/明确zero-byte write failure是failed-before-send；exact v4 error envelope是trusted rejection；仅exact v1 `unsupported_schema` + exact request ID可建立incompatible-daemon truth。
 
 ## Commands
 
 Read-only：
 
+- `browser_overview`（v4 only）
 - `status`
 - `history { limit }`
 - `explain { incident_id }`
@@ -39,11 +41,25 @@ Ordinary mutations：
 - `protect_incident { context, incident_id }`
 - `unprotect_incident { context, incident_id }`
 
-`arm`、`disarm`、`begin_drain`、install/update/rollback 不存在于 v3 `Command` enum。App 也不从 v1 response 或 shell command获得 daemon lifecycle authority。
+`arm`、`disarm`、`begin_drain`、install/update/rollback不存在于任何frontend `Command` enum。App也不从v1 response或shell command获得daemon lifecycle authority。
+
+## Atomic browser overview
+
+V4 `BrowserOverviewSnapshot`是browser-first surface的唯一product truth，包含：
+
+- snapshot generation time、cycle token、observation time、freshness、health、effective mode与pause deadline；
+- server-owned `unknown | clear | active | verifying | confirmed | reclaiming | protected | attention` phase；
+- bounded current sessions及typed `product`、observed version、`automatic | observe_only | protected | unknown` compatibility、optional reason ID与capability；
+- typed coverage summaries、attention、saved protections与exact recent settlement；
+- 从embedded rule packs生成的family/product/admitted-version/automatic-action support catalog及`support_revision`。
+
+Daemon在同一个in-memory status+roster lock boundary内capture source facts，释放锁后完成public projection。Positive phase要求healthy/ready、current roster、no scan和相等的non-null observation time；任何不可信或不一致状态都fail closed为`unknown`。可信状态使用一份server truth table：attention → reclaiming → confirmed → verifying → active → protected → clear。
+
+Compatibility来自rule analysis的typed app-bundle facts，不从UI evidence strings重建。Recent settlement用exact durable cleanup `event_token`定位receipt，再按更小的event ID找该incident最近的observation；即使多个event timestamp相同也不会误配。缺失proof返回nil，不产生猜测或bounded-history fallback。Swift `BrowserOverviewMapper`只负责localization和presentation，不得重算上述事实。
 
 ## Durable mutation authority
 
-每个新 v3 mutation 都携带：
+每个新frontend mutation都携带：
 
 ```text
 MutationContext {
@@ -52,55 +68,38 @@ MutationContext {
 }
 ```
 
-`status.mutation_authority` 提供当前 public-safe namespace 和至少 14 天的 reconciliation window。Namespace 不复用 daemon instance、activation generation、enforcement epoch、database path 或 identity。
+`status.mutation_authority`提供当前public-safe namespace和至少14天的reconciliation window。Namespace不复用daemon instance、activation generation、enforcement epoch、database path或identity。
 
-Backend 在同一 `BEGIN IMMEDIATE` transaction 内重读 exact policy facts、应用 state change、推进 durable policy revision并插入 typed receipt。Exact `(namespace_token, mutation_id)` replay 先于 current lifecycle policy：同一 canonical request返回 stored receipt且不重复 side effect/revision；不同 request返回 conflict。Receipt outcome 是 `applied | no_change | rejected`，`committed` 表示 outcome 已 durable，不表示 retry 后的 cleanup 已成功。
+Backend在同一`BEGIN IMMEDIATE` transaction内重读exact policy facts、应用state change、推进durable policy revision并插入typed receipt。Exact `(namespace_token, mutation_id)` replay先于current lifecycle policy：同一canonical request返回stored receipt且不重复side effect/revision；不同request返回conflict。Receipt outcome是`applied | no_change | rejected`，`committed`表示outcome已durable，不表示retry后的cleanup已成功。
 
-`mutation_status` 返回：
+`mutation_status`返回：
 
-- `committed { receipt }`：stored outcome 是 authority；
-- `not_found { context }`：只有 supplied namespace 仍是 current authority时，才证明本 namespace 下没有 commit；
-- `authority_lost { context }`：receipt 缺失且 namespace 已失效；不能推断原 mutation 未发生。
+- `committed { receipt }`：stored outcome是authority；
+- `not_found { context }`：只有supplied namespace仍是current authority时，才证明本namespace下没有commit；
+- `authority_lost { context }`：receipt缺失且namespace已失效；不能推断原mutation未发生。
 
-Receipt pruning 与 namespace rotation在同一 transaction；14 天窗口内不得为 count cap提前删除。容量不足时拒绝新 mutation。Old namespace + missing receipt 的 mutation request必须被拒绝。
+Receipt pruning与namespace rotation在同一transaction；14天窗口内不得为count cap提前删除。容量不足时拒绝新mutation。Old namespace + missing receipt的mutation request必须被拒绝。
 
-App 在 connect/send 前把 namespace、ID、canonical mutation、semantic lock、created time和 visual dismissal写入 owner-private crash-durable journal。Journal failure发送零请求；App restart只查 `mutation_status`，不重发原 mutation。Pre-v0.1 一次只允许一个 unresolved ordinary mutation；dismiss banner不清 journal或 lock，read-only commands继续工作。
+App在connect/send前把namespace、ID、canonical mutation、semantic lock、created time和visual dismissal写入owner-private crash-durable journal。Journal failure发送零请求；App restart只查`mutation_status`，不重发原mutation。Pre-v0.1一次只允许一个unresolved ordinary mutation；dismiss banner不清journal或lock，read-only commands继续工作。
 
-## Status, readiness, and capabilities
+## Shared status, roster, events, and diagnostics
 
-`PublicStatus` 只给 App：daemon version、health、`starting | ready | draining | failed | unknown` readiness、effective mode、activity、pause、last completed scan、incident counts、recent reclaim、event/storage health、bounded attention/protection、global capabilities和 mutation authority。
+V3/v4 `PublicStatus`只给frontend：daemon version、health、readiness、effective mode、activity、pause、last completed scan、incident counts、recent reclaim、event/storage health、bounded attention/protection、global capabilities和mutation authority。它不发送daemon PID、instance ID、activation/armed generation、enforcement epoch、requested mode、database schema、binary/path identity、service transaction state或raw last error。
 
-它不发送 daemon PID、instance ID、activation/armed generation、enforcement epoch、requested mode、database schema、binary/path identity、service transaction state或 raw last error。
+Capability projection和mutation authorization调用同一Rust public-action policy。UI不从lifecycle、incident stage、reason string或score推导授权。
 
-Capability projection和 mutation authorization调用同一 Rust public-action policy。UI 不从 lifecycle、incident stage、reason string或 score推导授权。Quiet UI 仅在 `healthy && readiness == ready && no attention && roster current && no activity` 成立。
+`incidents`继续返回transitional `ObservationRoster`，供compatibility、detail和diagnostic testing使用。Never-observed没有fake timestamp/token；replacement cycle完成前保留上一份roster，失败后标`stale_after_failure`。它不是browser screen的composition surface、work queue或manual-kill authority。
 
-## Observation roster
-
-`incidents` 返回 `ObservationRoster`：
-
-```text
-cycle_token: optional
-observed_at_unix_millis: optional
-freshness: never_observed | scan_in_progress | current | stale_after_failure
-items: bounded redacted observations
-```
-
-Never-observed 没有 fake timestamp/token。Replacement cycle完成前保留上一份 roster；失败后标 `stale_after_failure`。完整 observation batch 先 atomic commit history，再 publish fresh roster。Roster 是最近一次 observation projection，不是 work queue，不授权 action，也不提供 manual kill。
-
-## Events, outcomes, and diagnostics
-
-每个 retained public history event有 opaque、stable、unique `event_token`；recent reclaim和 attention在对应 durable event存在时携带同一个 token。Swift row identity与 notification dedupe使用 token，不使用 internal event/attempt IDs。Action row identity由 event token、receipt namespace和 stable sequence组成；artifact-only groups必须可渲染。
-
-Cleanup 同时保留 process、artifact、overall outcome。`state: FAILED` 与 `overall_outcome: cleared_with_residue` 可以共存：process tree已证明清除，但 artifact安全保留。Typed stored outcome决定 attention/reclaim类别；reason string只负责 copy，缺失 outcome不能伪造成 cleared。
-
-Diagnostics payload有 required integer `document_schema_version`。Swift 用 exact `CodingKeys`；导出结果属于 initiating view的 local state，不写共享 singleton。当前语义是 **semantic-lossless JSON**：未知 fields保留，允许重新序列化，不承诺原始 byte layout或 key order。
+每个retained public history event有opaque、stable、unique `event_token`。Swift row identity与notification dedupe使用token，不使用internal event/attempt IDs。Cleanup同时保留process、artifact、overall outcome；`state: FAILED`与`overall_outcome: cleared_with_residue`可以共存。Diagnostics payload有required integer `document_schema_version`；v4 App要求value 4。Export是semantic-lossless JSON，不承诺原始byte layout或key order。
 
 ## Canonical fixtures and verification
 
-[`v3/`](v3/) 包含 ready/report-only/enforce/starting/draining/failed/storage-recovered statuses，current/scanning/stale/never-observed rosters，history/detail/outcome/diagnostics，mutation committed/not-found/authority-lost，以及 App-local unavailable/incompatible/unresolved states。Bundled App 只包含 v3；bundle gate发现 active v2 fixture会失败。
+[`v4/`](v4/)包含confirmed、protected和settled atomic browser-overview envelopes。[`v3/`](v3/)继续包含status、roster、history/detail/outcome/diagnostics、mutation receipts/status以及App-local historical scenarios。Bundled App包含v4与v3，不包含v2；fixture lookup必须指定schema version，不能把v3文件误当active browser payload。
 
 ```bash
 cargo test -p unlinger-protocol
-cargo test -p unlinger-daemon --test ipc_roundtrip frontend_schema_v3_
+cargo test -p unlinger-daemon --test ipc_roundtrip
 cd apps/UnlingerApp && swift test
+scripts/bundle.sh
+scripts/pre-v0.1-smoke.sh
 ```

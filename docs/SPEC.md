@@ -372,7 +372,7 @@ Reasons:
 - clean separation between shared policy and platform backends;
 - future Linux and Windows support without replacing the core engine.
 
-A native SwiftUI menu-bar and Dock App is the thin human-facing client. It translates schema-v3 truth into browser-session language but does not own classification, cleanup policy, lifecycle, installation, or signal authority.
+A native SwiftUI menu-bar and Dock App is the thin human-facing client. It translates one daemon-owned schema-v4 browser snapshot into browser-session language but does not own classification, compatibility, product phase, cleanup policy, lifecycle, installation, or signal authority.
 
 ### 8.2 Components
 
@@ -428,13 +428,19 @@ The daemon stores a compact local SQLite database containing:
 
 Event history defaults to 14 days or 10,000 events, whichever is smaller. Ordinary-mutation receipts have a separate minimum 14-day reconciliation window and cannot be pruned early to satisfy a count cap; capacity pressure rejects a new mutation rather than destroying authority.
 
-A Unix-domain socket exposes read-mostly local IPC. Schema v1 remains the Rust CLI/service compatibility protocol. Frontend schema v3 projects strict public status/history/incident/roster/diagnostics DTOs, exact readiness/freshness, stable public event tokens, explicit capabilities, ordinary mutations, and read-only mutation reconciliation. It omits process and service lifecycle identities. Schema v2 was superseded before installation and receives typed `unsupported_schema`; the App never downgrades to v1.
+A Unix-domain socket exposes read-mostly local IPC. Schema v1 remains the Rust CLI/service compatibility protocol. Frontend schema v4 projects strict public status/history/incident/roster/diagnostics DTOs, exact readiness/freshness, stable public event tokens, explicit capabilities, ordinary mutations, read-only mutation reconciliation, and one atomic browser overview. Schema v3 remains a transitional endpoint for its existing request/response meaning but cannot return the v4-only overview. Both omit process and service lifecycle identities. Schema v2 was superseded before installation and receives typed `unsupported_schema`; the source App never downgrades to v3 or v1.
 
-Every v3 mutation carries a public-safe receipt namespace and canonical UUID. Before applying a new request, the daemon serializes lifecycle state with one immediate SQLite transaction, replays an exact receipt before current lifecycle policy, recomputes the same shared policy used for capability projection, and atomically commits state, durable cleanup-policy revision, and a typed `applied | no_change | rejected` receipt. Pruning rotates namespace in the same transaction. Current-authority `not_found` can prove absence; `authority_lost` cannot.
+Every frontend mutation carries a public-safe receipt namespace and canonical UUID. Before applying a new request, the daemon serializes lifecycle state with one immediate SQLite transaction, replays an exact receipt before current lifecycle policy, recomputes the same shared policy used for capability projection, and atomically commits state, durable cleanup-policy revision, and a typed `applied | no_change | rejected` receipt. Pruning rotates namespace in the same transaction. Current-authority `not_found` can prove absence; `authority_lost` cannot.
 
 The App durably records pending mutation intent before connect/send. Any post-send untrusted result remains unresolved and is reconciled only through `mutation_status`; the original mutation is never automatically resent. Pre-v0.1 permits one unresolved ordinary mutation at a time while read-only surfaces remain available.
 
-Ordinary user mutations are pause/resume, explicit protect/unprotect, and named retry failed cleanup. Diagnostics export is read-only. Generation- and instance-bound arm, disarm, and drain messages exist only in schema v1; v3 has no install, mode, signal, update, rollback, or lifecycle authority.
+Ordinary user mutations are pause/resume, explicit protect/unprotect, and named retry failed cleanup. Diagnostics export and browser overview are read-only. Generation- and instance-bound arm, disarm, and drain messages exist only in schema v1; frontend schemas have no install, mode, signal, update, rollback, or lifecycle authority.
+
+The browser overview captures status and the latest roster under one in-memory source boundary, then projects the authoritative phase, bounded session summaries, typed product/version compatibility and coverage, attention/protection, exact recent settlement, and a support catalog generated from embedded rule packs. Any unhealthy, not-ready, scanning, stale, never-observed, or observation-time-incoherent source becomes `unknown`. Trusted phase precedence is `attention → reclaiming → confirmed → verifying → active → protected → clear`. The App and CLI may format this result but may not recompute it from separate calls.
+
+Compatibility is a typed classification fact, not an evidence-string convention. Current in-memory reports carry browser product, optional observed version, `automatic | observe_only | protected | unknown`, and an optional stable reason ID. These app-bundle facts may enter the current v4 projection but do not enter retained SQLite history. The generated support catalog carries a readable revision and must remain derived from the same embedded version policies that authorize classification.
+
+A recent browser settlement joins the exact public cleanup event token to its durable receipt and then selects the greatest earlier event ID containing an observation for that incident. This preserves event identity when multiple records share a millisecond. Missing or contradictory links return no settlement; bounded frontend history and timestamps are not substitutes.
 
 ### 8.5 Signature packs
 
@@ -503,6 +509,7 @@ Version 0.1 CLI:
 
 ```text
 unlinger status
+unlinger browser status [--json]
 unlinger history [--json]
 unlinger explain <incident-id>
 unlinger doctor
@@ -522,11 +529,11 @@ unlinger export-diagnostics <incident-id>
 - are any confirmed/ambiguous incidents present;
 - what was reclaimed most recently.
 
-The pre-v0.1 native menu-bar App projects schema-v3 status, the last observation roster with honest freshness, history/detail, diagnostics, ordinary actions, notification preferences, menu-client launch at login, App/daemon versions, and explicit App-only quit semantics. Its first screen answers in browser language: whether supported leftovers are absent, active, being verified, confirmed, being reclaimed, deliberately protected, or need attention; which automation family is involved; whether Unlinger is observe-only or allowed to clean; and what the latest exact settlement proved. It must not turn the product into a dashboard the user has to watch and owns no daemon lifecycle or signal authority.
+The pre-v0.1 native menu-bar App projects schema-v4 status, atomic browser overview, history/detail, diagnostics, ordinary actions, notification preferences, menu-client launch at login, App/daemon versions, and explicit App-only quit semantics. Its first screen answers in browser language: whether supported leftovers are absent, active, being verified, confirmed, being reclaimed, deliberately protected, or need attention; which automation family is involved; whether Unlinger is observe-only or allowed to clean; and what the latest exact settlement proved. It must not turn the product into a dashboard the user has to watch and owns no daemon lifecycle or signal authority.
 
-The roster is observability, not a work queue. A positive current App state requires a live connection, healthy `ready` status, current roster, no replacement scan, and equal non-null status/roster observation timestamps. One mismatch may request one bounded trailing refresh; it never permits a clear or active claim. Durable attention remains visible above stale/update uncertainty. Starting, draining, failed, unknown, unavailable, incompatible, and stale are never all-clear.
+The transitional roster is observability, not a work queue. The browser overview is the composition surface: the daemon alone validates healthy `ready` status, current roster, no replacement scan, and equal non-null status/roster observation timestamps before returning a positive phase. Starting, draining, failed, unknown, unavailable, incompatible, and stale are never all-clear. On transport loss the App may retain old rows as stale context, but it must display an App-local unknown phase rather than reinterpret the snapshot.
 
-The App may infer user-facing coverage copy only from the closed set of typed protection evidence it explicitly understands. Unknown evidence remains generic and is never displayed raw. Current roster rows may show their own process count and resident memory, but schema v3 does not authorize global current process/RSS totals. A recent settlement joins `most_recent_reclaim.event_token` to the exact cleanup event and nearest earlier observation for that incident; missing history yields a conservative fallback rather than an invented browser identity or resource estimate.
+The App may select user-facing coverage copy only from typed compatibility reason IDs it explicitly understands. Unknown reasons remain generic and are never displayed raw. Current session rows may show their own process count and resident memory, but schema v4 does not authorize global current process/RSS totals. The App consumes the server's exact settlement as-is; it does not join bounded history or invent a browser identity or resource estimate.
 
 ---
 
@@ -545,10 +552,11 @@ The App may infer user-facing coverage copy only from the closed set of typed pr
 11. Never enter an unbounded kill/revival loop.
 12. Every automatic action must produce a redacted evidence receipt.
 13. Any new signature must include a positive fixture and the nearest plausible normal-process counterexample.
-14. A v3 ordinary mutation is journaled before send, committed with its receipt and durable revision in one transaction, and never automatically resent after delivery becomes uncertain.
-15. V3 capability projection and authoritative mutation admission use the same policy; a UI affordance or score never authorizes a change.
+14. A frontend ordinary mutation is journaled before send, committed with its receipt and durable revision in one transaction, and never automatically resent after delivery becomes uncertain.
+15. Frontend capability projection and authoritative mutation admission use the same policy; a UI affordance or score never authorizes a change.
 16. Stable public event tokens identify retained events without exposing internal event/attempt IDs; missing typed outcome never becomes a fabricated success.
-17. Schema v3 cannot encode service lifecycle or signal authority, and version skew never falls back to v1.
+17. Frontend schemas cannot encode service lifecycle or signal authority, and version skew never falls back from v4 to v3 or v1.
+18. Browser product phase, compatibility, coverage, support catalog and recent settlement have one daemon-owned v4 projection; a frontend must not reconstruct stronger truth from separate reads.
 
 ---
 

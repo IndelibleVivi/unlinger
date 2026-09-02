@@ -86,6 +86,11 @@ private actor ScriptClient: UnlingerClient {
         return try await fixture.status()
     }
 
+    func browserOverview() async throws(ClientError) -> BrowserOverviewSnapshot {
+        if let incidentsError { throw incidentsError }
+        return try await BrowserFixtureClient(scenario: .active).browserOverview()
+    }
+
     func history(limit _: Int) async throws(ClientError) -> [HistoryEvent] {
         []
     }
@@ -208,6 +213,7 @@ private actor ScriptClient: UnlingerClient {
 
 private struct DeadClient: UnlingerClient {
     func status() async throws(ClientError) -> PublicStatus { throw .unavailable }
+    func browserOverview() async throws(ClientError) -> BrowserOverviewSnapshot { throw .unavailable }
     func history(limit _: Int) async throws(ClientError) -> [HistoryEvent] { throw .unavailable }
     func incidents() async throws(ClientError) -> ObservationRoster { throw .unavailable }
     func explain(incidentID _: String) async throws(ClientError) -> IncidentDetail { throw .unavailable }
@@ -354,30 +360,30 @@ struct MutationFlowTests {
         await state.refresh()
         #expect(state.connection == .unavailable)
         #expect(state.status == nil)
-        #expect(state.currentIncidents.isEmpty)
+        #expect(state.browserSnapshot == nil)
     }
 
-    @Test("a replacement read failure retains the prior roster and marks it stale")
-    func replacementReadFailureRetainsRoster() async throws {
+    @Test("a replacement read failure retains the prior browser snapshot and marks it stale")
+    func replacementReadFailureRetainsBrowserSnapshot() async throws {
         let client = ScriptClient()
         let state = AppState(client: client, mutationLedger: TestMutationJournal())
         await state.refresh()
 
-        let priorToken = state.observationRoster.cycleToken
-        let priorTime = state.observationRoster.observedAtUnixMillis
-        let priorItems = state.currentIncidents
+        let priorToken = state.browserSnapshot?.cycleToken
+        let priorTime = state.browserSnapshot?.observedAtUnixMillis
+        let priorSessions = state.browserSnapshot?.sessions
         #expect(state.connection == .live)
-        #expect(state.observationRoster.freshness == .current)
-        #expect(!priorItems.isEmpty)
+        #expect(state.browserSnapshot?.freshness == .current)
+        #expect(!(priorSessions ?? []).isEmpty)
 
         await client.setIncidentsError(.unavailable)
         await state.refresh()
 
         #expect(state.connection == .unavailable)
         #expect(state.status != nil)
-        #expect(state.observationRoster.freshness == .staleAfterFailure)
-        #expect(state.observationRoster.cycleToken == priorToken)
-        #expect(state.observationRoster.observedAtUnixMillis == priorTime)
-        #expect(state.currentIncidents == priorItems)
+        #expect(state.browserSnapshot?.freshness == .staleAfterFailure)
+        #expect(state.browserSnapshot?.cycleToken == priorToken)
+        #expect(state.browserSnapshot?.observedAtUnixMillis == priorTime)
+        #expect(state.browserSnapshot?.sessions == priorSessions)
     }
 }

@@ -1,0 +1,75 @@
+{
+  "schema_version": 4,
+  "request_id": 402,
+  "ok": true,
+  "payload": {
+    "type": "browser_overview",
+    "data": {
+      "generated_at_unix_millis": 1788148800000,
+      "cycle_token": "cycle-v4-protected",
+      "observed_at_unix_millis": 1788148799000,
+      "freshness": "current",
+      "healthy": true,
+      "effective_mode": "report_only",
+      "phase": "protected",
+      "sessions": [
+        {
+          "incident_id": "redacted-browser-402",
+          "family": "puppeteer",
+          "state": "PROTECTED",
+          "member_count": 6,
+          "resident_memory_bytes": 536870912,
+          "compatibility": {
+            "product": "chrome_for_testing",
+            "observed_version": "151.0.7922.35",
+            "decision": "protected",
+            "reason_id": "protection.browser_version_unsupported"
+          },
+          "capabilities": {
+            "open_detail": {
+              "available": true
+            }
+          }
+        }
+      ],
+      "coverage_notices": [
+        {
+          "incident_id": "redacted-browser-402",
+          "decision": "protected",
+          "reason_id": "protection.browser_version_unsupported"
+        }
+      ],
+      "attention": {
+        "total_count": 0,
+        "items": []
+      },
+      "protection": {
+        "total_count": 0,
+        "items": []
+      },
+      "support_catalog": {
+        "support_revision": "rules:agent-browser@0.2.0|playwright@0.2.0|puppeteer@0.2.0",
+        "families": [
+          {
+            "family": "agent-browser",
+            "product": "chrome_for_testing",
+            "admitted_versions": ["151.0.7922.34"],
+            "automatic_action_level": "automatic"
+          },
+          {
+            "family": "playwright",
+            "product": "chrome_for_testing",
+            "admitted_versions": ["151.0.7922.34"],
+            "automatic_action_level": "automatic"
+          },
+          {
+            "family": "puppeteer",
+            "product": "chrome_for_testing",
+            "admitted_versions": ["151.0.7922.34"],
+            "automatic_action_level": "automatic"
+          }
+        ]
+      }
+    }
+  }
+}

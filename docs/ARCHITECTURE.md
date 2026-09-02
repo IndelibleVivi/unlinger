@@ -56,14 +56,15 @@ flowchart LR
     subgraph LOCAL[Owner-private state and control]
         STORE[SQLite v6 timeline + journals<br/>event tokens + mutation receipts]
         IPC[0600 newline-delimited JSON socket<br/>bounded eight-worker server]
-        PUBLIC[Schema v3 public DTO<br/>ordinary frontend commands only]
+        PUBLIC[Schema v4 public DTO<br/>atomic browser overview + ordinary commands]
+        V3[Schema v3 transition<br/>existing frontend commands]
         V1[Schema v1 compatibility<br/>CLI + service transaction]
         V2[Schema v2 historical<br/>typed unsupported]
         INTERNAL[Service-only lifecycle controls<br/>exact generation + instance]
     end
 
     subgraph APP[Native menu-bar App]
-        CLIENT[Strict single-attempt v3 client]
+        CLIENT[Strict single-attempt v4 client]
         JOURNAL[0600 pre-send mutation journal]
         STATE[Coalesced state + shared router]
         NOTICE[Bounded notification ledger<br/>local OS delivery]
@@ -88,6 +89,7 @@ flowchart LR
     APREP --> STORE
     APREP -->|after durable commit| DAP --> STORE
     STORE --> IPC --> PUBLIC
+    IPC --> V3
     STORE --> IPC --> V1
     IPC --> V2
     PUBLIC --> CLIENT
@@ -112,9 +114,9 @@ The macOS adapter no longer walks every file descriptor of every same-UID proces
 
 This is not a claim that the final deletion race is fully closed. Two known P2 residuals remain: daemon death after the canonical-to-quarantine rename can strand the exact private quarantine entry, and a same-UID actor can still attempt a swap between the final `fstatat` pathname check and `unlinkat`. One controlled generation-9 field run produced a successful live DAP-removal receipt with the current path; that point result does not resolve either race or authorize broader artifact eligibility.
 
-Ordinary IPC commands and service lifecycle controls share the owner-private socket but not the same typed authority surface. Schema v3 contains strict public status/history/incident/roster/diagnostics DTOs plus mutation status and ordinary pause/resume, retry and exact-incident protect/unprotect. It strips process/service identities, exposes exact readiness/freshness and derives capabilities from the same policy used for transaction authorization. Schema v2 is historical and rejected. `Arm`, `Disarm`, and `BeginDrain` exist only in schema v1 and remain bound to the exact activation generation and daemon instance.
+Ordinary IPC commands and service lifecycle controls share the owner-private socket but not the same typed authority surface. Schema v4 contains strict public status/history/incident/roster/diagnostics DTOs plus mutation status, ordinary pause/resume, retry and exact-incident protect/unprotect, and one atomic browser overview. That overview captures status+roster under one source boundary, owns phase precedence, typed compatibility/coverage, the embedded-rule support catalog and exact-event settlement. Schema v3 remains a transition endpoint for its existing commands but rejects the v4-only overview. Both strip process/service identities and derive capabilities from the same policy used for transaction authorization. Schema v2 is historical and rejected. `Arm`, `Disarm`, and `BeginDrain` exist only in schema v1 and remain bound to the exact activation generation and daemon instance.
 
-Every v3 mutation is written to an App-local crash-durable journal before connect/send, then the daemon commits state, durable revision and typed receipt in one immediate transaction. Exact replay precedes lifecycle denial; same ID plus different canonical arguments conflicts; pruning rotates receipt namespace atomically. Any post-send untrusted result remains unresolved and the App uses read-only mutation status rather than resending. The App's coalesced refresh generation prevents old results from overwriting new state. Stable public event tokens drive history identity and duplicate-avoiding local notifications; the first trusted refresh baselines retained history.
+Every frontend mutation is written to an App-local crash-durable journal before connect/send, then the daemon commits state, durable revision and typed receipt in one immediate transaction. Exact replay precedes lifecycle denial; same ID plus different canonical arguments conflicts; pruning rotates receipt namespace atomically. Any post-send untrusted result remains unresolved and the App uses read-only mutation status rather than resending. The App fetches status, history and the canonical browser snapshot concurrently; it does not fetch roster for browser composition or perform a coherence retry. Its coalesced refresh generation prevents old results from overwriting new state. Stable public event tokens drive history identity and duplicate-avoiding local notifications; the first trusted refresh baselines retained history.
 
 Every socket request still uses one connection and one response. Default and service clients make one 15-second attempt; up to eight accepted connections are served concurrently, each with a 3-second read/write bound. Slow history or a partial peer therefore cannot head-of-line block all later control traffic. The managed field harness polls only read-only exact-incident `Explain` on a separate worker so native absence sampling is independent. Raw arguments, executable/profile paths, frozen target identities, and session fingerprints terminate inside transient observation/enforcement memory. SQLite, IPC, CLI, diagnostics, App journals and notification routes retain or project only typed redacted records.
 

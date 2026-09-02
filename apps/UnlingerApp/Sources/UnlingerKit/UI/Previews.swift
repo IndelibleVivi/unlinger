@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// Fixture-driven previews: every documented state renders from the canonical
-/// `Contract/v3` wire truth, never hand-built view data.
+/// Fixture-driven previews: every documented state renders from typed
+/// schema-v4 browser truth, never hand-built presentation data.
 
 @MainActor
 private func previewState(

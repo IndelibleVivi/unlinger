@@ -11,8 +11,8 @@ public enum BrowserFixtureScenario: Equatable, Sendable {
     case recentSettlement
 }
 
-/// Composes canonical v3 fixtures into deterministic product states for
-/// previews and local visual QA. It changes no wire fixture or product logic.
+/// Composes canonical fixtures into deterministic product states for previews
+/// and local visual QA. Production product logic remains daemon-owned.
 public struct BrowserFixtureClient: UnlingerClient {
     public var scenario: BrowserFixtureScenario
 
@@ -44,6 +44,93 @@ public struct BrowserFixtureClient: UnlingerClient {
             status.mostRecentReclaim?.eventToken = "history-cleared-event-1"
         }
         return status
+    }
+
+    public func browserOverview() async throws(ClientError) -> BrowserOverviewSnapshot {
+        let status = try await status()
+        let roster = try await incidents()
+        let phase: BrowserOverviewPhase = switch scenario {
+        case .clear, .recentSettlement: .clear
+        case .active: .active
+        case .verifying: .verifying
+        case .confirmedReportOnly: .confirmed
+        case .reclaiming: .reclaiming
+        case .protectedUnsupported: .protected
+        case .attention: .attention
+        }
+        let sessions = roster.items.map { item in
+            let compatibility = scenario == .protectedUnsupported
+                ? BrowserCompatibility(
+                    product: .chromeForTesting,
+                    observedVersion: "151.0.7922.35",
+                    decision: .protected,
+                    reasonId: "protection.browser_version_unsupported"
+                )
+                : BrowserCompatibility(
+                    product: .chromeForTesting,
+                    observedVersion: "151.0.7922.34",
+                    decision: .automatic,
+                    reasonId: nil
+                )
+            return BrowserSessionSummary(
+                incidentId: item.incidentId,
+                family: item.observation.family,
+                state: item.observation.state,
+                memberCount: item.observation.memberCount,
+                residentMemoryBytes: item.observation.residentMemoryBytes,
+                compatibility: compatibility,
+                capabilities: BrowserSessionCapabilities(
+                    openDetail: Capability(available: true)
+                )
+            )
+        }
+        let coverage = sessions.compactMap { session -> BrowserCoverageSummary? in
+            guard let reasonId = session.compatibility.reasonId else { return nil }
+            return BrowserCoverageSummary(
+                incidentId: session.incidentId,
+                decision: session.compatibility.decision,
+                reasonId: reasonId
+            )
+        }
+        let settlement = scenario == .recentSettlement
+            ? BrowserSettlementSummary(
+                eventToken: "history-cleared-event-1",
+                incidentId: "redacted-incident-1",
+                family: "chrome-for-testing",
+                occurredAtUnixMillis: Self.observedAt,
+                processCount: 8,
+                estimatedReclaimedMemoryBytes: 912_261_120,
+                revivalChecksCompleted: 2,
+                artifactOutcome: .reconciled,
+                overallOutcome: .cleared
+            )
+            : nil
+        return BrowserOverviewSnapshot(
+            generatedAtUnixMillis: Self.observedAt,
+            cycleToken: roster.cycleToken,
+            observedAtUnixMillis: roster.observedAtUnixMillis,
+            freshness: scenario == .attention ? .current : roster.freshness,
+            healthy: status.healthy,
+            effectiveMode: status.effectiveMode,
+            pausedUntilUnixMillis: status.pausedUntilUnixMillis,
+            phase: phase,
+            sessions: sessions,
+            coverageNotices: coverage,
+            recentSettlement: settlement,
+            attention: status.attention,
+            protection: status.protection,
+            supportCatalog: BrowserSupportCatalog(
+                supportRevision: "fixture:rules-v1",
+                families: ["agent-browser", "playwright", "puppeteer"].map {
+                    BrowserFamilySupport(
+                        family: $0,
+                        product: .chromeForTesting,
+                        admittedVersions: ["151.0.7922.34"],
+                        automaticActionLevel: .automatic
+                    )
+                }
+            )
+        )
     }
 
     public func history(limit: Int) async throws(ClientError) -> [HistoryEvent] {

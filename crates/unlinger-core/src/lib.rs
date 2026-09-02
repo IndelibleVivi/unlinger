@@ -19,8 +19,9 @@ pub use cleanup::{
     RevalidationPhase, RevalidationStatus, RuntimeFailure, SignalDisposition, WaitOutcome,
 };
 pub use evidence::{
-    EvidenceFamily, EvidenceItem, GateLedger, IncidentReport, ProcessRole, ProcessRoleCount,
-    ProcessTarget, RootSummary,
+    BrowserCompatibility, BrowserCompatibilityDecision, BrowserProduct, EvidenceFamily,
+    EvidenceItem, GateLedger, IncidentReport, ProcessRole, ProcessRoleCount, ProcessTarget,
+    RootSummary,
 };
 pub use fingerprint::{fingerprint_parts, fingerprint_process_identity, fingerprint_process_set};
 pub use graph::{GraphError, ProcessGraph};

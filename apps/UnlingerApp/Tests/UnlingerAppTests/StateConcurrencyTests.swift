@@ -26,17 +26,12 @@ private actor DelayedProjectionClient: UnlingerClient {
         return try await FixtureClient(statusFixture: "status-scanning").status()
     }
 
-    func history(limit _: Int) async throws(ClientError) -> [HistoryEvent] { [] }
-
-    func incidents() async throws(ClientError) -> ObservationRoster {
-        ObservationRoster(
-            cycleToken: "cycle-current",
-            observedAtUnixMillis: 1,
-            freshness: .current,
-            items: []
-        )
+    func browserOverview() async throws(ClientError) -> BrowserOverviewSnapshot {
+        try await BrowserFixtureClient(scenario: .clear).browserOverview()
     }
 
+    func history(limit _: Int) async throws(ClientError) -> [HistoryEvent] { [] }
+    func incidents() async throws(ClientError) -> ObservationRoster { throw .unavailable }
     func explain(incidentID _: String) async throws(ClientError) -> IncidentDetail { throw .unavailable }
     func mutationStatus(context _: MutationContext) async throws(ClientError) -> MutationStatus { throw .unavailable }
     func pause(context _: MutationContext, durationMillis _: UInt64) async throws(ClientError) -> MutationReceipt { throw .unavailable }
@@ -47,29 +42,20 @@ private actor DelayedProjectionClient: UnlingerClient {
     func exportDiagnostics(incidentID _: String) async throws(ClientError) -> DiagnosticsExport { throw .unavailable }
 }
 
-private actor MismatchedProjectionClient: UnlingerClient {
-    private var statusCalls = 0
-
-    func callCount() -> Int { statusCalls }
+private actor CountingProjectionClient: UnlingerClient {
+    private(set) var overviewCalls = 0
 
     func status() async throws(ClientError) -> PublicStatus {
-        statusCalls += 1
-        var status = try await FixtureClient(statusFixture: "status-all-clear").status()
-        status.latestObservationAtUnixMillis = 2
-        return status
+        try await FixtureClient(statusFixture: "status-all-clear").status()
+    }
+
+    func browserOverview() async throws(ClientError) -> BrowserOverviewSnapshot {
+        overviewCalls += 1
+        return try await BrowserFixtureClient(scenario: .clear).browserOverview()
     }
 
     func history(limit _: Int) async throws(ClientError) -> [HistoryEvent] { [] }
-
-    func incidents() async throws(ClientError) -> ObservationRoster {
-        ObservationRoster(
-            cycleToken: "cycle-current",
-            observedAtUnixMillis: 1,
-            freshness: .current,
-            items: []
-        )
-    }
-
+    func incidents() async throws(ClientError) -> ObservationRoster { throw .unavailable }
     func explain(incidentID _: String) async throws(ClientError) -> IncidentDetail { throw .unavailable }
     func mutationStatus(context _: MutationContext) async throws(ClientError) -> MutationStatus { throw .unavailable }
     func pause(context _: MutationContext, durationMillis _: UInt64) async throws(ClientError) -> MutationReceipt { throw .unavailable }
@@ -83,16 +69,16 @@ private actor MismatchedProjectionClient: UnlingerClient {
 @Suite("Refresh concurrency")
 @MainActor
 struct StateConcurrencyTests {
-    @Test("a coherence miss requests exactly one trailing refresh")
-    func coherenceMissGetsOneTrailingRefresh() async {
-        let client = MismatchedProjectionClient()
+    @Test("one refresh consumes one canonical browser snapshot")
+    func refreshUsesOneOverviewRequest() async {
+        let client = CountingProjectionClient()
         let state = AppState(client: client, mutationLedger: TestMutationJournal())
 
         await state.refresh()
 
-        #expect(await client.callCount() == 2)
-        #expect(state.browserOverview.phase == .unknown)
-        #expect(state.browserOverview.requiresTrailingRefresh)
+        #expect(await client.overviewCalls == 1)
+        #expect(state.browserOverview.phase == .clear)
+        #expect(!state.browserOverview.requiresTrailingRefresh)
     }
 
     @Test("a stopped polling session cannot apply after restart")

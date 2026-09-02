@@ -64,7 +64,6 @@ public protocol NotificationCoordinating: Sendable {
     func receiveTrustedRefresh(
         status: PublicStatus,
         history: [HistoryEvent],
-        roster: ObservationRoster,
         atUnixMillis: UInt64
     ) async
     func receiveUnavailable(atUnixMillis: UInt64) async

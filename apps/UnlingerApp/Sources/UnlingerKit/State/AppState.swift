@@ -11,7 +11,7 @@ public enum ConnectionState: Equatable, Sendable {
 private struct RefreshSnapshot: Sendable {
     var status: PublicStatus
     var history: [HistoryEvent]
-    var roster: ObservationRoster
+    var browser: BrowserOverviewSnapshot
 }
 
 private enum RefreshOutcome: Sendable {
@@ -36,12 +36,7 @@ public final class AppState {
     public private(set) var connection: ConnectionState = .connecting
     public private(set) var status: PublicStatus?
     public private(set) var history: [HistoryEvent] = []
-    public private(set) var observationRoster = ObservationRoster(
-        cycleToken: nil,
-        observedAtUnixMillis: nil,
-        freshness: .neverObserved,
-        items: []
-    )
+    public private(set) var browserSnapshot: BrowserOverviewSnapshot?
     public private(set) var lastRefreshAt: Date?
     public private(set) var mutationState: MutationState = .idle
     public private(set) var pendingMutation: PendingMutation?
@@ -51,13 +46,10 @@ public final class AppState {
         pendingMutation.map { [$0] } ?? []
     }
 
-    public var currentIncidents: [CurrentIncident] { observationRoster.items }
     public var browserOverview: BrowserOverview {
         BrowserOverviewMapper.make(
             connection: connection,
-            status: status,
-            roster: observationRoster,
-            history: history
+            snapshot: browserSnapshot
         )
     }
     public var ordinaryMutationsLocked: Bool { pendingMutation != nil || !mutationJournalAvailable }
@@ -218,7 +210,6 @@ public final class AppState {
     }
 
     private func runRefreshLoop(epoch: UInt64) async {
-        var coherenceRetryAvailable = true
         repeat {
             refreshRequested = false
             let outcome = await fetchRefreshSnapshot()
@@ -227,24 +218,12 @@ public final class AppState {
             case .success(let snapshot):
                 status = snapshot.status
                 history = snapshot.history
-                observationRoster = snapshot.roster
+                browserSnapshot = snapshot.browser
                 connection = .live
                 lastRefreshAt = .now
-                if coherenceRetryAvailable,
-                   BrowserOverviewMapper.make(
-                       connection: .live,
-                       status: snapshot.status,
-                       roster: snapshot.roster,
-                       history: snapshot.history
-                   ).requiresTrailingRefresh
-                {
-                    coherenceRetryAvailable = false
-                    refreshRequested = true
-                }
                 await notificationCoordinator?.receiveTrustedRefresh(
                     status: snapshot.status,
                     history: snapshot.history,
-                    roster: snapshot.roster,
                     atUnixMillis: Date().unixMillis
                 )
                 if let pending = pendingMutation {
@@ -252,16 +231,16 @@ public final class AppState {
                 }
             case .failure(.incompatibleDaemon(let reason)):
                 connection = .incompatibleDaemon(reason)
-                markRosterStaleAfterFailure()
+                markBrowserSnapshotStaleAfterFailure()
             case .failure(.unavailable):
                 connection = .unavailable
-                markRosterStaleAfterFailure()
+                markBrowserSnapshotStaleAfterFailure()
                 await notificationCoordinator?.receiveUnavailable(
                     atUnixMillis: Date().unixMillis
                 )
             case .failure:
                 connection = .unavailable
-                markRosterStaleAfterFailure()
+                markBrowserSnapshotStaleAfterFailure()
             }
         } while refreshRequested && !Task.isCancelled && epoch == refreshEpoch
     }
@@ -272,9 +251,9 @@ public final class AppState {
         do {
             async let status = client.status()
             async let history = client.history(limit: historyLimit)
-            async let roster = client.incidents()
-            let values = try await (status, history, roster)
-            return .success(RefreshSnapshot(status: values.0, history: values.1, roster: values.2))
+            async let browser = client.browserOverview()
+            let values = try await (status, history, browser)
+            return .success(RefreshSnapshot(status: values.0, history: values.1, browser: values.2))
         } catch let error as ClientError {
             return .failure(error)
         } catch {
@@ -440,8 +419,7 @@ public final class AppState {
         }
     }
 
-    private func markRosterStaleAfterFailure() {
-        guard observationRoster.freshness != .neverObserved else { return }
-        observationRoster.freshness = .staleAfterFailure
+    private func markBrowserSnapshotStaleAfterFailure() {
+        browserSnapshot?.freshness = .staleAfterFailure
     }
 }

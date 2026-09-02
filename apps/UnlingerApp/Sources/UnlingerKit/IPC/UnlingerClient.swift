@@ -1,10 +1,11 @@
 import Foundation
 
-/// The schema-v3 ordinary command surface. Fixture-backed in previews/tests,
+/// The schema-v4 ordinary command surface. Fixture-backed in previews/tests,
 /// Unix-socket-backed in production. Every call opens a fresh connection and
 /// makes exactly one attempt — never an automatic resend.
 public protocol UnlingerClient: Sendable {
     func status() async throws(ClientError) -> PublicStatus
+    func browserOverview() async throws(ClientError) -> BrowserOverviewSnapshot
     func history(limit: Int) async throws(ClientError) -> [HistoryEvent]
     func explain(incidentID: String) async throws(ClientError) -> IncidentDetail
     func incidents() async throws(ClientError) -> ObservationRoster
@@ -29,6 +30,7 @@ extension UnlingerClient {
     static func decode<T: Decodable & Sendable>(_ type: T.Type, for command: Command, requestID: UInt64, line: Data) throws(ClientError) -> T {
         let expectedType: String = switch command {
         case .status: "status"
+        case .browserOverview: "browser_overview"
         case .history: "history"
         case .explain: "incident"
         case .incidents: "incidents"
@@ -37,6 +39,12 @@ extension UnlingerClient {
              .unprotectIncident: "mutation_committed"
         case .exportDiagnostics: "diagnostics"
         }
-        return try ResponseDecoder.decode(T.self, expectedPayloadType: expectedType, requestID: requestID, line: line)
+        return try ResponseDecoder.decode(
+            T.self,
+            expectedPayloadType: expectedType,
+            requestID: requestID,
+            expectedSchemaVersion: 4,
+            line: line
+        )
     }
 }

@@ -5,7 +5,7 @@ import Testing
 @MainActor
 struct BrowserFixtureScenarioTests {
     @Test(
-        "every BGX-1 visual scenario reaches its intended product phase",
+        "every browser fixture scenario reaches its intended product phase",
         arguments: [
             ("browser-clear", BrowserOverviewPhase.clear),
             ("browser-active", BrowserOverviewPhase.active),
@@ -27,7 +27,7 @@ struct BrowserFixtureScenarioTests {
         #expect(state.browserOverview.phase == expected)
     }
 
-    @Test("recent settlement scenario joins concrete typed evidence")
+    @Test("recent settlement scenario exposes the atomic typed summary")
     func recentSettlementScenario() async throws {
         let state = AppState(
             client: FixtureClient.scenario("browser-recent-settlement"),

@@ -91,6 +91,18 @@ public enum ArtifactDisposition: Equatable, Sendable {
     case cancelledBeforeDelivery, deliveryUnknown, unknown(String)
 }
 
+public enum BrowserCompatibilityDecision: Equatable, Sendable {
+    case automatic, observeOnly, protected, unknown(String)
+}
+
+public enum BrowserProduct: Equatable, Sendable {
+    case chromeForTesting, chromium, googleChrome, other, unknown(String)
+}
+
+public enum BrowserAutomaticActionLevel: Equatable, Sendable {
+    case automatic, observeOnly, unsupported, unknown(String)
+}
+
 // MARK: - Wire-string decoding helper
 
 protocol WireString: Codable {
@@ -481,6 +493,97 @@ extension ArtifactDisposition: WireString {
     }
 }
 
+extension BrowserCompatibilityDecision: WireString {
+    init(wire: String) {
+        switch wire {
+        case "automatic": self = .automatic
+        case "observe_only": self = .observeOnly
+        case "protected": self = .protected
+        default: self = .unknown(wire)
+        }
+    }
+
+    var wire: String {
+        switch self {
+        case .automatic: "automatic"
+        case .observeOnly: "observe_only"
+        case .protected: "protected"
+        case .unknown(let raw): raw
+        }
+    }
+}
+
+extension BrowserProduct: WireString {
+    init(wire: String) {
+        switch wire {
+        case "chrome_for_testing": self = .chromeForTesting
+        case "chromium": self = .chromium
+        case "google_chrome": self = .googleChrome
+        case "other": self = .other
+        default: self = .unknown(wire)
+        }
+    }
+
+    var wire: String {
+        switch self {
+        case .chromeForTesting: "chrome_for_testing"
+        case .chromium: "chromium"
+        case .googleChrome: "google_chrome"
+        case .other: "other"
+        case .unknown(let raw): raw
+        }
+    }
+}
+
+extension BrowserAutomaticActionLevel: WireString {
+    init(wire: String) {
+        switch wire {
+        case "automatic": self = .automatic
+        case "observe_only": self = .observeOnly
+        case "unsupported": self = .unsupported
+        default: self = .unknown(wire)
+        }
+    }
+
+    var wire: String {
+        switch self {
+        case .automatic: "automatic"
+        case .observeOnly: "observe_only"
+        case .unsupported: "unsupported"
+        case .unknown(let raw): raw
+        }
+    }
+}
+
+extension BrowserOverviewPhase: WireString {
+    init(wire: String) {
+        switch wire {
+        case "unknown": self = .unknown
+        case "clear": self = .clear
+        case "active": self = .active
+        case "verifying": self = .verifying
+        case "confirmed": self = .confirmed
+        case "reclaiming": self = .reclaiming
+        case "protected": self = .protected
+        case "attention": self = .attention
+        default: self = .unknown
+        }
+    }
+
+    var wire: String {
+        switch self {
+        case .unknown: "unknown"
+        case .clear: "clear"
+        case .active: "active"
+        case .verifying: "verifying"
+        case .confirmed: "confirmed"
+        case .reclaiming: "reclaiming"
+        case .protected: "protected"
+        case .attention: "attention"
+        }
+    }
+}
+
 // MARK: - Status DTOs
 
 public struct ComponentHealth: Codable, Equatable, Sendable {
@@ -680,6 +783,144 @@ public struct PublicStatus: Codable, Equatable, Sendable {
     }
 }
 
+// MARK: - Atomic browser overview DTOs
+
+public struct BrowserCompatibility: Codable, Equatable, Sendable {
+    public var product: BrowserProduct
+    public var observedVersion: String?
+    public var decision: BrowserCompatibilityDecision
+    public var reasonId: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case product
+        case observedVersion = "observed_version"
+        case decision
+        case reasonId = "reason_id"
+    }
+}
+
+public struct BrowserSessionCapabilities: Codable, Equatable, Sendable {
+    public var openDetail: Capability
+
+    private enum CodingKeys: String, CodingKey {
+        case openDetail = "open_detail"
+    }
+}
+
+public struct BrowserSessionSummary: Codable, Equatable, Sendable, Identifiable {
+    public var incidentId: String
+    public var family: String
+    public var state: IncidentState
+    public var memberCount: Int
+    public var residentMemoryBytes: UInt64
+    public var compatibility: BrowserCompatibility
+    public var capabilities: BrowserSessionCapabilities
+
+    public var id: String { incidentId }
+
+    private enum CodingKeys: String, CodingKey {
+        case incidentId = "incident_id"
+        case family, state
+        case memberCount = "member_count"
+        case residentMemoryBytes = "resident_memory_bytes"
+        case compatibility, capabilities
+    }
+}
+
+public struct BrowserCoverageSummary: Codable, Equatable, Sendable, Identifiable {
+    public var incidentId: String
+    public var decision: BrowserCompatibilityDecision
+    public var reasonId: String
+
+    public var id: String { "\(incidentId)|\(reasonId)" }
+
+    private enum CodingKeys: String, CodingKey {
+        case incidentId = "incident_id"
+        case decision
+        case reasonId = "reason_id"
+    }
+}
+
+public struct BrowserSettlementSummary: Codable, Equatable, Sendable {
+    public var eventToken: String
+    public var incidentId: String
+    public var family: String
+    public var occurredAtUnixMillis: UInt64
+    public var processCount: Int?
+    public var estimatedReclaimedMemoryBytes: UInt64?
+    public var revivalChecksCompleted: Int
+    public var artifactOutcome: ArtifactOutcome
+    public var overallOutcome: OverallOutcome
+
+    private enum CodingKeys: String, CodingKey {
+        case eventToken = "event_token"
+        case incidentId = "incident_id"
+        case family
+        case occurredAtUnixMillis = "occurred_at_unix_millis"
+        case processCount = "process_count"
+        case estimatedReclaimedMemoryBytes = "estimated_reclaimed_memory_bytes"
+        case revivalChecksCompleted = "revival_checks_completed"
+        case artifactOutcome = "artifact_outcome"
+        case overallOutcome = "overall_outcome"
+    }
+}
+
+public struct BrowserFamilySupport: Codable, Equatable, Sendable, Identifiable {
+    public var family: String
+    public var product: BrowserProduct
+    public var admittedVersions: [String]
+    public var automaticActionLevel: BrowserAutomaticActionLevel
+
+    public var id: String { family }
+
+    private enum CodingKeys: String, CodingKey {
+        case family, product
+        case admittedVersions = "admitted_versions"
+        case automaticActionLevel = "automatic_action_level"
+    }
+}
+
+public struct BrowserSupportCatalog: Codable, Equatable, Sendable {
+    public var supportRevision: String
+    public var families: [BrowserFamilySupport]
+
+    private enum CodingKeys: String, CodingKey {
+        case supportRevision = "support_revision"
+        case families
+    }
+}
+
+public struct BrowserOverviewSnapshot: Codable, Equatable, Sendable {
+    public var generatedAtUnixMillis: UInt64
+    public var cycleToken: String?
+    public var observedAtUnixMillis: UInt64?
+    public var freshness: ObservationFreshness
+    public var healthy: Bool
+    public var effectiveMode: EffectiveMode
+    public var pausedUntilUnixMillis: UInt64?
+    public var phase: BrowserOverviewPhase
+    public var sessions: [BrowserSessionSummary]
+    public var coverageNotices: [BrowserCoverageSummary]
+    public var recentSettlement: BrowserSettlementSummary?
+    public var attention: AttentionProjection
+    public var protection: ProtectionProjection
+    public var supportCatalog: BrowserSupportCatalog
+
+    private enum CodingKeys: String, CodingKey {
+        case generatedAtUnixMillis = "generated_at_unix_millis"
+        case cycleToken = "cycle_token"
+        case observedAtUnixMillis = "observed_at_unix_millis"
+        case freshness, healthy
+        case effectiveMode = "effective_mode"
+        case pausedUntilUnixMillis = "paused_until_unix_millis"
+        case phase, sessions
+        case coverageNotices = "coverage_notices"
+        case recentSettlement = "recent_settlement"
+        case attention, protection
+        case supportCatalog = "support_catalog"
+    }
+}
+
 // MARK: - History / explain DTOs
 
 public struct RoleCount: Codable, Equatable, Sendable {
@@ -730,6 +971,7 @@ public struct ObservationRecord: Codable, Equatable, Sendable {
     public var roles: [RoleCount]
     public var evidence: [Evidence]
     public var gates: GateLedger
+    public var browserCompatibility: BrowserCompatibility? = nil
 
     private enum CodingKeys: String, CodingKey {
         case family
@@ -739,6 +981,7 @@ public struct ObservationRecord: Codable, Equatable, Sendable {
         case memberCount = "member_count"
         case residentMemoryBytes = "resident_memory_bytes"
         case roles, evidence, gates
+        case browserCompatibility = "browser_compatibility"
     }
 }
 
@@ -1079,6 +1322,7 @@ public enum MutationStatus: Codable, Equatable, Sendable {
 
 public enum Command: Sendable, Equatable {
     case status
+    case browserOverview
     case history(limit: Int)
     case explain(incidentID: String)
     case incidents
@@ -1096,7 +1340,8 @@ public enum Command: Sendable, Equatable {
              .retryFailedCleanup(let context, _),
              .protectIncident(let context, _),
              .unprotectIncident(let context, _): context
-        case .status, .history, .explain, .incidents, .mutationStatus, .exportDiagnostics: nil
+        case .status, .browserOverview, .history, .explain, .incidents,
+             .mutationStatus, .exportDiagnostics: nil
         }
     }
 
@@ -1118,6 +1363,8 @@ extension Command: Encodable {
         switch self {
         case .status:
             try container.encode("status", forKey: commandKey)
+        case .browserOverview:
+            try container.encode("browser_overview", forKey: commandKey)
         case .history(let limit):
             try container.encode("history", forKey: commandKey)
             try container.encode(limit, forKey: DynamicKey(stringValue: "limit")!)
@@ -1158,7 +1405,7 @@ extension Command: Encodable {
 // MARK: - Envelope
 
 struct RequestEnvelope: Encodable {
-    let schemaVersion = 3
+    let schemaVersion = 4
     let requestID: UInt64
     let command: Command
 

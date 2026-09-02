@@ -19,12 +19,12 @@ The repository contains a macOS pre-v0.1 source candidate spanning observation, 
 - DAP-only runtime-artifact cleanup with a targeted Darwin pathname-reference query, a complete current-user argv pass, exact file/parent identity, an exclusive quarantine step, and a durable action journal; profiles and runtime directories are never deleted;
 - independent process/artifact/overall cleanup outcomes, so a proved-gone tree remains visible as reclaimed when an explicitly refused artifact is safely retained; delivery uncertainty and unproved post-side-effect failures still fail closed;
 - redacted SQLite v6 timelines, durable cleanup-policy revision, stable public event tokens, namespace-aware ordinary-mutation receipts, cooling/protection/retry/lifecycle state, terminal receipts stamped at completion, and bounded retention;
-- a 0600 local newline-delimited JSON socket with frontend schema v3 and a schema-v1 CLI/service compatibility lane; v3 omits process/service identities, exposes exact readiness, roster freshness, typed outcomes, capabilities and durable mutation reconciliation, and cannot encode lifecycle commands; historical v2 is rejected rather than silently downgraded;
+- a 0600 local newline-delimited JSON socket with frontend schema v4, a transitional schema-v3 compatibility endpoint, and a schema-v1 CLI/service lane; v4 adds one atomic daemon-owned browser overview and rule-generated compatibility catalog, while both frontend schemas omit process/service identities, retain durable mutation reconciliation, and cannot encode lifecycle commands; historical v2 is rejected rather than silently downgraded;
 - native process-exit, wake, and memory-pressure scheduling hints with a periodic fallback; every trigger still begins with a fresh snapshot and pressure never lowers a gate;
 - a report-only daemon default and generation/instance/epoch-bound signal authorization;
 - a transactional per-user LaunchAgent lifecycle with sealed immutable generations, exact launchd/IPC/binary checks, an acceptance-scoped SQLite rollback lease, crash-replayable candidate rollback, schema-preserving cross-generation containment, explicit candidate accept/rollback, and same-generation fresh-epoch re-arm only after a signal-free first scan; machine-readable service output uses a public projection rather than exposing PIDs, instance IDs, local paths or raw errors;
 - graceful SIGTERM handling that terminates the current cycle safely, preserves same-generation desired intent for launchd restart, and removes the exact owned socket; explicit service drain clears that intent.
-- a SwiftPM native menu-bar and Dock client under `apps/UnlingerApp`, with a browser-first overview and incident-detail surface derived by one pure schema-v3 projection, conservative snapshot coherence, exact-token settlement joins, explicit observe-only/auto-cleanup mode, typed coverage reasons, bilingual VoiceOver copy and fixture scenarios for every product phase; a direct AppKit `@main` owns the status item/popover and reusable ordinary window around that same SwiftUI root, with reliable Dock/window fallback, crash-durable no-resend mutation handling, capability-gated ordinary actions, bounded local notifications, menu-client-only launch at login, and a private ad-hoc-signed `.app` bundler that rejects removable-volume resource and loader paths.
+- a SwiftPM native menu-bar and Dock client under `apps/UnlingerApp`, with a strict schema-v4 browser-first overview that consumes one atomic daemon-owned phase/session/compatibility/coverage/settlement snapshot; the Swift mapper now owns localization and presentation only, while a direct AppKit `@main` owns the status item/popover and reusable ordinary window around that same SwiftUI root, with reliable Dock/window fallback, crash-durable no-resend mutation handling, capability-gated ordinary actions, bounded local notifications, menu-client-only launch at login, bilingual VoiceOver copy, and a private ad-hoc-signed `.app` bundler that rejects removable-volume resource and loader paths.
 
 The current allowed claim is **pre-v0.1 installed report-only candidate**. Exact-head generation 12 and the ad-hoc-signed native App are installed for private dogfood; the daemon is healthy, schema-v3/v6 capable, report-only and unarmed. Its acceptance lease still retains generation 9's manifest/plist/v5 database. A real rollback restored generation 9, whose exact old CLI/daemon reopened v5 and returned healthy ReadyReportOnly, before the candidate was reinstalled. The candidate is deliberately not accepted yet, so rollback remains available throughout initial dogfood.
 
@@ -55,7 +55,7 @@ scripts/bundle.sh
 scripts/pre-v0.1-smoke.sh
 ```
 
-The smoke script creates and owns one temporary database/socket/lock, keeps the daemon report-only, verifies v3 reads and durable receipts across restart, checks private modes and no IP listener, and removes only that exact temporary root. It never touches the installed service. See [`apps/UnlingerApp/README.md`](apps/UnlingerApp/README.md).
+The smoke script creates and owns one temporary database/socket/lock, keeps the daemon report-only, verifies the v4 App including its atomic browser overview plus the retained frontend commands and durable receipts across restart, checks private modes and no IP listener, and removes only that exact temporary root. It never touches the installed service. See [`apps/UnlingerApp/README.md`](apps/UnlingerApp/README.md).
 
 Do not improvise an installed migration or bypass the service CLI. [`docs/INSTALLED_DOGFOOD.md`](docs/INSTALLED_DOGFOOD.md) remains the operator contract. Generation 12 is intentionally parked at `candidate_ready_report_only`; use its exact CLI for status or rollback, and do not run `accept-candidate`, install/uninstall or change mode until the owner accepts the observed dogfood result.
 
@@ -65,6 +65,8 @@ For source-only development, run the daemon in its safe default mode and use the
 cargo run -p unlinger-daemon -- --report-only
 
 cargo run -p unlinger-cli -- status
+cargo run -p unlinger-cli -- browser status
+cargo run -p unlinger-cli -- browser status --json
 cargo run -p unlinger-cli -- history
 cargo run -p unlinger-cli -- explain <incident-id>
 cargo run -p unlinger-cli -- pause 2h
@@ -77,7 +79,7 @@ cargo run -p unlinger-cli -- export-diagnostics <incident-id>
 
 `scan` always requires `--dry-run` and never sends signals. Direct `unlingerd` invocation defaults to report-only. Managed LaunchAgents receive only `--managed --activation-generation`; the desired/effective mode and signal authority live in exact durable lifecycle state, not in a plist `--enforce` flag.
 
-IPC requests are single-shot. The v3 App durably journals a namespace token and mutation UUID before any request byte, then reconciles uncertain delivery with read-only `mutation_status`; it never automatically resends. A named cleanup retry clears only that incident's durable block and cooling candidate; it never signals immediately and must pass a fresh cooling window and every ordinary gate.
+IPC requests are single-shot. The v4 App durably journals a namespace token and mutation UUID before any request byte, then reconciles uncertain delivery with read-only `mutation_status`; it never automatically resends. A named cleanup retry clears only that incident's durable block and cooling candidate; it never signals immediately and must pass a fresh cooling window and every ordinary gate.
 
 Full command lines, executable paths, and profile paths exist only in transient classification memory. SQLite, IPC, CLI output, and diagnostic exports use redacted typed records that omit signal targets and session identifiers.
 

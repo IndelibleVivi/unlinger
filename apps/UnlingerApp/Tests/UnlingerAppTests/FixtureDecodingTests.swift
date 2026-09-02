@@ -2,10 +2,45 @@ import Foundation
 import Testing
 @testable import UnlingerKit
 
-/// Every canonical wire fixture in `Contract/v3/` must decode through the
-/// same envelope validation the socket client uses.
+/// Canonical v3 compatibility and v4 browser-product fixtures must decode
+/// through the same explicit envelope validation the socket client uses.
 @Suite("Canonical fixture decoding")
 struct FixtureDecodingTests {
+    @Test("schema-v4 browser overview fixtures decode as one atomic DTO")
+    func browserOverviewFixtures() throws {
+        for name in [
+            "browser-overview-confirmed",
+            "browser-overview-protected",
+            "browser-overview-settled"
+        ] {
+            let data = try FixtureStore.data(named: name, schemaVersion: 4)
+            let requestID = try #require(Self.requestID(in: data))
+            let overview = try ResponseDecoder.decode(
+                BrowserOverviewSnapshot.self,
+                expectedPayloadType: "browser_overview",
+                requestID: requestID,
+                expectedSchemaVersion: 4,
+                line: data
+            )
+            #expect(overview.supportCatalog.families.count == 3)
+        }
+
+        let protected = try FixtureStore.data(
+            named: "browser-overview-protected",
+            schemaVersion: 4
+        )
+        let overview = try ResponseDecoder.decode(
+            BrowserOverviewSnapshot.self,
+            expectedPayloadType: "browser_overview",
+            requestID: try #require(Self.requestID(in: protected)),
+            expectedSchemaVersion: 4,
+            line: protected
+        )
+        #expect(overview.phase == .protected)
+        #expect(overview.sessions.first?.compatibility.decision == .protected)
+        #expect(overview.coverageNotices.first?.reasonId == "protection.browser_version_unsupported")
+    }
+
     @Test("status fixtures decode as PublicStatus")
     func statusFixtures() throws {
         let names = [
@@ -28,6 +63,7 @@ struct FixtureDecodingTests {
                 PublicStatus.self,
                 expectedPayloadType: "status",
                 requestID: requestID,
+                expectedSchemaVersion: 3,
                 line: data
             )
             #expect(status.daemonVersion == "0.1.0")
@@ -43,6 +79,7 @@ struct FixtureDecodingTests {
                 ObservationRoster.self,
                 expectedPayloadType: "incidents",
                 requestID: requestID,
+                expectedSchemaVersion: 3,
                 line: data
             )
         }
@@ -51,6 +88,7 @@ struct FixtureDecodingTests {
             ObservationRoster.self,
             expectedPayloadType: "incidents",
             requestID: try #require(Self.requestID(in: neverData)),
+            expectedSchemaVersion: 3,
             line: neverData
         )
         #expect(never.freshness == .neverObserved)
@@ -65,6 +103,7 @@ struct FixtureDecodingTests {
             DiagnosticsBundle.self,
             expectedPayloadType: "diagnostics",
             requestID: try #require(Self.requestID(in: data)),
+            expectedSchemaVersion: 3,
             line: data
         )
         #expect(diagnostics.documentSchemaVersion == 3)
@@ -78,6 +117,7 @@ struct FixtureDecodingTests {
             MutationReceipt.self,
             expectedPayloadType: "mutation_committed",
             requestID: try #require(Self.requestID(in: committedData)),
+            expectedSchemaVersion: 3,
             line: committedData
         )
         #expect(committed.policyRevisionAfter == 2)
@@ -88,6 +128,7 @@ struct FixtureDecodingTests {
                 MutationStatus.self,
                 expectedPayloadType: "mutation_status",
                 requestID: try #require(Self.requestID(in: data)),
+                expectedSchemaVersion: 3,
                 line: data
             )
         }
@@ -102,6 +143,7 @@ struct FixtureDecodingTests {
                 [HistoryEvent].self,
                 expectedPayloadType: "history",
                 requestID: requestID,
+                expectedSchemaVersion: 3,
                 line: data
             )
             #expect(!events.isEmpty)
@@ -117,6 +159,7 @@ struct FixtureDecodingTests {
                 IncidentDetail.self,
                 expectedPayloadType: "incident",
                 requestID: requestID,
+                expectedSchemaVersion: 3,
                 line: data
             )
             #expect(!detail.events.isEmpty)
@@ -131,6 +174,7 @@ struct FixtureDecodingTests {
             ObservationRoster.self,
             expectedPayloadType: "incidents",
             requestID: requestID,
+            expectedSchemaVersion: 3,
             line: data
         )
         #expect(roster.items.count == 2)
@@ -146,6 +190,7 @@ struct FixtureDecodingTests {
             [HistoryEvent].self,
             expectedPayloadType: "history",
             requestID: requestID,
+            expectedSchemaVersion: 3,
             line: data
         )
         let event = try #require(events.first)
@@ -168,6 +213,7 @@ struct FixtureDecodingTests {
                 PublicStatus.self,
                 expectedPayloadType: "status",
                 requestID: 1,
+                expectedSchemaVersion: 3,
                 line: both
             )
         }
@@ -181,6 +227,7 @@ struct FixtureDecodingTests {
                 PublicStatus.self,
                 expectedPayloadType: "status",
                 requestID: 999,
+                expectedSchemaVersion: 3,
                 line: data
             )
         }
@@ -194,6 +241,7 @@ struct FixtureDecodingTests {
                 PublicStatus.self,
                 expectedPayloadType: "status",
                 requestID: 1,
+                expectedSchemaVersion: 3,
                 line: v1
             )
         }
@@ -229,6 +277,7 @@ struct FixtureDecodingTests {
                     PublicStatus.self,
                     expectedPayloadType: "status",
                     requestID: 1,
+                    expectedSchemaVersion: 3,
                     line: Data(invalid.utf8)
                 )
             }
@@ -243,6 +292,7 @@ struct FixtureDecodingTests {
                 ObservationRoster.self,
                 expectedPayloadType: "incidents",
                 requestID: 1,
+                expectedSchemaVersion: 3,
                 line: incomplete
             )
         }

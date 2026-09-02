@@ -9,8 +9,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use unlinger_core::{
-    CleanupReceipt, CleanupResources, GateLedger, IncidentReport, IncidentState, ProcessIdentity,
-    ProcessRole, ProcessRoleCount, ProcessTarget, RootSummary,
+    BrowserCompatibility, BrowserCompatibilityDecision, BrowserProduct, CleanupReceipt,
+    CleanupResources, GateLedger, IncidentReport, IncidentState, ProcessIdentity, ProcessRole,
+    ProcessRoleCount, ProcessTarget, ResourceSnapshot, RootSummary,
 };
 use unlinger_daemon::{
     AttentionKind, ControlPlane, DaemonMode, DaemonStatus, HistoryStore, IpcClient, IpcCommand,
@@ -99,6 +100,7 @@ fn confirmed_report(id: &str, tracking_key: &str) -> IncidentReport {
             process_identity_unchanged: true,
             no_protection_rule: true,
         },
+        browser_compatibility: Default::default(),
         targets: vec![ProcessTarget {
             identity,
             process_group_id: 4242,
@@ -849,6 +851,181 @@ fn frontend_schema_v3_status_is_public_and_has_explicit_capabilities() {
     ] {
         assert!(!encoded.contains(forbidden), "v3 status leaked {forbidden}");
     }
+}
+
+#[test]
+fn frontend_schema_v4_browser_overview_is_atomic_typed_and_public_safe() {
+    let temp = TempState::new();
+    let database = temp.directory.join("history.sqlite3");
+    let socket = temp.directory.join("unlingerd.sock");
+    let mut status = DaemonStatus::new(DaemonMode::ReportOnly, 42);
+    status.healthy = true;
+    status.ready = true;
+    status.startup_state = StartupState::ReadyReportOnly;
+    let control = ControlPlane::new(HistoryStore::open(&database).expect("open store"), status)
+        .expect("restore control state");
+    let cycle = control.begin_observation_cycle(1_000).expect("begin cycle");
+    let mut report = confirmed_report("inc-v4", "tracking-private");
+    report.signature_pack = "playwright".to_owned();
+    report.browser_compatibility = BrowserCompatibility {
+        product: BrowserProduct::ChromeForTesting,
+        observed_version: Some("151.0.7922.34".to_owned()),
+        decision: BrowserCompatibilityDecision::Automatic,
+        reason_id: None,
+    };
+    control
+        .publish_roster(&cycle, 1_050, vec![report])
+        .expect("publish roster");
+    control.finish_observation_cycle(&cycle, true);
+    control
+        .update_status(|status| {
+            status.scan_in_progress = false;
+            status.latest_observation_at_unix_millis = Some(1_050);
+        })
+        .expect("finish status");
+    let _server = IpcServer::start(&socket, control).expect("start IPC server");
+
+    let response = raw_request(
+        &socket,
+        r#"{"schema_version":4,"request_id":71,"command":{"command":"browser_overview"}}"#,
+    );
+    assert_eq!(response["schema_version"], 4);
+    assert_eq!(response["ok"], true);
+    let overview = &response["payload"]["data"];
+    assert_eq!(response["payload"]["type"], "browser_overview");
+    assert_eq!(overview["freshness"], "current");
+    assert_eq!(overview["phase"], "confirmed");
+    assert_eq!(overview["effective_mode"], "report_only");
+    assert_eq!(overview["sessions"][0]["family"], "playwright");
+    assert_eq!(
+        overview["sessions"][0]["compatibility"]["decision"],
+        "automatic"
+    );
+    assert_eq!(
+        overview["support_catalog"]["families"]
+            .as_array()
+            .expect("support families")
+            .len(),
+        3
+    );
+    for forbidden in [
+        "tracking-private",
+        "pid",
+        "executable_basename",
+        "identity_fingerprint",
+        "member_fingerprint",
+        "targets",
+        "runtime_artifacts",
+    ] {
+        assert!(
+            !response.to_string().contains(forbidden),
+            "leaked {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn v3_rejects_the_v4_only_overview_without_downgrading() {
+    let temp = TempState::new();
+    let database = temp.directory.join("history.sqlite3");
+    let socket = temp.directory.join("unlingerd.sock");
+    let control = ControlPlane::new(
+        HistoryStore::open(&database).expect("open store"),
+        DaemonStatus::new(DaemonMode::ReportOnly, 42),
+    )
+    .expect("restore control state");
+    let _server = IpcServer::start(&socket, control).expect("start IPC server");
+    let response = raw_request(
+        &socket,
+        r#"{"schema_version":3,"request_id":72,"command":{"command":"browser_overview"}}"#,
+    );
+    assert_eq!(response["schema_version"], 3);
+    assert_eq!(response["ok"], false);
+    assert_eq!(response["error"]["code"], "invalid_request");
+}
+
+#[test]
+fn schema_v4_browser_overview_joins_the_exact_recent_settlement_by_event_identity() {
+    let temp = TempState::new();
+    let database = temp.directory.join("history.sqlite3");
+    let socket = temp.directory.join("unlingerd.sock");
+    let store = HistoryStore::open(&database).expect("open store");
+    let report = confirmed_report("inc-v4-settlement", "tracking-private");
+
+    // Use the same millisecond for all three events. The product join must use
+    // the exact cleanup event token and event ordering, never timestamp alone.
+    store
+        .record_observation(2_000, &report)
+        .expect("record settlement source observation");
+    let attempt = store
+        .begin_cleanup_attempt(2_000, &report, "epoch-v4-settlement")
+        .expect("begin settlement attempt");
+    store
+        .complete_cleanup_attempt(
+            &attempt,
+            2_000,
+            &CleanupReceipt {
+                incident_id: report.incident_id.clone(),
+                state: IncidentState::Cleared,
+                reason_id: Some("cleanup.tree_gone_no_revival".to_owned()),
+                actions: Vec::new(),
+                artifact_actions: Vec::new(),
+                survivor_pids: Vec::new(),
+                revival_checks_completed: 2,
+                resources: CleanupResources {
+                    before: Some(ResourceSnapshot {
+                        process_count: 3,
+                        resident_memory_bytes: 12 * 1024 * 1024,
+                    }),
+                    after: Some(ResourceSnapshot {
+                        process_count: 0,
+                        resident_memory_bytes: 0,
+                    }),
+                    estimated_reclaimed_memory_bytes: Some(12 * 1024 * 1024),
+                },
+            },
+        )
+        .expect("complete settlement attempt");
+
+    let mut status = DaemonStatus::new(DaemonMode::ReportOnly, 42);
+    status.healthy = true;
+    status.ready = true;
+    status.startup_state = StartupState::ReadyReportOnly;
+    let control = ControlPlane::new(store, status).expect("restore settlement projection");
+    let cycle = control.begin_observation_cycle(3_000).expect("begin cycle");
+    control
+        .publish_roster(&cycle, 3_050, Vec::new())
+        .expect("publish empty current roster");
+    control.finish_observation_cycle(&cycle, true);
+    control
+        .update_status(|status| {
+            status.scan_in_progress = false;
+            status.latest_observation_at_unix_millis = Some(3_050);
+        })
+        .expect("finish status projection");
+    let _server = IpcServer::start(&socket, control).expect("start IPC server");
+
+    let overview = IpcClient::new(&socket)
+        .request_browser_overview()
+        .expect("typed browser overview");
+    let settlement = overview.recent_settlement.expect("recent settlement");
+    assert_eq!(settlement.incident_id, "inc-v4-settlement");
+    assert_eq!(settlement.family, "agent-browser");
+    assert_eq!(settlement.occurred_at_unix_millis, 2_000);
+    assert_eq!(settlement.process_count, Some(3));
+    assert_eq!(
+        settlement.estimated_reclaimed_memory_bytes,
+        Some(12 * 1024 * 1024)
+    );
+    assert_eq!(settlement.revival_checks_completed, 2);
+    assert_eq!(
+        settlement.artifact_outcome,
+        unlinger_protocol::ArtifactOutcome::NotApplicable
+    );
+    assert_eq!(
+        settlement.overall_outcome,
+        unlinger_protocol::OverallOutcome::Cleared
+    );
 }
 
 #[test]

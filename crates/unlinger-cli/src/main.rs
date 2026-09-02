@@ -17,6 +17,10 @@ use unlinger_daemon::{
     DaemonStatus, EventPayload, HistoryEvent, IpcClient, IpcCommand, IpcPayload, LocalPaths,
 };
 use unlinger_macos::MacosSnapshotter;
+use unlinger_protocol::{
+    BrowserCompatibilityDecision, BrowserOverviewPhase, BrowserOverviewSnapshot, BrowserProduct,
+    Mode, ObservationFreshness,
+};
 use unlinger_rules::{Analyzer, AnalyzerContext, RuleSet};
 
 const MAX_PAUSE_MILLIS: u64 = 30 * 24 * 60 * 60 * 1_000;
@@ -40,6 +44,8 @@ struct Cli {
 enum Commands {
     /// Show daemon lifecycle, health, activity, recovery, and bounded attention state.
     Status(OutputArgs),
+    /// Show the atomic browser-leftover product projection.
+    Browser(BrowserArgs),
     /// List redacted local incident and cleanup events.
     History(HistoryArgs),
     /// Explain one redacted incident timeline.
@@ -62,6 +68,18 @@ enum Commands {
     ExportDiagnostics(ExportDiagnosticsArgs),
     /// Install, inspect, change, or remove the per-user LaunchAgent.
     Service(ServiceArgs),
+}
+
+#[derive(Clone, Debug, Args)]
+struct BrowserArgs {
+    #[command(subcommand)]
+    command: BrowserCommand,
+}
+
+#[derive(Clone, Debug, Subcommand)]
+enum BrowserCommand {
+    /// Show current browser sessions, compatibility, coverage, and recent settlement.
+    Status(OutputArgs),
 }
 
 #[derive(Clone, Debug, Args)]
@@ -372,6 +390,7 @@ fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
     let socket = cli.socket.unwrap_or_else(|| paths.socket.clone());
     match cli.command {
         Commands::Status(output) => status(&socket, output.json),
+        Commands::Browser(arguments) => browser_command(&socket, arguments),
         Commands::History(arguments) => history(&socket, arguments),
         Commands::Explain(arguments) => explain(&socket, arguments),
         Commands::Doctor(arguments) => doctor(&socket, arguments),
@@ -383,6 +402,140 @@ fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
         Commands::Scan(arguments) => scan(arguments),
         Commands::ExportDiagnostics(arguments) => export_diagnostics(&socket, arguments),
         Commands::Service(arguments) => service_command(&paths, arguments),
+    }
+}
+
+fn browser_command(socket: &std::path::Path, arguments: BrowserArgs) -> Result<(), Box<dyn Error>> {
+    match arguments.command {
+        BrowserCommand::Status(output) => browser_status(socket, output.json),
+    }
+}
+
+fn browser_status(socket: &std::path::Path, json: bool) -> Result<(), Box<dyn Error>> {
+    let overview = IpcClient::new(socket).request_browser_overview()?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&overview)?);
+        return Ok(());
+    }
+    for line in browser_status_lines(&overview) {
+        println!("{line}");
+    }
+    Ok(())
+}
+
+fn browser_status_lines(overview: &BrowserOverviewSnapshot) -> Vec<String> {
+    let mut lines = vec![
+        format!("Browser overview: {}", browser_phase_name(overview.phase)),
+        format!("Mode: {}", browser_mode_name(overview.effective_mode)),
+        format!(
+            "Observation freshness: {}",
+            browser_freshness_name(overview.freshness)
+        ),
+    ];
+    if let Some(observed_at) = overview.observed_at_unix_millis {
+        lines.push(format!("Observed at Unix ms: {observed_at}"));
+    }
+    if let Some(paused_until) = overview.paused_until_unix_millis {
+        lines.push(format!(
+            "Automatic cleanup paused until Unix ms: {paused_until}"
+        ));
+    }
+    if overview.sessions.is_empty() {
+        lines.push("No supported browser leftovers found in the trusted snapshot.".to_owned());
+    } else {
+        lines.push(format!("Browser sessions: {}", overview.sessions.len()));
+        for session in &overview.sessions {
+            let version = session
+                .compatibility
+                .observed_version
+                .as_deref()
+                .unwrap_or("version unavailable");
+            lines.push(format!(
+                "- {} {}: {:?}, {} processes, {} MiB; {} {} ({})",
+                session.family,
+                session.incident_id,
+                session.state,
+                session.member_count,
+                session.resident_memory_bytes / (1024 * 1024),
+                browser_product_name(session.compatibility.product),
+                version,
+                browser_decision_name(session.compatibility.decision),
+            ));
+            if let Some(reason_id) = &session.compatibility.reason_id {
+                lines.push(format!("  coverage: {reason_id}"));
+            }
+        }
+    }
+    if let Some(settlement) = &overview.recent_settlement {
+        let process_count = settlement.process_count.map_or_else(
+            || "process count unavailable".to_owned(),
+            |count| format!("{count} processes"),
+        );
+        let memory = settlement.estimated_reclaimed_memory_bytes.map_or_else(
+            || "memory estimate unavailable".to_owned(),
+            |bytes| format!("{} MiB estimated reclaimed", bytes / (1024 * 1024)),
+        );
+        lines.push(format!(
+            "Recent settlement: {} at Unix ms {}; {process_count}, {memory}, {} revival checks; {:?}",
+            settlement.family,
+            settlement.occurred_at_unix_millis,
+            settlement.revival_checks_completed,
+            settlement.overall_outcome,
+        ));
+    }
+    lines.push(format!(
+        "Support catalog: {} ({} families)",
+        overview.support_catalog.support_revision,
+        overview.support_catalog.families.len()
+    ));
+    lines
+}
+
+fn browser_phase_name(phase: BrowserOverviewPhase) -> &'static str {
+    match phase {
+        BrowserOverviewPhase::Unknown => "unknown",
+        BrowserOverviewPhase::Clear => "clear",
+        BrowserOverviewPhase::Active => "active",
+        BrowserOverviewPhase::Verifying => "verifying",
+        BrowserOverviewPhase::Confirmed => "confirmed",
+        BrowserOverviewPhase::Reclaiming => "reclaiming",
+        BrowserOverviewPhase::Protected => "protected",
+        BrowserOverviewPhase::Attention => "attention",
+    }
+}
+
+fn browser_mode_name(mode: Mode) -> &'static str {
+    match mode {
+        Mode::ReportOnly => "report-only",
+        Mode::Enforce => "enforce",
+    }
+}
+
+fn browser_freshness_name(freshness: ObservationFreshness) -> &'static str {
+    match freshness {
+        ObservationFreshness::Current => "current",
+        ObservationFreshness::ScanInProgress => "scan-in-progress",
+        ObservationFreshness::StaleAfterFailure => "stale-after-failure",
+        ObservationFreshness::NeverObserved => "never-observed",
+    }
+}
+
+fn browser_product_name(product: BrowserProduct) -> &'static str {
+    match product {
+        BrowserProduct::ChromeForTesting => "Chrome for Testing",
+        BrowserProduct::Chromium => "Chromium",
+        BrowserProduct::GoogleChrome => "Google Chrome",
+        BrowserProduct::Other => "other browser",
+        BrowserProduct::Unknown => "unknown browser",
+    }
+}
+
+fn browser_decision_name(decision: BrowserCompatibilityDecision) -> &'static str {
+    match decision {
+        BrowserCompatibilityDecision::Automatic => "automatic",
+        BrowserCompatibilityDecision::ObserveOnly => "observe-only",
+        BrowserCompatibilityDecision::Protected => "protected",
+        BrowserCompatibilityDecision::Unknown => "unknown",
     }
 }
 
@@ -1248,6 +1401,65 @@ mod tests {
 
         assert_eq!(cli.socket, Some(PathBuf::from("/tmp/unlinger.sock")));
         assert!(matches!(cli.command, Commands::Status(_)));
+    }
+
+    #[test]
+    fn browser_status_parser_keeps_human_and_json_modes_explicit() {
+        let human =
+            Cli::try_parse_from(["unlinger", "browser", "status"]).expect("browser status command");
+        let Commands::Browser(human) = human.command else {
+            panic!("browser command");
+        };
+        assert!(matches!(
+            human.command,
+            BrowserCommand::Status(OutputArgs { json: false })
+        ));
+
+        let json = Cli::try_parse_from(["unlinger", "browser", "status", "--json"])
+            .expect("browser status JSON command");
+        let Commands::Browser(json) = json.command else {
+            panic!("browser command");
+        };
+        assert!(matches!(
+            json.command,
+            BrowserCommand::Status(OutputArgs { json: true })
+        ));
+    }
+
+    #[test]
+    fn browser_status_human_projection_uses_the_atomic_snapshot_without_fake_totals() {
+        let response: unlinger_protocol::ResponseEnvelope = serde_json::from_str(include_str!(
+            "../../../apps/UnlingerApp/Contract/v4/browser-overview-confirmed.json"
+        ))
+        .expect("decode canonical browser overview");
+        let Some(unlinger_protocol::Payload::BrowserOverview(overview)) = response.payload else {
+            panic!("expected browser overview payload");
+        };
+        let lines = browser_status_lines(&overview);
+        assert!(
+            lines
+                .iter()
+                .any(|line| line == "Browser overview: confirmed")
+        );
+        assert!(lines.iter().any(|line| line == "Mode: report-only"));
+        assert!(
+            lines
+                .iter()
+                .any(|line| line == "Observation freshness: current")
+        );
+        assert!(lines.iter().any(|line| line == "Browser sessions: 1"));
+        assert!(lines.iter().any(|line| line.contains("Chrome for Testing")));
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.starts_with("Support catalog: rules:"))
+        );
+        assert!(
+            !lines
+                .iter()
+                .any(|line| line.starts_with("Total processes:"))
+        );
+        assert!(!lines.iter().any(|line| line.starts_with("Total memory:")));
     }
 
     #[test]

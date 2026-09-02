@@ -1,7 +1,7 @@
 #!/bin/bash
-# Isolated pre-v0.1 v3 socket smoke. This script owns every path it creates,
+# Isolated pre-v0.1 v4 App socket smoke. This script owns every path it creates,
 # starts only a source report-only daemon, and never addresses the installed
-# generation-9 database, socket, plist, process, or service CLI.
+# generation-12 database, socket, plist, process, or service CLI.
 set -euo pipefail
 umask 077
 
@@ -81,7 +81,7 @@ assert_private_mode() {
 echo "==> build isolated source daemon"
 (cd "$REPO_ROOT" && cargo build -p unlinger-daemon)
 
-echo "==> first report-only v3 socket pass"
+echo "==> first report-only v4 App socket pass"
 start_daemon
 run_live_tests first
 
@@ -106,4 +106,4 @@ start_daemon
 echo "==> second pass proves reconnect and durable receipt replay"
 run_live_tests second
 
-echo "isolated pre-v0.1 v3 report-only smoke passed"
+echo "isolated pre-v0.1 v4 App report-only smoke passed"

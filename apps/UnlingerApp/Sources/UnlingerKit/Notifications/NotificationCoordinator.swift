@@ -8,7 +8,7 @@ private struct NotificationCandidate: Sendable {
     var attentionEligible: Bool
 }
 
-/// Converts trusted v3 projections into a quiet best-effort local notification
+/// Converts trusted public projections into a quiet best-effort local notification
 /// stream. Durable claim always precedes scheduling; a failed schedule is
 /// terminal for that key and is never retried automatically.
 public actor NotificationCoordinator: NotificationCoordinating {
@@ -58,7 +58,6 @@ public actor NotificationCoordinator: NotificationCoordinating {
     public func receiveTrustedRefresh(
         status: PublicStatus,
         history: [HistoryEvent],
-        roster _: ObservationRoster,
         atUnixMillis now: UInt64
     ) async {
         guard var state = await loadState() else { return }

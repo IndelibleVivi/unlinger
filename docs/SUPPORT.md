@@ -39,7 +39,8 @@ The controlled DAP result is one exact point. It does not establish broad artifa
 | Layer | Current truth |
 | --- | --- |
 | Rust CLI/service operator protocol | schema v1; lifecycle authority remains here |
-| Native App source protocol | schema v3 only |
+| Native App source protocol | schema v4 only; requires daemon-owned atomic `browser_overview` |
+| Transitional frontend endpoint | schema v3 existing commands/response meaning retained; v4-only overview rejected without downgrade |
 | Schema v2 | historical fixtures retained; superseded before installation; current server returns typed `unsupported_schema` |
 | Installed generation 12 | schema v1 operator + v3 App endpoint; SQLite v6; report-only, unarmed; lease to generation 9/v5 retained |
 | Installed App/v3 integration | ad-hoc-signed private App installed; live socket and daemon/App restart reconciliation passed; direct-AppKit popover/window host installed; owner Back/open-window flow passed; packaged notification observation pending |

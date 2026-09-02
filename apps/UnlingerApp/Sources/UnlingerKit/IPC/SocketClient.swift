@@ -8,7 +8,7 @@ protocol SocketExchanging: Sendable {
     ) async throws(ClientError) -> Data
 }
 
-/// Schema-v3 Unix-domain socket client. Every command gets one connection and
+/// Schema-v4 Unix-domain socket client. Every command gets one connection and
 /// one write attempt. A mutation is never automatically resent.
 public actor SocketClient: UnlingerClient {
     public static let maxRequestBytes = 64 * 1024
@@ -56,6 +56,10 @@ public actor SocketClient: UnlingerClient {
 
     public func status() async throws(ClientError) -> PublicStatus {
         try await request(.status)
+    }
+
+    public func browserOverview() async throws(ClientError) -> BrowserOverviewSnapshot {
+        try await request(.browserOverview)
     }
 
     public func history(limit: Int) async throws(ClientError) -> [HistoryEvent] {
@@ -120,6 +124,7 @@ public actor SocketClient: UnlingerClient {
             DiagnosticsBundle.self,
             expectedPayloadType: "diagnostics",
             requestID: requestID,
+            expectedSchemaVersion: 4,
             line: responseLine
         )
         return DiagnosticsExport(bundle: decoded.value, rawJSON: decoded.rawData)

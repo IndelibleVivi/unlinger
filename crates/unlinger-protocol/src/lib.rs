@@ -2,7 +2,8 @@
 
 use serde::{Deserialize, Serialize};
 
-pub const SCHEMA_VERSION: u32 = 3;
+pub const SCHEMA_VERSION: u32 = 4;
+pub const PREVIOUS_SCHEMA_VERSION: u32 = 3;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct RequestEnvelope {
@@ -26,6 +27,7 @@ impl RequestEnvelope {
 #[serde(tag = "command", rename_all = "snake_case")]
 pub enum Command {
     Status,
+    BrowserOverview,
     History {
         limit: usize,
     },
@@ -74,8 +76,13 @@ pub struct ResponseEnvelope {
 impl ResponseEnvelope {
     #[must_use]
     pub fn success(request_id: u64, payload: Payload) -> Self {
+        Self::success_for(SCHEMA_VERSION, request_id, payload)
+    }
+
+    #[must_use]
+    pub fn success_for(schema_version: u32, request_id: u64, payload: Payload) -> Self {
         Self {
-            schema_version: SCHEMA_VERSION,
+            schema_version,
             request_id,
             ok: true,
             payload: Some(payload),
@@ -85,8 +92,18 @@ impl ResponseEnvelope {
 
     #[must_use]
     pub fn failure(request_id: u64, code: ErrorCode, message: impl Into<String>) -> Self {
+        Self::failure_for(SCHEMA_VERSION, request_id, code, message)
+    }
+
+    #[must_use]
+    pub fn failure_for(
+        schema_version: u32,
+        request_id: u64,
+        code: ErrorCode,
+        message: impl Into<String>,
+    ) -> Self {
         Self {
-            schema_version: SCHEMA_VERSION,
+            schema_version,
             request_id,
             ok: false,
             payload: None,
@@ -122,6 +139,7 @@ pub enum ErrorCode {
 #[serde(tag = "type", content = "data", rename_all = "snake_case")]
 pub enum Payload {
     Status(PublicStatus),
+    BrowserOverview(BrowserOverviewSnapshot),
     History(Vec<HistoryEvent>),
     Incident(IncidentDetail),
     Incidents(ObservationRoster),
@@ -439,6 +457,132 @@ pub struct Observation {
     pub roles: Vec<RoleCount>,
     pub evidence: Vec<Evidence>,
     pub gates: GateLedger,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub browser_compatibility: Option<BrowserCompatibility>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BrowserCompatibilityDecision {
+    Automatic,
+    ObserveOnly,
+    Protected,
+    Unknown,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BrowserProduct {
+    ChromeForTesting,
+    Chromium,
+    GoogleChrome,
+    Other,
+    Unknown,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct BrowserCompatibility {
+    pub product: BrowserProduct,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub observed_version: Option<String>,
+    pub decision: BrowserCompatibilityDecision,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason_id: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BrowserAutomaticActionLevel {
+    Automatic,
+    ObserveOnly,
+    Unsupported,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct BrowserFamilySupport {
+    pub family: String,
+    pub product: BrowserProduct,
+    pub admitted_versions: Vec<String>,
+    pub automatic_action_level: BrowserAutomaticActionLevel,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct BrowserSupportCatalog {
+    pub support_revision: String,
+    pub families: Vec<BrowserFamilySupport>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BrowserOverviewPhase {
+    Unknown,
+    Clear,
+    Active,
+    Verifying,
+    Confirmed,
+    Reclaiming,
+    Protected,
+    Attention,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct BrowserSessionCapabilities {
+    pub open_detail: Capability,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct BrowserSessionSummary {
+    pub incident_id: String,
+    pub family: String,
+    pub state: IncidentState,
+    pub member_count: usize,
+    pub resident_memory_bytes: u64,
+    pub compatibility: BrowserCompatibility,
+    pub capabilities: BrowserSessionCapabilities,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct BrowserCoverageSummary {
+    pub incident_id: String,
+    pub decision: BrowserCompatibilityDecision,
+    pub reason_id: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct BrowserSettlementSummary {
+    pub event_token: String,
+    pub incident_id: String,
+    pub family: String,
+    pub occurred_at_unix_millis: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub process_count: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub estimated_reclaimed_memory_bytes: Option<u64>,
+    pub revival_checks_completed: usize,
+    pub artifact_outcome: ArtifactOutcome,
+    pub overall_outcome: OverallOutcome,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct BrowserOverviewSnapshot {
+    pub generated_at_unix_millis: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cycle_token: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub observed_at_unix_millis: Option<u64>,
+    pub freshness: ObservationFreshness,
+    pub healthy: bool,
+    pub effective_mode: Mode,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub paused_until_unix_millis: Option<u64>,
+    pub phase: BrowserOverviewPhase,
+    pub sessions: Vec<BrowserSessionSummary>,
+    pub coverage_notices: Vec<BrowserCoverageSummary>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recent_settlement: Option<BrowserSettlementSummary>,
+    pub attention: AttentionProjection,
+    pub protection: ProtectionProjection,
+    pub support_catalog: BrowserSupportCatalog,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -673,7 +817,7 @@ mod tests {
 
         assert_eq!(
             encoded,
-            r#"{"schema_version":3,"request_id":7,"command":{"command":"status"}}"#
+            r#"{"schema_version":4,"request_id":7,"command":{"command":"status"}}"#
         );
         for forbidden in [
             "arm",
@@ -687,6 +831,124 @@ mod tests {
                 !encoded.contains(forbidden),
                 "public request leaked {forbidden}"
             );
+        }
+    }
+
+    #[test]
+    fn v4_browser_overview_request_and_response_are_version_explicit() {
+        let request = RequestEnvelope::new(41, Command::BrowserOverview);
+        assert_eq!(request.schema_version, 4);
+        assert_eq!(SCHEMA_VERSION, 4);
+        assert_eq!(PREVIOUS_SCHEMA_VERSION, 3);
+
+        let snapshot = BrowserOverviewSnapshot {
+            generated_at_unix_millis: 123,
+            cycle_token: Some("cycle-public".to_owned()),
+            observed_at_unix_millis: Some(120),
+            freshness: ObservationFreshness::Current,
+            healthy: true,
+            effective_mode: Mode::ReportOnly,
+            paused_until_unix_millis: None,
+            phase: BrowserOverviewPhase::Protected,
+            sessions: vec![BrowserSessionSummary {
+                incident_id: "inc-public".to_owned(),
+                family: "playwright".to_owned(),
+                state: IncidentState::Protected,
+                member_count: 3,
+                resident_memory_bytes: 4096,
+                compatibility: BrowserCompatibility {
+                    product: BrowserProduct::ChromeForTesting,
+                    observed_version: Some("151.0.7922.35".to_owned()),
+                    decision: BrowserCompatibilityDecision::Protected,
+                    reason_id: Some("protection.browser_version_unsupported".to_owned()),
+                },
+                capabilities: BrowserSessionCapabilities {
+                    open_detail: Capability::available(),
+                },
+            }],
+            coverage_notices: vec![BrowserCoverageSummary {
+                incident_id: "inc-public".to_owned(),
+                decision: BrowserCompatibilityDecision::Protected,
+                reason_id: "protection.browser_version_unsupported".to_owned(),
+            }],
+            recent_settlement: None,
+            attention: AttentionProjection::default(),
+            protection: ProtectionProjection::default(),
+            support_catalog: BrowserSupportCatalog {
+                support_revision: "support-v1".to_owned(),
+                families: vec![BrowserFamilySupport {
+                    family: "playwright".to_owned(),
+                    product: BrowserProduct::ChromeForTesting,
+                    admitted_versions: vec!["151.0.7922.34".to_owned()],
+                    automatic_action_level: BrowserAutomaticActionLevel::Automatic,
+                }],
+            },
+        };
+        let response = ResponseEnvelope::success_for(4, 41, Payload::BrowserOverview(snapshot));
+        let encoded = serde_json::to_string(&response).expect("encode v4 overview response");
+        assert!(encoded.contains(r#""type":"browser_overview""#));
+        assert!(!encoded.contains("pid"));
+        assert!(!encoded.contains("user_data_dir"));
+        assert!(!encoded.contains("command_line"));
+    }
+
+    #[test]
+    fn v3_response_constructor_preserves_the_requested_schema() {
+        let response =
+            ResponseEnvelope::success_for(PREVIOUS_SCHEMA_VERSION, 9, Payload::History(Vec::new()));
+        assert_eq!(response.schema_version, 3);
+        assert_eq!(
+            serde_json::to_string(&response).expect("encode v3 response"),
+            r#"{"schema_version":3,"request_id":9,"ok":true,"payload":{"type":"history","data":[]}}"#
+        );
+    }
+
+    #[test]
+    fn canonical_v4_browser_overview_fixtures_roundtrip() {
+        macro_rules! fixture {
+            ($name:literal) => {
+                include_str!(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/../../apps/UnlingerApp/Contract/v4/",
+                    $name,
+                    ".json"
+                ))
+            };
+        }
+        for source in [
+            fixture!("browser-overview-confirmed"),
+            fixture!("browser-overview-protected"),
+            fixture!("browser-overview-settled"),
+        ] {
+            let decoded: ResponseEnvelope =
+                serde_json::from_str(source).expect("decode canonical v4 fixture");
+            assert_eq!(decoded.schema_version, SCHEMA_VERSION);
+            let Payload::BrowserOverview(overview) =
+                decoded.payload.as_ref().expect("v4 fixture payload")
+            else {
+                panic!("v4 fixture is not a browser overview");
+            };
+            assert_eq!(overview.support_catalog.families.len(), 3);
+            let encoded = serde_json::to_string(&decoded).expect("encode canonical v4 fixture");
+            for forbidden in [
+                "\"pid\"",
+                "tracking_key",
+                "session_fingerprint",
+                "identity_fingerprint",
+                "member_fingerprint",
+                "user_data_dir",
+                "command_line",
+                "activation_generation",
+                "enforcement_epoch",
+            ] {
+                assert!(
+                    !encoded.contains(forbidden),
+                    "v4 fixture leaked {forbidden}"
+                );
+            }
+            let reparsed: ResponseEnvelope =
+                serde_json::from_str(&encoded).expect("reparse canonical v4 fixture");
+            assert_eq!(reparsed, decoded);
         }
     }
 
@@ -732,7 +994,7 @@ mod tests {
         for source in wire_fixtures {
             let decoded: ResponseEnvelope =
                 serde_json::from_str(source).expect("decode canonical wire fixture");
-            assert_eq!(decoded.schema_version, SCHEMA_VERSION);
+            assert_eq!(decoded.schema_version, PREVIOUS_SCHEMA_VERSION);
             let encoded = serde_json::to_string(&decoded).expect("encode canonical wire fixture");
             let reparsed: ResponseEnvelope =
                 serde_json::from_str(&encoded).expect("reparse canonical wire fixture");

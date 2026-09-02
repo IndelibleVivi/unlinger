@@ -1,18 +1,18 @@
 # UnlingerApp
 
-Native macOS menu-bar and Dock frontend for Unlinger. It is a thin, local-only SwiftUI projection over frontend schema v3; contract authority lives in [`Contract/`](Contract/) and implementation boundaries in [`FRONTEND_BOUNDARY.md`](FRONTEND_BOUNDARY.md).
+Native macOS menu-bar and Dock frontend for Unlinger. It is a thin, local-only SwiftUI projection over frontend schema v4; contract authority lives in [`Contract/`](Contract/) and implementation boundaries in [`FRONTEND_BOUNDARY.md`](FRONTEND_BOUNDARY.md).
 
 The App owns no classification, cleanup policy, signal authorization, daemon installation, daemon mode, or service lifecycle. It never falls back to schema v1. A timed-out or untrusted mutation response is reconciled from a durable pre-send journal and is never automatically resent.
 
 ## Current behavior
 
-- strict v3 status/history/roster/detail/diagnostics DTOs, including exact readiness and observation freshness;
-- one pure `BrowserOverviewMapper` that turns coherent status + roster + history into browser phases (`clear`, `active`, `verifying`, `confirmed`, `reclaiming`, `protected`, `attention`, or conservative `unknown`) without duplicating backend policy;
-- a browser-first overview, current-session rows, typed coverage explanations, saved protections, exact-token recent settlement, history and browser-context detail; the old process-tree status/roster presentation has been retired;
-- equal non-null status/roster observation timestamps before any positive current claim, with at most one bounded trailing refresh on a coherence mismatch;
+- strict schema-v4 status/history/browser-overview/detail/diagnostics DTOs, including exact readiness and observation freshness, with no silent v3 or v1 fallback;
+- one atomic daemon-owned `BrowserOverviewSnapshot` containing the authoritative product phase, current sessions, typed compatibility/coverage, saved protections, recent settlement and a rule-generated support catalog;
+- one pure `BrowserOverviewMapper` that only selects localized copy and display shapes from that snapshot; it does not rescan evidence, join history or recompute product state;
+- a browser-first overview, current-session rows, typed coverage explanations, saved protections, exact recent settlement, history and browser-context detail; the old process-tree status/roster presentation has been retired;
 - capability-gated pause/resume/retry/protect/unprotect with namespace-aware durable receipts;
 - one global unresolved-mutation lock, crash/restart status-only reconciliation, and authority-loss truth;
-- single-flight/coalesced refreshes, polling-session generations, stale roster retention, and typed incident-detail failures;
+- single-flight/coalesced refreshes, polling-session generations, stale snapshot retention, and typed incident-detail failures;
 - bilingual browser copy, matching formatter locale, VoiceOver state/reason/mode/freshness labels, Settings/About and explicit “Quit Unlinger App” semantics—the daemon continues unchanged;
 - a direct AppKit `@main` whose strong process-lifetime delegate owns the status item/popover and reusable ordinary window independently of any SwiftUI scene or window lifetime; the App remains a regular Dock app so the window route is available even when a third-party menu host cannot resolve the status item; both hosts project the same SwiftUI state/router, popover detail has an explicit Back control, and it can open the current route in the window;
 - local notifications with `off`, `attention` (default), and `attention_and_reclaims`; first trusted refresh baselines retained events, suppressed events are still marked seen, and a mode change never replays backlog;
@@ -23,9 +23,9 @@ Notification delivery is a best-effort local projection over bounded status/hist
 
 ## Layout
 
-- `Sources/UnlingerKit/IPC` — strict v3 envelope/DTOs and single-attempt cancellable Unix-socket transport;
+- `Sources/UnlingerKit/IPC` — strict v4 envelope/DTOs and single-attempt cancellable Unix-socket transport;
 - `Sources/UnlingerKit/Persistence` — owner-private `0700` directory / `0600` crash-durable atomic files;
-- `Sources/UnlingerKit/State` — coalesced polling, canonical browser projection, snapshot coherence, durable mutation reconciliation;
+- `Sources/UnlingerKit/State` — coalesced polling, presentation-only browser mapping, stale-snapshot handling, durable mutation reconciliation;
 - `Sources/UnlingerKit/Notifications` — modes, ledger, coordinator and system scheduler;
 - `Sources/UnlingerKit/Navigation` — shared notification/menu routing;
 - `Sources/UnlingerKit/Settings` — preferences and menu-client login item;
@@ -42,7 +42,7 @@ swift test
 scripts/bundle.sh
 ```
 
-`scripts/bundle.sh` builds `build/Unlinger.app` in a temporary internal SwiftPM scratch path, copies active v3 fixtures only, rejects packaged resource fallbacks or loader paths that still point at a removable volume, verifies both localizations and Info.plist, then applies a private ad-hoc signature. That is not Developer ID signing or notarization.
+`scripts/bundle.sh` builds `build/Unlinger.app` in a temporary internal SwiftPM scratch path, copies the active v4 fixtures and transitional v3 fixtures, rejects packaged resource fallbacks or loader paths that still point at a removable volume, verifies both localizations and Info.plist, then applies a private ad-hoc signature. That is not Developer ID signing or notarization.
 
 The repeatable pre-v0.1 integration gate owns a unique temporary database/socket/lock, remains report-only, runs the live Swift suite before and after daemon restart, checks private file modes and absence of IP listeners, and deletes only its own temp root:
 
@@ -52,10 +52,10 @@ scripts/pre-v0.1-smoke.sh
 
 For manual source-only UI work, `scripts/demo-window.sh` runs an isolated report-only daemon. `UNLINGER_WINDOW=1` presents the ordinary window immediately. The packaged App remains regular and retains its Dock entry alongside the status item; Dock reopen, the popover's explicit window action, and notification routes all show the same reusable AppKit-owned ordinary window without changing daemon state.
 
-Deterministic product-state QA can instead use `UNLINGER_FIXTURE=browser-clear|browser-active|browser-verifying|browser-confirmed-report-only|browser-reclaiming|browser-protected-unsupported|browser-attention|browser-recent-settlement` together with `UNLINGER_WINDOW=1`. These scenarios compose canonical v3 fixtures and never contact or mutate the installed service.
+Deterministic product-state QA can instead use `UNLINGER_FIXTURE=browser-clear|browser-active|browser-verifying|browser-confirmed-report-only|browser-reclaiming|browser-protected-unsupported|browser-attention|browser-recent-settlement` together with `UNLINGER_WINDOW=1`. These scenarios return typed v4 browser snapshots and never contact or mutate the installed service.
 
 ## Installed boundary
 
-Generation 12 and its earlier ad-hoc-signed App payload are installed for private report-only dogfood. This browser-first source candidate is not installed or activated by source validation. The service retains generation 9's manifest/plist/v5 database through explicit candidate accept/rollback and provides an exact report-only restart. [`../../docs/INSTALLED_DOGFOOD.md`](../../docs/INSTALLED_DOGFOOD.md) passed, including a real generation-9 rollback/open before generation 12 was installed and the App/daemon restart paths were reconciled.
+Generation 12 and its earlier schema-v3 ad-hoc-signed App payload are installed for private report-only dogfood. This schema-v4 source candidate is not installed or activated by source validation. The service retains generation 9's manifest/plist/v5 database through explicit candidate accept/rollback and provides an exact report-only restart. [`../../docs/INSTALLED_DOGFOOD.md`](../../docs/INSTALLED_DOGFOOD.md) passed, including a real generation-9 rollback/open before generation 12 was installed and the App/daemon restart paths were reconciled.
 
 The strongest claim is **pre-v0.1 installed report-only candidate**. The lease remains pending; this is not an ambient-enforcement acceptance, a signed distribution candidate or a public release.

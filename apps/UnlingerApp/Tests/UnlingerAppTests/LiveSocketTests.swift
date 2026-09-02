@@ -68,6 +68,15 @@ struct LiveSocketTests {
     }
 
     @Test(.enabled(if: liveSocketAvailable, "requires UNLINGER_LIVE_SOCKET"))
+    func browserOverviewRoundTrip() async throws {
+        let path = try #require(socketPath, "UNLINGER_LIVE_SOCKET not set")
+        let overview = try await SocketClient(socketPath: path).browserOverview()
+        #expect(overview.effectiveMode == .reportOnly)
+        #expect(overview.supportCatalog.families.count == 3)
+        #expect(overview.supportCatalog.supportRevision.isEmpty == false)
+    }
+
+    @Test(.enabled(if: liveSocketAvailable, "requires UNLINGER_LIVE_SOCKET"))
     func historyAndMissingIncidentRoundTrip() async throws {
         let path = try #require(socketPath, "UNLINGER_LIVE_SOCKET not set")
         let client = SocketClient(socketPath: path)

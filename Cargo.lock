@@ -648,6 +648,7 @@ dependencies = [
  "unlinger-core",
  "unlinger-daemon",
  "unlinger-macos",
+ "unlinger-protocol",
  "unlinger-rules",
 ]
 

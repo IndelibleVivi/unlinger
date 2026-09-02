@@ -1,6 +1,6 @@
 import Foundation
 
-/// Strictly validates the schema-v3 response envelope, then decodes the
+/// Strictly validates the schema-v4 response envelope, then decodes the
 /// concrete `payload.data` DTO with exact CodingKeys. JSONSerialization is used
 /// only after typed header validation to isolate and semantically re-encode the
 /// data object; it is never used to coerce trusted integer fields.
@@ -41,12 +41,14 @@ enum ResponseDecoder {
         _ type: T.Type,
         expectedPayloadType: String,
         requestID: UInt64,
+        expectedSchemaVersion: Int,
         line: Data
     ) throws(ClientError) -> T {
         try decodeWithRaw(
             type,
             expectedPayloadType: expectedPayloadType,
             requestID: requestID,
+            expectedSchemaVersion: expectedSchemaVersion,
             line: line
         ).value
     }
@@ -55,6 +57,7 @@ enum ResponseDecoder {
         _ type: T.Type,
         expectedPayloadType: String,
         requestID: UInt64,
+        expectedSchemaVersion: Int,
         line: Data
     ) throws(ClientError) -> Decoded<T> {
         let header: Header
@@ -73,7 +76,7 @@ enum ResponseDecoder {
         {
             throw .incompatibleDaemon(message)
         }
-        guard header.schemaVersion == 3 else {
+        guard header.schemaVersion == expectedSchemaVersion else {
             throw .protocolError("unexpected schema_version")
         }
         guard header.requestID == requestID else {

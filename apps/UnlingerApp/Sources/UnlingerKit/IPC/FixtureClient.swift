@@ -41,6 +41,35 @@ public struct FixtureClient: UnlingerClient {
         try decodeFixture(statusFixture, command: .status)
     }
 
+    public func browserOverview() async throws(ClientError) -> BrowserOverviewSnapshot {
+        let status = try await status()
+        let roster = try await incidents()
+        let phase: BrowserOverviewPhase
+        if !status.healthy || status.readiness != .ready || roster.freshness != .current {
+            phase = .unknown
+        } else if status.attention.totalCount > 0 {
+            phase = .attention
+        } else {
+            phase = .clear
+        }
+        return BrowserOverviewSnapshot(
+            generatedAtUnixMillis: UInt64(Date().timeIntervalSince1970 * 1_000),
+            cycleToken: roster.cycleToken,
+            observedAtUnixMillis: roster.observedAtUnixMillis,
+            freshness: roster.freshness,
+            healthy: status.healthy,
+            effectiveMode: status.effectiveMode,
+            pausedUntilUnixMillis: status.pausedUntilUnixMillis,
+            phase: phase,
+            sessions: [],
+            coverageNotices: [],
+            recentSettlement: nil,
+            attention: status.attention,
+            protection: status.protection,
+            supportCatalog: Self.fixtureSupportCatalog
+        )
+    }
+
     public func history(limit: Int) async throws(ClientError) -> [HistoryEvent] {
         guard let historyFixture else { return [] }
         return try decodeFixture(historyFixture, command: .history(limit: limit))
@@ -169,8 +198,37 @@ public struct FixtureClient: UnlingerClient {
         // validation runs exactly as it does over the wire.
         let requestID = (try? JSONDecoder()
             .decode(FixtureEnvelopeHeader.self, from: data).requestID) ?? 0
-        return try Self.decode(T.self, for: command, requestID: requestID, line: data)
+        let expectedType: String = switch command {
+        case .status: "status"
+        case .browserOverview: "browser_overview"
+        case .history: "history"
+        case .explain: "incident"
+        case .incidents: "incidents"
+        case .mutationStatus: "mutation_status"
+        case .pause, .resume, .retryFailedCleanup, .protectIncident,
+             .unprotectIncident: "mutation_committed"
+        case .exportDiagnostics: "diagnostics"
+        }
+        return try ResponseDecoder.decode(
+            T.self,
+            expectedPayloadType: expectedType,
+            requestID: requestID,
+            expectedSchemaVersion: 3,
+            line: data
+        )
     }
+
+    private static let fixtureSupportCatalog = BrowserSupportCatalog(
+        supportRevision: "fixture:rules-v1",
+        families: ["agent-browser", "playwright", "puppeteer"].map {
+            BrowserFamilySupport(
+                family: $0,
+                product: .chromeForTesting,
+                admittedVersions: ["151.0.7922.34"],
+                automaticActionLevel: .automatic
+            )
+        }
+    )
 }
 
 extension FixtureClient {

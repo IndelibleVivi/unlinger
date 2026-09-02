@@ -1,0 +1,61 @@
+{
+  "schema_version": 4,
+  "request_id": 403,
+  "ok": true,
+  "payload": {
+    "type": "browser_overview",
+    "data": {
+      "generated_at_unix_millis": 1788148800000,
+      "cycle_token": "cycle-v4-clear",
+      "observed_at_unix_millis": 1788148799000,
+      "freshness": "current",
+      "healthy": true,
+      "effective_mode": "report_only",
+      "phase": "clear",
+      "sessions": [],
+      "coverage_notices": [],
+      "recent_settlement": {
+        "event_token": "event-v4-settlement-1",
+        "incident_id": "redacted-browser-403",
+        "family": "playwright",
+        "occurred_at_unix_millis": 1788148700000,
+        "process_count": 8,
+        "estimated_reclaimed_memory_bytes": 912261120,
+        "revival_checks_completed": 2,
+        "artifact_outcome": "reconciled",
+        "overall_outcome": "cleared"
+      },
+      "attention": {
+        "total_count": 0,
+        "items": []
+      },
+      "protection": {
+        "total_count": 0,
+        "items": []
+      },
+      "support_catalog": {
+        "support_revision": "rules:agent-browser@0.2.0|playwright@0.2.0|puppeteer@0.2.0",
+        "families": [
+          {
+            "family": "agent-browser",
+            "product": "chrome_for_testing",
+            "admitted_versions": ["151.0.7922.34"],
+            "automatic_action_level": "automatic"
+          },
+          {
+            "family": "playwright",
+            "product": "chrome_for_testing",
+            "admitted_versions": ["151.0.7922.34"],
+            "automatic_action_level": "automatic"
+          },
+          {
+            "family": "puppeteer",
+            "product": "chrome_for_testing",
+            "admitted_versions": ["151.0.7922.34"],
+            "automatic_action_level": "automatic"
+          }
+        ]
+      }
+    }
+  }
+}

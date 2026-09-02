@@ -114,6 +114,7 @@ fn confirmed_report(id: &str) -> IncidentReport {
             process_identity_unchanged: true,
             no_protection_rule: true,
         },
+        browser_compatibility: Default::default(),
         targets: vec![ProcessTarget {
             identity,
             process_group_id: 4242,

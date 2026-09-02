@@ -64,6 +64,46 @@ pub enum ProcessRole {
     IncidentMember,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BrowserProduct {
+    ChromeForTesting,
+    Chromium,
+    GoogleChrome,
+    Other,
+    Unknown,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BrowserCompatibilityDecision {
+    Automatic,
+    ObserveOnly,
+    Protected,
+    Unknown,
+}
+
+/// Transient, typed browser coverage derived from native bundle facts and the
+/// active signature-pack policy. It is deliberately excluded from persisted
+/// incident/history JSON; schema-v4 public projection reads it only from the
+/// current in-memory roster.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BrowserCompatibility {
+    pub product: BrowserProduct,
+    pub observed_version: Option<String>,
+    pub decision: BrowserCompatibilityDecision,
+    pub reason_id: Option<String>,
+}
+
+impl Default for BrowserCompatibility {
+    fn default() -> Self {
+        Self {
+            product: BrowserProduct::Unknown,
+            observed_version: None,
+            decision: BrowserCompatibilityDecision::Unknown,
+            reason_id: Some("compatibility.browser_facts_unavailable".to_owned()),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ProcessTarget {
     pub identity: ProcessIdentity,
@@ -94,6 +134,8 @@ pub struct IncidentReport {
     pub roles: Vec<ProcessRoleCount>,
     pub evidence: Vec<EvidenceItem>,
     pub gates: GateLedger,
+    #[serde(skip, default)]
+    pub browser_compatibility: BrowserCompatibility,
     #[serde(skip_serializing, default)]
     pub targets: Vec<ProcessTarget>,
     #[serde(skip, default)]
@@ -142,6 +184,7 @@ mod tests {
             roles: Vec::new(),
             evidence: Vec::new(),
             gates: GateLedger::default(),
+            browser_compatibility: BrowserCompatibility::default(),
             targets: Vec::new(),
             runtime_artifacts: Vec::new(),
         };

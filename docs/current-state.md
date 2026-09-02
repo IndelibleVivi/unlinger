@@ -4,35 +4,37 @@
 
 **Programme:** Unlinger 0.1
 
-**Source:** private pre-v0.1 schema-v3 candidate; BGX-1 browser-first App projection, direct-AppKit hosts and source-volume-independent packaging verified locally
+**Source:** private pre-v0.1 schema-v4 candidate; BGX-2 daemon-owned atomic browser projection, typed compatibility/catalog, v4 App and CLI verified locally
 
-**Remote:** BGX-1 implementation head `6c2d62388f75b7a3ed996113ec0bdec5ad6e8b03` is on private origin `main`; exact-head `backend` run `33596733773` is green. This current-state reconciliation follows as documentation-only truth.
+**Remote:** BGX-1 documentation-closure head `8c9e47ed2a2d84fb6748b9355bc2abf3d3859f4f` remains the last exact-head verified private `main`; BGX-2 push and exact-head `backend` verification are pending.
 
 **Installed runtime:** generation 12, schema-v3/v6 capable, healthy at a stable report-only floor; acceptance lease retains generation 9/v5
 
-**Activation:** unarmed; generation 12 and its earlier packaged App payload remain active for private report-only dogfood. The BGX-1 source candidate is not installed or activated.
+**Activation:** unarmed; generation 12 and its earlier schema-v3 packaged App payload remain active for private report-only dogfood. The BGX-2 schema-v4 source candidate is not installed or activated.
 
 **Highest claim currently permitted:** **pre-v0.1 installed report-only candidate** (acceptance level 3)
 
 ## Source truth
 
-The backend source now uses SQLite schema v6 and frontend schema v3 while preserving schema-v1 CLI/service compatibility. Schema v2 remains as historical fixtures but is rejected with typed `unsupported_schema`; the App emits v3 only and never falls back to v1.
+The backend source now uses SQLite schema v6 and accepts frontend schemas v4 and 3 while preserving schema-v1 CLI/service compatibility. Schema v4 adds the daemon-owned atomic browser product projection; schema v3 remains a transition endpoint whose existing responses retain their schema and meaning but rejects `browser_overview` without downgrade. Schema v2 remains historical and is rejected with typed `unsupported_schema`. The source App emits v4 only and never falls back to v3 or v1.
 
-V3 ordinary mutations carry a public-safe namespace token plus canonical UUID. The daemon serializes lifecycle state with a `BEGIN IMMEDIATE` store transaction, replays an exact stored receipt before current lifecycle policy, re-evaluates authoritative durable facts through one shared public-action policy, applies state, advances a durable cleanup-policy revision and stores a typed `applied | no_change | rejected` receipt atomically. Same-ID canonical replay is idempotent; conflicting reuse fails; old-namespace missing requests cannot apply. Receipt pruning rotates namespace atomically and retains a minimum 14-day reconciliation window.
+Frontend ordinary mutations carry a public-safe namespace token plus canonical UUID. The daemon serializes lifecycle state with a `BEGIN IMMEDIATE` store transaction, replays an exact stored receipt before current lifecycle policy, re-evaluates authoritative durable facts through one shared public-action policy, applies state, advances a durable cleanup-policy revision and stores a typed `applied | no_change | rejected` receipt atomically. Same-ID canonical replay is idempotent; conflicting reuse fails; old-namespace missing requests cannot apply. Receipt pruning rotates namespace atomically and retains a minimum 14-day reconciliation window.
 
 SQLite v6 also assigns stable opaque public event tokens, retains storage-recovery identity across clean restarts, and commits each observation cycle's history as one batch before publishing the roster. The public roster distinguishes `never_observed`, `scan_in_progress`, `current` and `stale_after_failure`, with optional time/token when no real snapshot exists. Last scan uses cycle completion rather than cycle start.
 
+BGX-2 adds typed browser product/version compatibility to the transient `IncidentReport` only; serde skips it for persisted observations, so the database schema remains v6 and history does not retain app-bundle facts. `RuleSet` generates the public family/product/admitted-version/action-level catalog from embedded version policies with a readable support revision. `ControlPlane` captures status and roster under one in-memory boundary, then `public_ipc` produces the canonical phase, current session summaries, typed coverage, attention/protection and recent settlement. Untrusted readiness/freshness/time becomes `unknown`; trusted phase precedence is server-owned. Settlement joins exact cleanup event token and earlier event ID, including same-millisecond histories, rather than depending on a bounded App history page.
+
 The native App under `apps/UnlingerApp` now has:
 
-- strict schema-v3 DTO/envelope decoding and a narrow exact v1 incompatibility parser;
+- strict schema-v4 DTO/envelope decoding, explicit v3 fixture compatibility and a narrow exact v1 incompatibility parser;
 - phase-aware, single-attempt, cancellable socket I/O;
 - an owner-private crash-durable pending-mutation journal written before connect/send;
 - one global unresolved mutation lock and startup/status-only reconciliation without resend;
-- one pure `BrowserOverviewMapper` that derives browser-product state from status + roster + history, with no second UI policy path;
-- exact positive-state coherence across live connection, healthy/ready status, current roster, no replacement scan and equal non-null observation timestamps; a mismatch gets at most one trailing refresh and remains unknown;
-- browser-first overview phases, family/session rows, closed-set coverage explanations, saved protections and exact-token recent settlement joins, without raw evidence IDs or unsupported global process/RSS totals;
+- one pure `BrowserOverviewMapper` that maps daemon-owned v4 product truth into localized copy/display shapes without recomputing phase, scanning evidence or joining history;
+- one browser overview request per coalesced refresh; transport loss retains prior rows as stale context but forces an App-local unknown phase;
+- browser-first overview phases, typed family/session compatibility, closed-set coverage explanations, saved protections, exact settlement and a rule-generated support catalog, without raw evidence IDs or unsupported global process/RSS totals;
 - browser-context detail from a coherent current row, retained observation or exact joined settlement, while absent estimates remain absent;
-- coalesced refresh generations, polling-session isolation, stale roster retention and typed incident-detail failures;
+- coalesced refresh generations, polling-session isolation, stale browser-snapshot retention and typed incident-detail failures;
 - local-view diagnostics results with required `document_schema_version` and semantic-lossless JSON export;
 - stable event/action identity, including artifact-only action groups;
 - bilingual browser copy and VoiceOver labels with language-matched value formatting, plus Settings/About/Quit surfaces, shared notification routing and menu-client-only `SMAppService.mainApp` launch at login;
@@ -48,7 +50,7 @@ The service source extends its durable install transaction through `CandidateRea
 
 ## Installed evidence
 
-Generation 12 from the previously verified source head remains the active installed candidate; this newer browser-first App source is not installed. The last verified daemon state exposes frontend schema v3 over the owner-private socket, uses SQLite v6, is healthy and quiescent ReadyReportOnly, has no armed generation or enforcement epoch, and retains `candidate_ready_report_only` rollback authority to generation 9. The last verified lease reports the prior generation and SQLite backup present with `rollback_available: true`; it has not been accepted. No daemon lifecycle or mode mutation occurred during this source-only work.
+Generation 12 from the previously verified source head remains the active installed candidate; this newer schema-v4 source and App are not installed. The last verified daemon state exposes frontend schema v3 over the owner-private socket, uses SQLite v6, is healthy and quiescent ReadyReportOnly, has no armed generation or enforcement epoch, and retains `candidate_ready_report_only` rollback authority to generation 9. The last verified lease reports the prior generation and SQLite backup present with `rollback_available: true`; it has not been accepted. No daemon lifecycle or mode mutation occurred during this source-only work.
 
 The rollback lease was exercised rather than inspected. Generation 10 migrated the active copy to v6, passed installed v3 reads/mutations and daemon restart, then `rollback-candidate` restored generation 9 and the SQLite-v5 snapshot. The exact generation-9 CLI/daemon reopened that database and returned healthy, quiescent ReadyReportOnly with exact PID/generation/binary/permission agreement. Candidate v6 database state was preserved separately as failed-generation evidence.
 
@@ -70,18 +72,18 @@ Historical generation-9 evidence proves one owner-approved managed full-timing P
 
 ## Verification truth
 
-The current browser-first level-2 source gate passed on 2026-09-02:
+The current BGX-2 source gate passed locally on 2026-09-02:
 
 - `cargo fmt --all -- --check`, strict workspace clippy and the release workspace build passed;
-- `cargo test --workspace` passed 276 tests; the two owner-only live CfT tests remained ignored;
-- source-only doctor inspected 443/443 listed processes with zero unreadable, argument-unavailable or descriptor-unavailable entries, 17 executable-identity-unavailable entries, `healthy: true` and no errors;
-- dry-run inspected 453/453 listed processes with the same complete readable/argument/descriptor coverage, 17 executable-identity-unavailable entries and three `PROTECTED` automation sessions; no eligible incident or signal action was produced;
-- `swift test` passed 96 tests in 15 suites, including 30 browser projection truth-table cases, exact-incident retained-detail isolation, all seven product phases, one bounded coherence retry, strict-earlier exact settlement/detail fallback, bilingual VoiceOver copy, direct AppKit hosts and the existing transport/mutation/notification contracts;
-- the release App bundle assembled from its internal scratch path, its active schema-v3 fixtures and localizations validated, its ad-hoc signature verified, and both source-volume resource fallback and removable-volume loader-path checks passed;
-- the isolated smoke passed six live-socket tests, restarted the source daemon over the same private temporary SQLite database, then passed the same six tests again. It verified effective report-only mode, durable receipt replay and owner-private temp/database/socket/lock modes, and removed only its owned temporary root; and
-- source-only rendered QA exercised English and Simplified Chinese protected, attention and recent-settlement windows at the product's 360-point width, plus session/settlement detail navigation. AX readback confirmed named rows, mode/freshness/reason copy, button semantics and Chinese relative-time formatting. It used uniquely identified temporary QA bundles and did not open or mutate the installed service.
+- `cargo test --workspace` passed 287 tests; the two owner-only live CfT tests remained ignored;
+- source-only doctor inspected 451/451 listed processes with zero unreadable, argument-unavailable or descriptor-unavailable entries, 18 executable-identity-unavailable entries, `healthy: true` and no errors;
+- dry-run inspected 450/450 listed processes with the same complete readable/argument/descriptor coverage, 18 executable-identity-unavailable entries and three `PROTECTED` automation sessions; no eligible incident or signal action was produced;
+- `swift test` passed 73 tests in 15 suites, including strict v4 fixture decoding, daemon-phase preservation, typed compatibility/unknown copy, direct settlement projection, single-overview refresh, stale-snapshot containment, all seven product phases, bilingual VoiceOver copy, direct AppKit hosts and existing transport/mutation/notification contracts;
+- the release App bundle assembled from its internal scratch path, packaged explicit v4 and v3 fixture directories, validated localizations, passed ad-hoc signature verification, and rejected source-volume resource fallback and removable-volume loader paths;
+- the isolated smoke passed seven live-socket suite tests, including the v4 atomic browser overview, restarted the source daemon over the same private temporary SQLite database, then passed the same seven tests again. It verified effective report-only mode, durable receipt replay and owner-private temp/database/socket/lock modes, and removed only its owned temporary root; and
+- no new rendered QA was required because BGX-2 changes protocol/state ownership without changing the previously rendered 360-point layouts or localized copy. Prior BGX-1 English/Simplified Chinese and AX observations remain historical UI evidence, not a fresh BGX-2 runtime proof.
 
-The private GitHub `backend` workflow passed at rollback-lease head `ea7c5bd` (run `33482121339`), scan-race fix head `9d9d765` (run `33483324021`), the prior installed-state docs head `68085ba` (run `33484218771`), AppKit menu/window implementation head `4eb70eb` (run `33500090371`), rollback-hardening/direct-AppKit lifetime head `188e65a` (run `33513920375`), Dock/package-hardening implementation head `0cc3beb` (run `33520850444`), and BGX-1 implementation head `6c2d623` (run `33596733773`) on macOS: formatting, strict clippy, workspace tests, release workspace build, native frontend tests and native frontend bundle. The first AppKit run `33499759687` correctly failed because two host tests constructed `NSStatusItem`/`NSWindow` before initializing `NSApplication`; `4eb70eb` fixed that test precondition rather than skipping the hosts.
+The last completed private GitHub exact-head `backend` proof is BGX-1 documentation-closure head `8c9e47e` (run `33597135228`); its implementation head `6c2d623` also passed run `33596733773`. BGX-2 exact-head macOS CI is pending; local formatting, strict clippy, workspace tests, release workspace build, native frontend tests and native frontend bundle are green.
 
 The reproducible commands were:
 
@@ -98,7 +100,7 @@ scripts/bundle.sh
 scripts/pre-v0.1-smoke.sh
 ```
 
-Owner-only `cft_fieldlab` and `managed_cft_fieldlab` remained ignored and were not run. The installed lane remained report-only throughout; no signal authority was created. The source-v3 binary opened the active database only inside the acceptance lease, and the real rollback restored the v5 copy before generation 9 reopened it.
+Owner-only `cft_fieldlab` and `managed_cft_fieldlab` remained ignored and were not run. The installed lane remained untouched and report-only throughout; no signal authority was created. Source validation used only read-only host snapshots plus isolated temporary database/socket state.
 
 ## Open gates
 

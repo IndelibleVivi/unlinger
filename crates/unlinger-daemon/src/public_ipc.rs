@@ -4,10 +4,12 @@ use crate::{
     StartupState, StorageRecoveryReason,
 };
 use unlinger_core::{
-    ArtifactDisposition, ArtifactOutcome, IncidentReport, IncidentState, OverallOutcome,
-    ProcessOutcome, SignalDisposition,
+    ArtifactDisposition, ArtifactOutcome, BrowserCompatibility, BrowserCompatibilityDecision,
+    BrowserProduct, IncidentReport, IncidentState, OverallOutcome, ProcessOutcome,
+    SignalDisposition,
 };
 use unlinger_protocol as public;
+use unlinger_rules::{BrowserAutomaticActionLevel, RuleSet};
 
 const MAX_PUBLIC_PAUSE_MILLIS: u64 = 30 * 24 * 60 * 60 * 1_000;
 
@@ -15,19 +17,24 @@ pub(crate) fn handle_at(
     control: &ControlPlane,
     command: public::Command,
     now_unix_millis: u64,
+    schema_version: u32,
 ) -> Result<public::Payload, ControlError> {
     match command {
         public::Command::Status => project_payload(
             control,
             control.handle_at(IpcCommand::Status, now_unix_millis)?,
+            schema_version,
         ),
+        public::Command::BrowserOverview => project_browser_overview(control, now_unix_millis),
         public::Command::History { limit } => project_payload(
             control,
             control.handle_at(IpcCommand::History { limit }, now_unix_millis)?,
+            schema_version,
         ),
         public::Command::Explain { incident_id } => project_payload(
             control,
             control.handle_at(IpcCommand::Explain { incident_id }, now_unix_millis)?,
+            schema_version,
         ),
         public::Command::Incidents => {
             let roster = control.roster_snapshot();
@@ -49,7 +56,9 @@ pub(crate) fn handle_at(
                 items: roster
                     .reports
                     .into_iter()
-                    .map(project_current_incident)
+                    .map(|report| {
+                        project_current_incident(report, schema_version == public::SCHEMA_VERSION)
+                    })
                     .collect(),
             }))
         }
@@ -137,6 +146,7 @@ pub(crate) fn handle_at(
                 IpcCommand::ExportDiagnostics { incident_id },
                 now_unix_millis,
             )?,
+            schema_version,
         ),
     }
 }
@@ -176,9 +186,237 @@ fn validate_incident_id(incident_id: &str) -> Result<(), ControlError> {
     }
 }
 
+fn project_browser_overview(
+    control: &ControlPlane,
+    now_unix_millis: u64,
+) -> Result<public::Payload, ControlError> {
+    let source = control.browser_source_snapshot_at(now_unix_millis)?;
+    let phase = browser_overview_phase(&source.status, &source.roster);
+    let recent_settlement =
+        project_recent_browser_settlement(control, source.status.most_recent_reclaim.as_ref())?;
+    let projected_status = project_status(control, source.status)?;
+    let sessions = source
+        .roster
+        .reports
+        .into_iter()
+        .map(|report| public::BrowserSessionSummary {
+            incident_id: report.incident_id,
+            family: report.signature_pack,
+            state: project_incident_state(report.state),
+            member_count: report.member_count,
+            resident_memory_bytes: report.resident_memory_bytes,
+            compatibility: project_browser_compatibility(report.browser_compatibility),
+            capabilities: public::BrowserSessionCapabilities {
+                open_detail: public::Capability::available(),
+            },
+        })
+        .collect::<Vec<_>>();
+    let coverage_notices = sessions
+        .iter()
+        .filter_map(|session| {
+            session.compatibility.reason_id.as_ref().map(|reason_id| {
+                public::BrowserCoverageSummary {
+                    incident_id: session.incident_id.clone(),
+                    decision: session.compatibility.decision,
+                    reason_id: reason_id.clone(),
+                }
+            })
+        })
+        .collect();
+    let catalog = RuleSet::embedded()
+        .map_err(|_| {
+            ControlError::Unavailable("embedded browser support catalog is unavailable".to_owned())
+        })?
+        .browser_support_catalog();
+    let support_catalog = public::BrowserSupportCatalog {
+        support_revision: catalog.support_revision,
+        families: catalog
+            .families
+            .into_iter()
+            .map(|family| public::BrowserFamilySupport {
+                family: family.family,
+                product: project_browser_product(family.product),
+                admitted_versions: family.admitted_versions,
+                automatic_action_level: match family.automatic_action_level {
+                    BrowserAutomaticActionLevel::Automatic => {
+                        public::BrowserAutomaticActionLevel::Automatic
+                    }
+                    BrowserAutomaticActionLevel::ObserveOnly => {
+                        public::BrowserAutomaticActionLevel::ObserveOnly
+                    }
+                    BrowserAutomaticActionLevel::Unsupported => {
+                        public::BrowserAutomaticActionLevel::Unsupported
+                    }
+                },
+            })
+            .collect(),
+    };
+    Ok(public::Payload::BrowserOverview(
+        public::BrowserOverviewSnapshot {
+            generated_at_unix_millis: now_unix_millis,
+            cycle_token: source.roster.cycle_token,
+            observed_at_unix_millis: source.roster.observed_at_unix_millis,
+            freshness: project_roster_freshness(source.roster.freshness),
+            healthy: projected_status.healthy,
+            effective_mode: projected_status.effective_mode,
+            paused_until_unix_millis: projected_status.paused_until_unix_millis,
+            phase,
+            sessions,
+            coverage_notices,
+            recent_settlement,
+            attention: projected_status.attention,
+            protection: projected_status.protection,
+            support_catalog,
+        },
+    ))
+}
+
+fn browser_overview_phase(
+    status: &DaemonStatus,
+    roster: &crate::ipc::RosterSnapshot,
+) -> public::BrowserOverviewPhase {
+    let readiness_is_ready = matches!(
+        status.startup_state,
+        StartupState::ReadyReportOnly | StartupState::ReadyEnforce
+    ) && status.ready;
+    let coherent = status.latest_observation_at_unix_millis.is_some()
+        && status.latest_observation_at_unix_millis == roster.observed_at_unix_millis;
+    if !status.healthy
+        || !readiness_is_ready
+        || status.scan_in_progress
+        || roster.freshness != crate::ipc::RosterFreshness::Current
+        || !coherent
+    {
+        return public::BrowserOverviewPhase::Unknown;
+    }
+    if status.attention.blocked_cleanup_count > 0
+        || !status.attention.items.is_empty()
+        || !status.event_source_healthy
+        || status.storage_recovery.is_some()
+        || roster
+            .reports
+            .iter()
+            .any(|report| matches!(report.state, IncidentState::Failed | IncidentState::Revived))
+    {
+        return public::BrowserOverviewPhase::Attention;
+    }
+    if status.cleanup_in_progress
+        || roster
+            .reports
+            .iter()
+            .any(|report| report.state == IncidentState::Reclaiming)
+    {
+        return public::BrowserOverviewPhase::Reclaiming;
+    }
+    if roster
+        .reports
+        .iter()
+        .any(|report| report.state == IncidentState::Confirmed)
+    {
+        return public::BrowserOverviewPhase::Confirmed;
+    }
+    if roster
+        .reports
+        .iter()
+        .any(|report| report.state == IncidentState::Cooling)
+    {
+        return public::BrowserOverviewPhase::Verifying;
+    }
+    if roster
+        .reports
+        .iter()
+        .any(|report| report.state == IncidentState::Active)
+    {
+        return public::BrowserOverviewPhase::Active;
+    }
+    if roster.reports.iter().any(|report| {
+        matches!(
+            report.state,
+            IncidentState::Protected | IncidentState::Ambiguous
+        )
+    }) {
+        return public::BrowserOverviewPhase::Protected;
+    }
+    public::BrowserOverviewPhase::Clear
+}
+
+fn project_roster_freshness(
+    freshness: crate::ipc::RosterFreshness,
+) -> public::ObservationFreshness {
+    match freshness {
+        crate::ipc::RosterFreshness::Current => public::ObservationFreshness::Current,
+        crate::ipc::RosterFreshness::ScanInProgress => public::ObservationFreshness::ScanInProgress,
+        crate::ipc::RosterFreshness::StaleAfterFailure => {
+            public::ObservationFreshness::StaleAfterFailure
+        }
+        crate::ipc::RosterFreshness::NeverObserved => public::ObservationFreshness::NeverObserved,
+    }
+}
+
+fn project_recent_browser_settlement(
+    control: &ControlPlane,
+    reclaim: Option<&crate::RecentReclaim>,
+) -> Result<Option<public::BrowserSettlementSummary>, ControlError> {
+    let Some(reclaim) = reclaim else {
+        return Ok(None);
+    };
+    let (Some(event_token), Some(expected_outcome)) =
+        (reclaim.event_token.as_ref(), reclaim.outcome.as_ref())
+    else {
+        return Ok(None);
+    };
+    let Some(detail) = control.store().explain(&reclaim.incident_id)? else {
+        return Ok(None);
+    };
+    let Some(cleanup_event) = detail.events.iter().find(|event| {
+        event.event_token == *event_token
+            && event.occurred_at_unix_millis == reclaim.occurred_at_unix_millis
+    }) else {
+        return Ok(None);
+    };
+    let EventPayload::Cleanup { receipt } = &cleanup_event.payload else {
+        return Ok(None);
+    };
+    if receipt.outcome() != *expected_outcome {
+        return Ok(None);
+    }
+    let Some(family) = detail
+        .events
+        .iter()
+        .filter(|event| event.event_id < cleanup_event.event_id)
+        .filter_map(|event| match &event.payload {
+            EventPayload::Observation { report } => {
+                Some((event.event_id, report.signature_pack.as_str()))
+            }
+            EventPayload::Cleanup { .. } => None,
+        })
+        .max_by_key(|(event_id, _)| *event_id)
+        .map(|(_, family)| family.to_owned())
+    else {
+        return Ok(None);
+    };
+    let outcome = receipt.outcome();
+    Ok(Some(public::BrowserSettlementSummary {
+        event_token: event_token.clone(),
+        incident_id: reclaim.incident_id.clone(),
+        family,
+        occurred_at_unix_millis: cleanup_event.occurred_at_unix_millis,
+        process_count: receipt
+            .resources
+            .before
+            .as_ref()
+            .map(|resources| resources.process_count),
+        estimated_reclaimed_memory_bytes: receipt.resources.estimated_reclaimed_memory_bytes,
+        revival_checks_completed: receipt.revival_checks_completed,
+        artifact_outcome: project_artifact_outcome(outcome.artifact),
+        overall_outcome: project_overall_outcome(outcome.overall),
+    }))
+}
+
 fn project_payload(
     control: &ControlPlane,
     payload: IpcPayload,
+    schema_version: u32,
 ) -> Result<public::Payload, ControlError> {
     Ok(match payload {
         IpcPayload::Status(status) => public::Payload::Status(project_status(control, status)?),
@@ -194,13 +432,13 @@ fn project_payload(
         | IpcPayload::IncidentProtected { .. }
         | IpcPayload::IncidentUnprotected { .. } => {
             return Err(ControlError::Unavailable(
-                "public mutations require schema-v3 durable receipts".to_owned(),
+                "frontend mutations require durable receipts".to_owned(),
             ));
         }
         IpcPayload::Diagnostics(bundle) => {
             let incident = project_incident(control, bundle.incident)?;
             public::Payload::Diagnostics(public::DiagnosticsBundle {
-                document_schema_version: public::SCHEMA_VERSION,
+                document_schema_version: schema_version,
                 generated_at_unix_millis: bundle.generated_at_unix_millis,
                 status: project_status(control, bundle.status)?,
                 incident,
@@ -208,7 +446,7 @@ fn project_payload(
         }
         IpcPayload::Lifecycle(_) => {
             return Err(ControlError::Unavailable(
-                "service lifecycle responses are not part of public IPC v3".to_owned(),
+                "service lifecycle responses are not part of frontend IPC".to_owned(),
             ));
         }
     })
@@ -464,15 +702,29 @@ fn project_history_event(event: HistoryEvent) -> public::HistoryEvent {
 /// Projects one in-memory cycle report into the public roster entry. The
 /// store's `ObservationRecord` redaction step runs first, so tracking keys,
 /// fingerprints, targets, and artifact candidates never leave the daemon.
-fn project_current_incident(report: IncidentReport) -> public::CurrentIncident {
+fn project_current_incident(
+    report: IncidentReport,
+    include_browser_compatibility: bool,
+) -> public::CurrentIncident {
     let record = ObservationRecord::from(&report);
     public::CurrentIncident {
         incident_id: report.incident_id,
-        observation: project_observation_record(record),
+        observation: project_observation_record_with_compatibility(
+            record,
+            include_browser_compatibility
+                .then(|| project_browser_compatibility(report.browser_compatibility)),
+        ),
     }
 }
 
 fn project_observation_record(report: ObservationRecord) -> public::Observation {
+    project_observation_record_with_compatibility(report, None)
+}
+
+fn project_observation_record_with_compatibility(
+    report: ObservationRecord,
+    browser_compatibility: Option<public::BrowserCompatibility>,
+) -> public::Observation {
     public::Observation {
         family: report.signature_pack,
         family_version: report.signature_version,
@@ -505,6 +757,41 @@ fn project_observation_record(report: ObservationRecord) -> public::Observation 
             process_identity_unchanged: report.gates.process_identity_unchanged,
             no_protection_rule: report.gates.no_protection_rule,
         },
+        browser_compatibility,
+    }
+}
+
+fn project_browser_compatibility(
+    compatibility: BrowserCompatibility,
+) -> public::BrowserCompatibility {
+    public::BrowserCompatibility {
+        product: project_browser_product(compatibility.product),
+        observed_version: compatibility.observed_version,
+        decision: project_browser_compatibility_decision(compatibility.decision),
+        reason_id: compatibility.reason_id,
+    }
+}
+
+fn project_browser_product(product: BrowserProduct) -> public::BrowserProduct {
+    match product {
+        BrowserProduct::ChromeForTesting => public::BrowserProduct::ChromeForTesting,
+        BrowserProduct::Chromium => public::BrowserProduct::Chromium,
+        BrowserProduct::GoogleChrome => public::BrowserProduct::GoogleChrome,
+        BrowserProduct::Other => public::BrowserProduct::Other,
+        BrowserProduct::Unknown => public::BrowserProduct::Unknown,
+    }
+}
+
+fn project_browser_compatibility_decision(
+    decision: BrowserCompatibilityDecision,
+) -> public::BrowserCompatibilityDecision {
+    match decision {
+        BrowserCompatibilityDecision::Automatic => public::BrowserCompatibilityDecision::Automatic,
+        BrowserCompatibilityDecision::ObserveOnly => {
+            public::BrowserCompatibilityDecision::ObserveOnly
+        }
+        BrowserCompatibilityDecision::Protected => public::BrowserCompatibilityDecision::Protected,
+        BrowserCompatibilityDecision::Unknown => public::BrowserCompatibilityDecision::Unknown,
     }
 }
 
@@ -638,5 +925,139 @@ fn project_artifact_disposition(disposition: ArtifactDisposition) -> public::Art
             public::ArtifactDisposition::CancelledBeforeDelivery
         }
         ArtifactDisposition::DeliveryUnknown => public::ArtifactDisposition::DeliveryUnknown,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ipc::{RosterFreshness, RosterSnapshot};
+    use unlinger_core::{GateLedger, RootSummary};
+
+    fn ready_status() -> DaemonStatus {
+        let mut status = DaemonStatus::new(DaemonMode::ReportOnly, 42);
+        status.healthy = true;
+        status.ready = true;
+        status.startup_state = StartupState::ReadyReportOnly;
+        status.latest_observation_at_unix_millis = Some(100);
+        status
+    }
+
+    fn report(state: IncidentState) -> IncidentReport {
+        IncidentReport {
+            incident_id: format!("inc-{state:?}"),
+            tracking_key: "transient-tracking".to_owned(),
+            session_fingerprint: "transient-session".to_owned(),
+            signature_pack: "playwright".to_owned(),
+            signature_version: "0.2.0".to_owned(),
+            state,
+            root: RootSummary {
+                pid: 42,
+                started_at_unix_micros: 100,
+                executable_basename: "node".to_owned(),
+                identity_fingerprint: "transient-identity".to_owned(),
+            },
+            member_count: 1,
+            resident_memory_bytes: 4096,
+            member_fingerprint: "transient-members".to_owned(),
+            roles: Vec::new(),
+            evidence: Vec::new(),
+            gates: GateLedger {
+                same_user: true,
+                strong_automation_provenance: true,
+                confirmed_abandonment: true,
+                isolated_session: true,
+                stable_across_two_observations: true,
+                process_identity_unchanged: true,
+                no_protection_rule: true,
+            },
+            browser_compatibility: BrowserCompatibility::default(),
+            targets: Vec::new(),
+            runtime_artifacts: Vec::new(),
+        }
+    }
+
+    fn roster(reports: Vec<IncidentReport>) -> RosterSnapshot {
+        RosterSnapshot {
+            cycle_token: Some("cycle".to_owned()),
+            observed_at_unix_millis: Some(100),
+            freshness: RosterFreshness::Current,
+            reports,
+        }
+    }
+
+    #[test]
+    fn browser_phase_fails_unknown_before_applying_state_precedence() {
+        let mut status = ready_status();
+        status.latest_observation_at_unix_millis = Some(99);
+        assert_eq!(
+            browser_overview_phase(&status, &roster(vec![report(IncidentState::Confirmed)])),
+            public::BrowserOverviewPhase::Unknown
+        );
+
+        let mut stale = roster(Vec::new());
+        stale.freshness = RosterFreshness::StaleAfterFailure;
+        assert_eq!(
+            browser_overview_phase(&ready_status(), &stale),
+            public::BrowserOverviewPhase::Unknown
+        );
+    }
+
+    #[test]
+    fn browser_phase_uses_one_server_owned_precedence_table() {
+        let status = ready_status();
+        assert_eq!(
+            browser_overview_phase(&status, &roster(Vec::new())),
+            public::BrowserOverviewPhase::Clear
+        );
+        assert_eq!(
+            browser_overview_phase(&status, &roster(vec![report(IncidentState::Protected)])),
+            public::BrowserOverviewPhase::Protected
+        );
+        assert_eq!(
+            browser_overview_phase(
+                &status,
+                &roster(vec![
+                    report(IncidentState::Active),
+                    report(IncidentState::Protected),
+                ]),
+            ),
+            public::BrowserOverviewPhase::Active
+        );
+        assert_eq!(
+            browser_overview_phase(
+                &status,
+                &roster(vec![
+                    report(IncidentState::Confirmed),
+                    report(IncidentState::Cooling),
+                ]),
+            ),
+            public::BrowserOverviewPhase::Confirmed
+        );
+
+        let mut reclaiming = ready_status();
+        reclaiming.cleanup_in_progress = true;
+        assert_eq!(
+            browser_overview_phase(&reclaiming, &roster(vec![report(IncidentState::Confirmed)]),),
+            public::BrowserOverviewPhase::Reclaiming
+        );
+
+        let mut attention = ready_status();
+        attention.event_source_healthy = false;
+        attention.cleanup_in_progress = true;
+        assert_eq!(
+            browser_overview_phase(&attention, &roster(Vec::new())),
+            public::BrowserOverviewPhase::Attention
+        );
+        assert_eq!(
+            browser_overview_phase(
+                &status,
+                &roster(vec![
+                    report(IncidentState::Failed),
+                    report(IncidentState::Reclaiming),
+                ]),
+            ),
+            public::BrowserOverviewPhase::Attention
+        );
     }
 }

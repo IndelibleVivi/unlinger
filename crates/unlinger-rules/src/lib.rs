@@ -4,10 +4,11 @@ use std::error::Error;
 use std::fmt::{Display, Formatter};
 use std::path::Path;
 use unlinger_core::{
-    CleanupPlan, EvidenceFamily, EvidenceItem, GateLedger, IncidentReport, IncidentRevalidator,
-    IncidentState, ProcessGraph, ProcessRecord, ProcessRole, ProcessRoleCount, ProcessTarget,
-    Revalidation, RevalidationPhase, RevalidationStatus, RootSummary, RuntimeArtifactCandidate,
-    Snapshot, fingerprint_parts, fingerprint_process_identity,
+    BrowserCompatibility, BrowserCompatibilityDecision, BrowserProduct, CleanupPlan,
+    EvidenceFamily, EvidenceItem, GateLedger, IncidentReport, IncidentRevalidator, IncidentState,
+    ProcessGraph, ProcessRecord, ProcessRole, ProcessRoleCount, ProcessTarget, Revalidation,
+    RevalidationPhase, RevalidationStatus, RootSummary, RuntimeArtifactCandidate, Snapshot,
+    fingerprint_parts, fingerprint_process_identity,
 };
 
 const STANDARD_PROFILE_MARKERS: &[&str] = &[
@@ -283,6 +284,94 @@ fn evaluate_browser_versions(
     }
 }
 
+fn browser_product(bundle_id: &str) -> BrowserProduct {
+    match bundle_id.to_ascii_lowercase().as_str() {
+        "com.google.chrome.for.testing" => BrowserProduct::ChromeForTesting,
+        "org.chromium.chromium" => BrowserProduct::Chromium,
+        "com.google.chrome" => BrowserProduct::GoogleChrome,
+        _ => BrowserProduct::Other,
+    }
+}
+
+fn browser_compatibility(
+    browser_roots: &[&ProcessRecord],
+    version_gate: Option<BrowserVersionGate>,
+    has_controller: bool,
+    control_path_incomplete: bool,
+) -> BrowserCompatibility {
+    let facts = browser_roots
+        .iter()
+        .filter_map(|process| process.runtime.app_bundle.as_ref())
+        .collect::<Vec<_>>();
+    let bundle_ids = facts
+        .iter()
+        .map(|fact| fact.bundle_id.as_str())
+        .collect::<BTreeSet<_>>();
+    let versions = facts
+        .iter()
+        .map(|fact| fact.short_version.as_str())
+        .collect::<BTreeSet<_>>();
+    let product = if facts.len() == browser_roots.len() && bundle_ids.len() == 1 {
+        browser_product(facts[0].bundle_id.as_str())
+    } else {
+        BrowserProduct::Unknown
+    };
+    let observed_version = (facts.len() == browser_roots.len() && versions.len() == 1)
+        .then(|| facts[0].short_version.clone());
+
+    let (decision, reason_id) = match version_gate {
+        Some(BrowserVersionGate::MixedFacts) => (
+            BrowserCompatibilityDecision::Protected,
+            Some("protection.browser_version_mixed"),
+        ),
+        Some(BrowserVersionGate::UnsupportedProduct) => (
+            BrowserCompatibilityDecision::Protected,
+            Some("protection.browser_product_unsupported"),
+        ),
+        Some(BrowserVersionGate::UnsupportedVersion) => (
+            BrowserCompatibilityDecision::Protected,
+            Some("protection.browser_version_unsupported"),
+        ),
+        Some(BrowserVersionGate::MissingFacts) => (
+            BrowserCompatibilityDecision::Unknown,
+            Some("protection.browser_version_missing"),
+        ),
+        Some(BrowserVersionGate::Observational) => (
+            BrowserCompatibilityDecision::ObserveOnly,
+            Some("protection.version_observational_only"),
+        ),
+        Some(BrowserVersionGate::ExactSupported | BrowserVersionGate::RangeSupported)
+            if has_controller =>
+        {
+            (
+                BrowserCompatibilityDecision::Protected,
+                Some("protection.controller_version_unverified"),
+            )
+        }
+        Some(BrowserVersionGate::ExactSupported | BrowserVersionGate::RangeSupported)
+            if control_path_incomplete =>
+        {
+            (
+                BrowserCompatibilityDecision::Protected,
+                Some("protection.debug_peer_visibility_incomplete"),
+            )
+        }
+        Some(BrowserVersionGate::ExactSupported | BrowserVersionGate::RangeSupported) => {
+            (BrowserCompatibilityDecision::Automatic, None)
+        }
+        None => (
+            BrowserCompatibilityDecision::Unknown,
+            Some("ambiguity.browser_root_missing"),
+        ),
+    };
+    BrowserCompatibility {
+        product,
+        observed_version,
+        decision,
+        reason_id: reason_id.map(str::to_owned),
+    }
+}
+
 fn policy_bundle_id(policy: &VersionPolicy) -> Option<&str> {
     match policy {
         VersionPolicy::Observational => None,
@@ -323,6 +412,27 @@ pub struct RuleSet {
     packs: Vec<SignaturePack>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BrowserAutomaticActionLevel {
+    Automatic,
+    ObserveOnly,
+    Unsupported,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BrowserFamilySupport {
+    pub family: String,
+    pub product: BrowserProduct,
+    pub admitted_versions: Vec<String>,
+    pub automatic_action_level: BrowserAutomaticActionLevel,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BrowserSupportCatalog {
+    pub support_revision: String,
+    pub families: Vec<BrowserFamilySupport>,
+}
+
 impl RuleSet {
     pub fn embedded() -> Result<Self, RuleError> {
         let sources = [
@@ -351,6 +461,59 @@ impl RuleSet {
     #[must_use]
     pub fn packs(&self) -> &[SignaturePack] {
         &self.packs
+    }
+
+    #[must_use]
+    pub fn browser_support_catalog(&self) -> BrowserSupportCatalog {
+        let support_revision = format!(
+            "rules:{}",
+            self.packs
+                .iter()
+                .map(|pack| format!("{}@{}", pack.id, pack.version))
+                .collect::<Vec<_>>()
+                .join("|")
+        );
+        let families = self
+            .packs
+            .iter()
+            .map(|pack| {
+                let (product, admitted_versions, automatic_action_level) =
+                    match &pack.version_policy {
+                        VersionPolicy::Observational => (
+                            BrowserProduct::Unknown,
+                            Vec::new(),
+                            BrowserAutomaticActionLevel::ObserveOnly,
+                        ),
+                        VersionPolicy::ExactAllowlist {
+                            bundle_id,
+                            versions,
+                        } => (
+                            browser_product(bundle_id),
+                            versions.clone(),
+                            BrowserAutomaticActionLevel::Automatic,
+                        ),
+                        VersionPolicy::BoundedRange {
+                            bundle_id,
+                            minimum_inclusive,
+                            maximum_inclusive,
+                        } => (
+                            browser_product(bundle_id),
+                            vec![format!("{minimum_inclusive}..={maximum_inclusive}")],
+                            BrowserAutomaticActionLevel::Automatic,
+                        ),
+                    };
+                BrowserFamilySupport {
+                    family: pack.id.clone(),
+                    product,
+                    admitted_versions,
+                    automatic_action_level,
+                }
+            })
+            .collect();
+        BrowserSupportCatalog {
+            support_revision,
+            families,
+        }
     }
 }
 
@@ -713,11 +876,11 @@ impl Analyzer {
         {
             protection.insert("protection.attached_debug_peer".to_owned());
         }
-        if has_debug_port
+        let control_path_incomplete = has_debug_port
             && browser_roots
                 .iter()
-                .any(|process| !process.runtime.debug_transport_facts_complete)
-        {
+                .any(|process| !process.runtime.debug_transport_facts_complete);
+        if control_path_incomplete {
             protection.insert("protection.debug_peer_visibility_incomplete".to_owned());
         }
         if has_controller {
@@ -960,6 +1123,12 @@ impl Analyzer {
         } else {
             Vec::new()
         };
+        let browser_compatibility = browser_compatibility(
+            &browser_roots,
+            version_gate,
+            has_controller,
+            control_path_incomplete,
+        );
 
         Some(IncidentReport {
             incident_id: format!("inc-{}", fingerprint_parts([incident_key.as_bytes()])),
@@ -986,6 +1155,7 @@ impl Analyzer {
                 .collect(),
             evidence,
             gates,
+            browser_compatibility,
             targets,
             runtime_artifacts,
         })
@@ -1931,6 +2101,47 @@ mod tests {
             );
             assert!(report.runtime_artifacts.is_empty(), "{label}");
         }
+    }
+
+    #[test]
+    fn browser_compatibility_and_support_catalog_are_rule_owned() {
+        let case = corpus_case("abandoned Playwright browser without controller");
+        let analyzer = analyzer();
+        let exact = analyzer
+            .observe(&snapshot(&case.processes, 120_000))
+            .expect("observe exact version")
+            .into_iter()
+            .find(|report| report.signature_pack == "playwright")
+            .expect("Playwright report");
+        assert_eq!(
+            exact.browser_compatibility,
+            BrowserCompatibility {
+                product: BrowserProduct::ChromeForTesting,
+                observed_version: Some("151.0.7922.34".to_owned()),
+                decision: BrowserCompatibilityDecision::Automatic,
+                reason_id: None,
+            }
+        );
+
+        let catalog = RuleSet::embedded()
+            .expect("embedded rules")
+            .browser_support_catalog();
+        assert!(catalog.support_revision.starts_with("rules:"));
+        assert_eq!(catalog.families.len(), 3);
+        let playwright = catalog
+            .families
+            .iter()
+            .find(|family| family.family == "playwright")
+            .expect("Playwright support");
+        assert_eq!(playwright.product, BrowserProduct::ChromeForTesting);
+        assert_eq!(
+            playwright.admitted_versions,
+            vec!["151.0.7922.34".to_owned()]
+        );
+        assert_eq!(
+            playwright.automatic_action_level,
+            BrowserAutomaticActionLevel::Automatic
+        );
     }
 
     #[test]

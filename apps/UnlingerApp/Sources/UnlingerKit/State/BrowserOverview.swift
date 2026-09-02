@@ -17,7 +17,7 @@ public enum BrowserOverviewTone: Equatable, Sendable {
     case attention
 }
 
-public enum BrowserCoverageNotice: CaseIterable, Equatable, Hashable, Sendable {
+public enum BrowserCoverageNotice: Equatable, Hashable, Sendable {
     case mixedVersions
     case unsupportedProduct
     case unsupportedVersion
@@ -25,6 +25,7 @@ public enum BrowserCoverageNotice: CaseIterable, Equatable, Hashable, Sendable {
     case controllerUnverified
     case observationOnly
     case controlPathIncomplete
+    case unknown(reasonID: String)
 
     public var copyKey: String {
         switch self {
@@ -35,6 +36,7 @@ public enum BrowserCoverageNotice: CaseIterable, Equatable, Hashable, Sendable {
         case .controllerUnverified: "browser.coverage.controller_unverified"
         case .observationOnly: "browser.coverage.observation_only"
         case .controlPathIncomplete: "browser.coverage.control_path_incomplete"
+        case .unknown: "browser.coverage.generic"
         }
     }
 }

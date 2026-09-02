@@ -1509,6 +1509,7 @@ fn confirmed_report(targets: Vec<ProcessTarget>) -> IncidentReport {
             process_identity_unchanged: true,
             no_protection_rule: true,
         },
+        browser_compatibility: Default::default(),
         targets,
         runtime_artifacts: Vec::new(),
     }

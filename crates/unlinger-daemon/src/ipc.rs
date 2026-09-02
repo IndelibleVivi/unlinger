@@ -412,6 +412,12 @@ pub(crate) struct RosterSnapshot {
     pub reports: Vec<IncidentReport>,
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct BrowserSourceSnapshot {
+    pub status: DaemonStatus,
+    pub roster: RosterSnapshot,
+}
+
 #[derive(Debug)]
 struct RosterState {
     cycle_token: Option<String>,
@@ -575,6 +581,42 @@ impl ControlPlane {
             freshness: roster.freshness,
             reports: roster.reports.clone(),
         }
+    }
+
+    /// Captures the status and latest roster under one in-memory lock
+    /// boundary. Durable attention/protection are loaded first, then applied
+    /// to that status clone; no SQLite work is performed while either lock is
+    /// held.
+    pub(crate) fn browser_source_snapshot_at(
+        &self,
+        now_unix_millis: u64,
+    ) -> Result<BrowserSourceSnapshot, ControlError> {
+        self.expire_pause(now_unix_millis)?;
+        let attention = self
+            .store
+            .attention_projection(MAX_STATUS_ATTENTION_ITEMS)
+            .map_err(map_store_error)?;
+        let protection = self
+            .store
+            .protection_projection(MAX_STATUS_ATTENTION_ITEMS)
+            .map_err(map_store_error)?;
+        let status_guard = self.lock_status()?;
+        let roster_guard = match self.roster.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        let mut status = status_guard.clone();
+        let roster = RosterSnapshot {
+            cycle_token: roster_guard.cycle_token.clone(),
+            observed_at_unix_millis: roster_guard.observed_at_unix_millis,
+            freshness: roster_guard.freshness,
+            reports: roster_guard.reports.clone(),
+        };
+        drop(roster_guard);
+        drop(status_guard);
+        apply_attention_projection(&mut status, attention);
+        apply_protection_projection(&mut status, protection);
+        Ok(BrowserSourceSnapshot { status, roster })
     }
 
     pub(crate) fn ordinary_mutation_unavailable_reason(
@@ -1689,6 +1731,65 @@ impl IpcClient {
             )),
         }
     }
+
+    /// Reads the schema-v4 browser product projection with the same bounded,
+    /// single-attempt transport contract as operator IPC.
+    #[cfg(unix)]
+    pub fn request_browser_overview(
+        &self,
+    ) -> Result<unlinger_protocol::BrowserOverviewSnapshot, IpcError> {
+        let request_id = NEXT_REQUEST_ID.fetch_add(1, Ordering::Relaxed);
+        let request = unlinger_protocol::RequestEnvelope::new(
+            request_id,
+            unlinger_protocol::Command::BrowserOverview,
+        );
+        let mut stream = UnixStream::connect(&self.socket_path)?;
+        stream.set_read_timeout(Some(self.io_timeout))?;
+        stream.set_write_timeout(Some(self.io_timeout))?;
+        serde_json::to_writer(&mut stream, &request)?;
+        stream.write_all(b"\n")?;
+        stream.flush()?;
+
+        let response_bytes = read_bounded_line(&mut stream, MAX_RESPONSE_BYTES)?;
+        let response =
+            serde_json::from_slice::<unlinger_protocol::ResponseEnvelope>(&response_bytes)?;
+        if response.schema_version != unlinger_protocol::SCHEMA_VERSION
+            || response.request_id != request_id
+        {
+            return Err(IpcError::Protocol(
+                "browser response schema or request ID did not match".to_owned(),
+            ));
+        }
+        match (response.ok, response.payload, response.error) {
+            (true, Some(unlinger_protocol::Payload::BrowserOverview(overview)), None) => {
+                Ok(overview)
+            }
+            (true, Some(_), None) => Err(IpcError::Protocol(
+                "daemon returned the wrong payload for browser overview".to_owned(),
+            )),
+            (false, None, Some(error)) => Err(IpcError::Remote {
+                code: public_error_code_name(error.code).to_owned(),
+                message: error.message,
+            }),
+            _ => Err(IpcError::Protocol(
+                "browser response success/error fields were contradictory".to_owned(),
+            )),
+        }
+    }
+}
+
+fn public_error_code_name(code: unlinger_protocol::ErrorCode) -> &'static str {
+    match code {
+        unlinger_protocol::ErrorCode::InvalidRequest => "invalid_request",
+        unlinger_protocol::ErrorCode::InvalidJson => "invalid_json",
+        unlinger_protocol::ErrorCode::UnsupportedSchema => "unsupported_schema",
+        unlinger_protocol::ErrorCode::InvalidArgument => "invalid_argument",
+        unlinger_protocol::ErrorCode::Conflict => "conflict",
+        unlinger_protocol::ErrorCode::NotFound => "not_found",
+        unlinger_protocol::ErrorCode::AuthorityLost => "authority_lost",
+        unlinger_protocol::ErrorCode::StoreError => "store_error",
+        unlinger_protocol::ErrorCode::Unavailable => "unavailable",
+    }
 }
 
 pub struct IpcServer {
@@ -1957,13 +2058,15 @@ fn serve_connection(stream: &mut UnixStream, control: &ControlPlane) -> Result<(
             };
             write_response(stream, &response)
         }
-        unlinger_protocol::SCHEMA_VERSION => {
+        unlinger_protocol::PREVIOUS_SCHEMA_VERSION | unlinger_protocol::SCHEMA_VERSION => {
+            let frontend_schema_version = header.schema_version;
             let request = match serde_json::from_slice::<unlinger_protocol::RequestEnvelope>(
                 &request_bytes,
             ) {
                 Ok(request) => request,
                 Err(error) => {
-                    let response = unlinger_protocol::ResponseEnvelope::failure(
+                    let response = unlinger_protocol::ResponseEnvelope::failure_for(
+                        frontend_schema_version,
                         header.request_id,
                         unlinger_protocol::ErrorCode::InvalidJson,
                         bounded_message(&error.to_string()),
@@ -1972,17 +2075,36 @@ fn serve_connection(stream: &mut UnixStream, control: &ControlPlane) -> Result<(
                     return Ok(());
                 }
             };
-            let response =
-                match crate::public_ipc::handle_at(control, request.command, now_unix_millis()?) {
-                    Ok(payload) => {
-                        unlinger_protocol::ResponseEnvelope::success(request.request_id, payload)
-                    }
-                    Err(error) => unlinger_protocol::ResponseEnvelope::failure(
-                        request.request_id,
-                        public_error_code(&error),
-                        public_error_message(&error),
-                    ),
-                };
+            if frontend_schema_version == unlinger_protocol::PREVIOUS_SCHEMA_VERSION
+                && matches!(request.command, unlinger_protocol::Command::BrowserOverview)
+            {
+                let response = unlinger_protocol::ResponseEnvelope::failure_for(
+                    frontend_schema_version,
+                    request.request_id,
+                    unlinger_protocol::ErrorCode::InvalidRequest,
+                    "browser_overview requires frontend schema 4",
+                );
+                write_public_response(stream, &response)?;
+                return Ok(());
+            }
+            let response = match crate::public_ipc::handle_at(
+                control,
+                request.command,
+                now_unix_millis()?,
+                frontend_schema_version,
+            ) {
+                Ok(payload) => unlinger_protocol::ResponseEnvelope::success_for(
+                    frontend_schema_version,
+                    request.request_id,
+                    payload,
+                ),
+                Err(error) => unlinger_protocol::ResponseEnvelope::failure_for(
+                    frontend_schema_version,
+                    request.request_id,
+                    public_error_code(&error),
+                    public_error_message(&error),
+                ),
+            };
             write_public_response(stream, &response)
         }
         _ => write_response(
@@ -1995,7 +2117,8 @@ fn serve_connection(stream: &mut UnixStream, control: &ControlPlane) -> Result<(
                 error: Some(IpcErrorBody {
                     code: "unsupported_schema".to_owned(),
                     message: format!(
-                        "supported IPC schemas are {IPC_SCHEMA_VERSION} and {}",
+                        "supported IPC schemas are {IPC_SCHEMA_VERSION}, {}, and {}",
+                        unlinger_protocol::PREVIOUS_SCHEMA_VERSION,
                         unlinger_protocol::SCHEMA_VERSION
                     ),
                 }),

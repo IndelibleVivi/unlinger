@@ -17,4 +17,5 @@ serde_json.workspace = true
 unlinger-core = { path = "../unlinger-core" }
 unlinger-daemon = { path = "../unlinger-daemon" }
 unlinger-macos = { path = "../unlinger-macos" }
+unlinger-protocol = { path = "../unlinger-protocol" }
 unlinger-rules = { path = "../unlinger-rules" }

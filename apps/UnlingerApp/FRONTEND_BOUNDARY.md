@@ -3,29 +3,29 @@
 先读：
 
 1. [`Contract/README.md`](Contract/README.md)
-2. [`Contract/v3/`](Contract/v3/) active fixtures
+2. [`Contract/v4/`](Contract/v4/) active browser-product fixtures and [`Contract/v3/`](Contract/v3/) transitional shared-command fixtures
 3. 需要 transport/error 细节时读 [`docs/IPC.md`](../../docs/IPC.md)
 
-[`Contract/v2/`](Contract/v2/) 只保留历史审计证据。不要从它、CLI human output、schema-v1 `DaemonStatus` 或 service lifecycle code反推当前 UI。
+[`Contract/v2/`](Contract/v2/) 只保留历史审计证据。不要从它、transitional v3 data、CLI human output、schema-v1 `DaemonStatus` 或 service lifecycle code反推当前 browser UI。
 
 ## Backend truth
 
-Unlinger 是 local-only macOS runtime-hygiene utility。Direct daemon与安装中的 generation 12默认/当前都保持 report-only；generation 12提供 schema-v3 App endpoint、SQLite v6，且是 unarmed。它保留到 generation 9/v5 的 rollback lease。Frontend 只投影 backend truth，不拥有 signal authorization、service installation/update/rollback、daemon mode switching或 lifecycle recovery。
+Unlinger 是 local-only macOS runtime-hygiene utility。Direct daemon与安装中的 generation 12默认/当前都保持 report-only；installed generation 12提供 schema-v3 App endpoint、SQLite v6，且是 unarmed。Current source daemon同时提供 schema v4与transitional v3；source App只发送v4，并要求atomic `browser_overview`。Generation 12保留到generation 9/v5的rollback lease。Frontend只投影backend truth，不拥有signal authorization、service installation/update/rollback、daemon mode switching或lifecycle recovery。
 
-Schema v3提供 status/history/explain/incidents/diagnostics、mutation status，以及 pause/resume/named retry/exact protect/unprotect。所有 actions使用 backend capabilities，并由同一 backend policy在 commit前重新授权。UI缺失 capability时 fail closed，不从 stage、score、reason string或 roster presence自行猜补。
+Schemas v3/v4都提供 status/history/explain/incidents/diagnostics、mutation status，以及pause/resume/named retry/exact protect/unprotect。V4另提供read-only `browser_overview`；v3请求该command会收到typed `invalid_request`，不会downgrade或拼装替代结果。所有actions使用backend capabilities，并由同一backend policy在commit前重新授权。UI缺失capability时fail closed，不从stage、score、reason string或session presence自行猜补。
 
 Automatic admission依然极窄：controllerless exact Chrome for Testing `151.0.7922.34`，且所有 hard gates成立。Unknown/mixed/wrong versions、controller-bearing、headed/attached、standard/shared profile与不完整 identity保持 `PROTECTED`。UI不得添加 manual kill绕过它。
 
 ## State mapping
 
-- `BrowserOverviewMapper` 是唯一 canonical product projection；popover、ordinary window、detail和preview都消费同一组 browser presentation types，UI view不得各自重建 product state；
-- positive current claim 仅当 `connection.live + healthy + readiness.ready + roster.current + no replacement scan + status.latest_observation_at == roster.observed_at`，两个时间都必须存在；timestamp mismatch最多请求一次 bounded trailing refresh，仍然映射为 unknown；
-- `starting`、`draining`、`failed`、unknown、transport unavailable、backend incompatible与 stale roster都不能映射成 all clear；
-- replacement scan进行中保留上一份 roster并标 scanning；失败后保留并标 stale；never-observed不制造 timestamp；
-- durable attention优先于 stale/updating uncertainty；其余 phase优先级为 reclaiming → failed/revived attention → unknown → confirmed → verifying → active → protected → clear；
-- current row可以显示该 row 自身的 member count/RSS；schema v3没有提供 global current totals，因此不得加总展示；
-- coverage copy只接受七个 exact evidence IDs：mixed/product/version/missing version、controller unverified、observation only、debug-peer visibility incomplete。未知 ID 不进入 presentation model，也不原样显示；
-- recent settlement用 status `most_recent_reclaim.event_token` exact join cleanup event，再取同 incident更早且最近的 observation；找不到 event时只显示 conservative fallback，不猜 family/process/memory/artifact facts；
+- schema-v4 `BrowserOverviewSnapshot`是phase、session compatibility、coverage、support catalog、attention/protection与recent settlement的唯一canonical product projection；daemon在一个status+roster snapshot boundary内生成它；
+- daemon先验证`healthy + ready + roster.current + no scan + equal non-null observation time`，不可信或不一致直接给`phase: unknown`；其余phase优先级在server内固定为attention → reclaiming → confirmed → verifying → active → protected → clear；
+- `BrowserOverviewMapper`只负责localized copy与display shape。Popover、ordinary window、detail和preview消费同一组presentation types；Swift不得重扫evidence、重做phase truth table或再次用history join settlement；
+- transport unavailable、backend incompatible或stale retained snapshot在App层保持unknown，不能映射成all clear；失败后可保留上一份rows供查看，但不得恢复positive phase；
+- current row可以显示该row自身的member count/RSS；v4没有提供global current totals，因此不得加总展示；
+- compatibility是typed `product + observed_version + automatic|observe_only|protected|unknown + optional reason_id`。Coverage copy只接受mixed/product/version/missing version、controller unverified、observation only、debug-peer visibility incomplete；未知ID显示generic copy且不原样展示；
+- support catalog必须来自embedded rule authority并携带`support_revision`，Swift fixture/UI不得维护另一份hard-coded eligibility matrix；
+- recent settlement由daemon用exact cleanup `event_token`与更早的event identity生成；同毫秒事件仍按durable event order处理。缺失proof返回nil，不由App猜family/process/memory/artifact facts；
 - `cleared_with_residue` 必须同时表达 process success与 artifact residue，不写成 process cleanup failed；
 - ambiguous count、CPU、RSS、age、pressure或 protected incident只提供低调信息，不产生 action或 notification authority；
 - incident detail优先复用 coherent current session，否则使用 retained detail里的最新 observation；若 detail没有 observation但 exact-token settlement join成立，则用该 settlement继续显示 browser family和已有 typed facts，缺失 estimate保持不显示。只有 trusted `not_found`显示不存在。Transport/store/protocol failure保留旧 detail并标 stale；旧 request结果不得覆盖新 request。
@@ -38,11 +38,11 @@ Copy保持安静、直接、non-antivirus。未知 enum/reason显示 generic、�
 
 任意字节可能发送后，timeout/EOF/reset/oversize/bad JSON/wrong schema或 request ID/wrong payload/DTO failure都进入 delivery uncertain。App restart或 “Check again” 只调用 `mutation_status`，永不重发原 mutation。Trusted committed/rejected或 unchanged-authority not-found可以收束；authority lost与 untrusted read保留 journal和 lock。Dismiss只隐藏 banner，不清 authority state。
 
-Schema v3 request遇到 exact schema-v1 `unsupported_schema` framing时显示 incompatible daemon。App绝不 fallback至 v1 mutation。
+Schema v4 request遇到exact schema-v1 `unsupported_schema` framing时显示incompatible daemon。App绝不fallback至v3或v1 mutation。
 
 ## Diagnostics and identity
 
-Diagnostics result属于发起 view的 local state；A view的 success不会被 B view的 failure覆盖。Document使用 required `document_schema_version`，export是 semantic-lossless JSON：保留未知 fields但不承诺 byte-for-byte layout。
+Diagnostics result属于发起view的local state；A view的success不会被B view的failure覆盖。V4 document使用required `document_schema_version: 4`，export是semantic-lossless JSON：保留未知fields但不承诺byte-for-byte layout。
 
 History row使用 public `event_token`；action row使用 event token + mutation namespace + stable sequence。Artifact-only group必须显示。Internal event/attempt/PID/fingerprint不是 Swift identity，也不进入 ordinary UI。
 
@@ -58,4 +58,4 @@ Click routing复用 shared `AppRouter`，进入 exact incident或 global status�
 
 Active generation-12 database属于安装服务并使用 SQLite v6；generation-9 binary只能打开 lease 中保留的 v5 snapshot。Acceptance-scoped prior manifest/plist/v5 DB lease、explicit accept/rollback和exact report-only restart已经通过 [`../../docs/INSTALLED_DOGFOOD.md`](../../docs/INSTALLED_DOGFOOD.md) 的真实 installed proof：generation 9 rollback/open成功，generation 12重新安装，App与daemon restart完成reconciliation，全程没有arm。Lease在initial dogfood期间继续保留。
 
-使用 [`scripts/pre-v0.1-smoke.sh`](scripts/pre-v0.1-smoke.sh) 获得可重复的 isolated report-only integration。Owner-only CfT harness、ambient enforcement与 installed dogfood proof仍不属于 frontend source validation。
+使用 [`scripts/pre-v0.1-smoke.sh`](scripts/pre-v0.1-smoke.sh) 获得可重复的isolated report-only v4 App integration；它也保留v3 transitional regression coverage。Owner-only CfT harness、ambient enforcement与installed dogfood proof仍不属于frontend source validation。

@@ -54,15 +54,6 @@ struct NotificationCoordinatorTests {
         ).history(limit: 50)
     }
 
-    private var emptyRoster: ObservationRoster {
-        ObservationRoster(
-            cycleToken: "cycle",
-            observedAtUnixMillis: 1,
-            freshness: .current,
-            items: []
-        )
-    }
-
     @Test("first trusted refresh baselines retained events")
     func firstRefreshBaselines() async throws {
         let scheduler = FakeNotificationScheduler()
@@ -77,7 +68,6 @@ struct NotificationCoordinatorTests {
         await coordinator.receiveTrustedRefresh(
             status: try await status(),
             history: retained,
-            roster: emptyRoster,
             atUnixMillis: 100
         )
 
@@ -109,20 +99,17 @@ struct NotificationCoordinatorTests {
         await coordinator.receiveTrustedRefresh(
             status: try await status(),
             history: [],
-            roster: emptyRoster,
             atUnixMillis: 1
         )
 
         await coordinator.receiveTrustedRefresh(
             status: try await status(),
             history: failed,
-            roster: emptyRoster,
             atUnixMillis: 2
         )
         await coordinator.receiveTrustedRefresh(
             status: try await status(),
             history: failed,
-            roster: emptyRoster,
             atUnixMillis: 3
         )
 
@@ -145,13 +132,11 @@ struct NotificationCoordinatorTests {
         await first.receiveTrustedRefresh(
             status: try await status(),
             history: [],
-            roster: emptyRoster,
             atUnixMillis: 1
         )
         await first.receiveTrustedRefresh(
             status: try await status(),
             history: event,
-            roster: emptyRoster,
             atUnixMillis: 2
         )
         #expect(await firstScheduler.scheduled.count == 1)
@@ -165,7 +150,6 @@ struct NotificationCoordinatorTests {
         await restarted.receiveTrustedRefresh(
             status: try await status(),
             history: event,
-            roster: emptyRoster,
             atUnixMillis: 3
         )
         #expect(await restartedScheduler.scheduled.isEmpty)
@@ -183,20 +167,17 @@ struct NotificationCoordinatorTests {
         await coordinator.receiveTrustedRefresh(
             status: try await status(),
             history: [],
-            roster: emptyRoster,
             atUnixMillis: 1
         )
         await coordinator.receiveTrustedRefresh(
             status: try await status(),
             history: reclaimed,
-            roster: emptyRoster,
             atUnixMillis: 2
         )
         await coordinator.setMode(.attentionAndReclaims)
         await coordinator.receiveTrustedRefresh(
             status: try await status(),
             history: reclaimed,
-            roster: emptyRoster,
             atUnixMillis: 3
         )
         #expect(await scheduler.scheduled.isEmpty)
@@ -213,13 +194,11 @@ struct NotificationCoordinatorTests {
         await coordinator.receiveTrustedRefresh(
             status: try await status(),
             history: [],
-            roster: emptyRoster,
             atUnixMillis: 1
         )
         await coordinator.receiveTrustedRefresh(
             status: try await status(),
             history: try await history("history-cleared"),
-            roster: emptyRoster,
             atUnixMillis: 2
         )
         #expect(await scheduler.scheduled.count == 1)
@@ -237,13 +216,11 @@ struct NotificationCoordinatorTests {
         await coordinator.receiveTrustedRefresh(
             status: try await status(),
             history: [],
-            roster: emptyRoster,
             atUnixMillis: 1
         )
         await coordinator.receiveTrustedRefresh(
             status: try await status(),
             history: try await history("history-cleared-with-residue"),
-            roster: emptyRoster,
             atUnixMillis: 2
         )
         #expect(await scheduler.scheduled[0].bodyKey == "notification.cleared_with_residue")
@@ -279,7 +256,6 @@ struct NotificationCoordinatorTests {
         await coordinator.receiveTrustedRefresh(
             status: try await status(),
             history: [],
-            roster: emptyRoster,
             atUnixMillis: 20_000
         )
         for time in [30_000, 37_500, 45_000] {

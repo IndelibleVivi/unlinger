@@ -1,16 +1,17 @@
 # 本地 IPC contract
 
-Unlinger source 接受两条 exact local wire：
+Unlinger source接受三条exact local wire：
 
 - `schema_version = 1`：Rust CLI、diagnosis 与 service lifecycle/operator compatibility；
-- `schema_version = 3`：native App public contract。
+- `schema_version = 3`：transitional frontend compatibility endpoint；
+- `schema_version = 4`：current native App contract与atomic browser product projection。
 
-`schema_version = 2` 是从未安装或发布的历史 frontend draft。其 fixtures 保留审计价值，但 current server在 dispatch前以 schema-v1 framing返回 typed `unsupported_schema`。没有 schema negotiation、silent downgrade或 App→v1 fallback。
+`schema_version = 2`是从未安装或发布的历史frontend draft。其fixtures保留审计价值，但current server在dispatch前以schema-v1 framing返回typed `unsupported_schema`。没有schema negotiation、silent downgrade、App→v3 fallback或App→v1 fallback。
 
 Rust authority：
 
 - v1 envelope/commands/lifecycle：[`crates/unlinger-daemon/src/ipc.rs`](../crates/unlinger-daemon/src/ipc.rs)
-- v3 DTO/envelope：[`crates/unlinger-protocol/src/lib.rs`](../crates/unlinger-protocol/src/lib.rs)
+- v4 DTO/envelope与v3 compatibility contract：[`crates/unlinger-protocol/src/lib.rs`](../crates/unlinger-protocol/src/lib.rs)
 - internal→public projection：[`crates/unlinger-daemon/src/public_ipc.rs`](../crates/unlinger-daemon/src/public_ipc.rs)
 - shared ordinary-action policy：[`crates/unlinger-daemon/src/public_action_policy.rs`](../crates/unlinger-daemon/src/public_action_policy.rs)
 
@@ -27,10 +28,10 @@ Rust authority：
 
 ## Framing and response trust
 
-V3 request example：
+V4 request example：
 
 ```json
-{"schema_version":3,"request_id":17,"command":{"command":"status"}}
+{"schema_version":4,"request_id":17,"command":{"command":"browser_overview"}}
 ```
 
 Client必须用 strict integer types验证 exact `schema_version`和`request_id`，并验证：
@@ -52,22 +53,23 @@ Transport区分：
 4. response received but untrusted；
 5. trusted response。
 
-对 v3 mutation：
+对frontend mutation（v3/v4语义相同）：
 
 - encode/connect/明确 zero-byte first write failure：`failed_before_send`；
 - 任意 byte可能写出后发生 timeout、EOF、reset、oversize、bad JSON、wrong schema/request ID、contradictory envelope、wrong payload或 DTO decode failure：delivery uncertain；
-- exact v3 error + exact request ID：trusted rejection；
-- exact schema-v1 `unsupported_schema` + exact request ID：trusted incompatible daemon，v3 mutation未被旧 endpoint dispatch；
+- exact requested-schema error + exact request ID：trusted rejection；
+- exact schema-v1 `unsupported_schema` + exact request ID：trusted incompatible daemon，frontend mutation未被旧endpoint dispatch；
 - 永不 automatic resend。
 
 同样的 post-send fault用于 read-only command时是 read/protocol failure，不建立 mutation uncertainty。Transport cancellation对 blocking POSIX I/O执行 shutdown/close；不会留下 MainActor blocking read。
 
-## Frontend schema v3
+## Frontend schemas v4 and v3
 
 ### Read-only commands
 
 | Command | Payload | Meaning |
 | --- | --- | --- |
+| `browser_overview` | none | v4-only atomic browser phase/session/compatibility/coverage/settlement/catalog projection |
 | `status` | none | public daemon projection、global capabilities、mutation authority |
 | `history` | `limit` | bounded redacted durable timeline |
 | `explain` | `incident_id` | exact redacted incident detail and capabilities |
@@ -85,7 +87,7 @@ Transport区分：
 | `protect_incident` | `context`, exact `incident_id` |
 | `unprotect_incident` | `context`, exact `incident_id` |
 
-V3 command enum没有 `arm`、`disarm`、`begin_drain`、install、update或rollback。
+V3不接受`browser_overview`并返回v3-framed typed `invalid_request`；它不会返回v4 payload或silent downgrade。V3/v4 command enum都没有`arm`、`disarm`、`begin_drain`、install、update或rollback。
 
 ## Namespace-aware durable mutation receipts
 
@@ -98,7 +100,7 @@ MutationContext {
 
 `status.mutation_authority`公开 current namespace和 `minimum_reconciliation_window_millis = 1209600000`（14 days）。Token只证明 ordinary receipt absence；不复用或泄露 activation generation、enforcement epoch、daemon instance、database identity/path。
 
-For each new v3 mutation, ControlPlane lifecycle/status gate and store transaction form one serialization boundary:
+For each new frontend mutation, ControlPlane lifecycle/status gate and store transaction form one serialization boundary:
 
 1. lock shared status/policy gate；
 2. `BEGIN IMMEDIATE`；
@@ -134,7 +136,7 @@ The Swift App writes its PendingMutation journal before connect/send. On restart
 
 ## Public status and readiness
 
-V3 `PublicStatus` includes:
+V3/v4 `PublicStatus` includes:
 
 - daemon version, healthy;
 - `readiness = starting | ready | draining | failed | unknown`;
@@ -170,9 +172,19 @@ Cycle-start, actual snapshot observation and cycle-completion times are distinct
 
 Roster is observability, not a queue. Presence does not authorize protect/retry/signal and no manual kill exists.
 
+## Atomic browser product snapshot
+
+V4 `browser_overview` replaces frontend composition of independently timed status/roster/history reads. `ControlPlane` first refreshes durable attention/protection, then captures status and the latest roster while holding the two in-memory locks as one source boundary; it performs no SQLite query under those locks. Projection contains generated/cycle/observation time, freshness, health, effective mode, pause deadline, phase, bounded sessions, typed compatibility and coverage, attention/protection, exact recent settlement and the rule-generated support catalog.
+
+Positive phase requires healthy Ready state, no scan in progress, current roster and equal non-null status/roster observation time. Otherwise phase is `unknown`. Trusted precedence is `attention → reclaiming → confirmed → verifying → active → protected → clear`; Swift and CLI display it but do not recompute it.
+
+Each session carries typed browser product, optional observed bundle version, compatibility decision and optional reason ID produced during deterministic rule analysis. Browser support is generated from the embedded packs with a readable `support_revision`; the App does not ship a second eligibility table.
+
+Recent settlement starts from the exact public reclaim `event_token`, verifies that exact cleanup receipt/outcome, then selects the maximum earlier durable event ID containing an observation for the same incident. Timestamp equality is irrelevant, so multiple same-millisecond events cannot cross-wire the browser family. If any link is absent or contradictory, the settlement field is absent; the frontend does not scan a bounded history page or invent a fallback.
+
 ## Public event identity and outcomes
 
-SQLite v6 assigns every retained event a unique opaque `public_token`. V1 internal event IDs remain unchanged and v3 never exposes them. History uses `event_token`; recent reclaim and attention carry it when they originate from that durable event. Swift action identity adds stable action sequence and receipt namespace where required, so repeated stage/kind and artifact-only rows remain distinct.
+SQLite v6 assigns every retained event a unique opaque `public_token`. V1 internal event IDs remain unchanged and frontend schemas never expose them. History uses `event_token`; recent reclaim and attention carry it when they originate from that durable event. Swift action identity adds stable action sequence and receipt namespace where required, so repeated stage/kind and artifact-only rows remain distinct.
 
 Cleanup projection keeps:
 
@@ -187,7 +199,7 @@ Typed stored outcome, not a reason-string prefix, determines attention/reclaim k
 
 ## Diagnostics and redaction
 
-V3 history/detail/diagnostics may include family/version, member/resource totals, role counts, evidence/gates, typed outcomes, signal stage/signal/disposition summaries, artifact kind/disposition and public event tokens.
+Frontend history/detail/diagnostics may include family/version, member/resource totals, role counts, evidence/gates, typed outcomes, signal stage/signal/disposition summaries, artifact kind/disposition and public event tokens. V4 current-session compatibility adds only typed browser product/version/decision/reason to current in-memory projections; those app-bundle facts are not persisted into history.
 
 They exclude raw/survivor/source PIDs, internal event/attempt IDs, process/member/artifact fingerprints, tracking/session identity, full argv, executable/profile/artifact paths, frozen targets, lifecycle generation/epoch/instance and raw errors.
 
@@ -213,24 +225,25 @@ V1 preserves existing CLI status/history/explain/doctor/pause/resume/retry/prote
 - `disarm`;
 - `begin_drain`.
 
-These commands depend on same-user socket access plus exact managed generation/instance and durable lifecycle gates. “Operator-only” is API ownership, not a separate privileged socket. V3 cannot encode them.
+These commands depend on same-user socket access plus exact managed generation/instance and durable lifecycle gates. “Operator-only” is API ownership, not a separate privileged socket. Frontend schemas cannot encode them.
 
-V1 may expose bounded internal diagnostic identities needed by CLI/service transactions. Ordinary App code must never decode/stringify v1 `DaemonStatus`. The v3 receipt invariant is scoped to App mutations; v1 compatibility behavior remains intentionally separate.
+V1 may expose bounded internal diagnostic identities needed by CLI/service transactions. Ordinary App code must never decode/stringify v1 `DaemonStatus`. The frontend receipt invariant is scoped to v3/v4 mutations; v1 compatibility behavior remains intentionally separate.
 
 ## Version skew and installed boundary
 
-The current generation-12 server accepts schemas 1 and 3. The retained generation-9 rollback target accepts only schema 1 and returns a trusted schema-v1 `unsupported_schema` envelope to a v3 request. The App renders such a legacy endpoint as incompatible and does nothing else.
+Current source accepts schemas 1, 3 and 4. Installed generation 12 accepts schemas 1 and 3; its installed App is correspondingly v3. The source v4 App is not installed and treats that v3-only endpoint as incompatible rather than silently downgrading. The retained generation-9 rollback target accepts only schema 1 and returns a trusted schema-v1 `unsupported_schema` envelope to a frontend request.
 
 Generation 12 migrated the active candidate copy to SQLite v6. Generation 9 supports v5 and cannot reopen a v6 database, so the service retains its prior v5 snapshot and exact generation identity after candidate readiness, blocks mode/install/uninstall mutations during that lease, and exposes explicit report-only restart, accept and rollback commands. The real rollback restored generation 9, whose exact old CLI/daemon opened the v5 store and returned healthy ReadyReportOnly; generation 12 was then reinstalled and passed packaged App/daemon restart reconciliation. The lease remains pending and the lane never arms.
 
 ## Verification anchors
 
-- [`crates/unlinger-protocol/src/lib.rs`](../crates/unlinger-protocol/src/lib.rs): v3 DTOs, commands, receipts, envelopes and active fixture decoders;
+- [`crates/unlinger-protocol/src/lib.rs`](../crates/unlinger-protocol/src/lib.rs): v4 DTOs/commands, v3 compatibility responses, receipts, envelopes and fixture decoders;
 - [`crates/unlinger-daemon/src/store.rs`](../crates/unlinger-daemon/src/store.rs): SQLite v6 migration, event tokens, namespace/receipt/revision transactions;
 - [`crates/unlinger-daemon/src/public_action_policy.rs`](../crates/unlinger-daemon/src/public_action_policy.rs): shared policy matrix;
 - [`crates/unlinger-daemon/tests/history_store.rs`](../crates/unlinger-daemon/tests/history_store.rs): migration, atomicity, namespace, replay and recovery tests;
-- [`crates/unlinger-daemon/tests/ipc_roundtrip.rs`](../crates/unlinger-daemon/tests/ipc_roundtrip.rs): v1/v2/v3 routing, public projection, lifecycle serialization and raw-socket behavior;
-- [`apps/UnlingerApp/Contract/v3`](../apps/UnlingerApp/Contract/v3): active canonical wire/app-state fixtures;
+- [`crates/unlinger-daemon/tests/ipc_roundtrip.rs`](../crates/unlinger-daemon/tests/ipc_roundtrip.rs): v1/v2/v3/v4 routing, atomic browser projection, exact settlement identity, lifecycle serialization and raw-socket behavior;
+- [`apps/UnlingerApp/Contract/v4`](../apps/UnlingerApp/Contract/v4): active atomic browser-product fixtures;
+- [`apps/UnlingerApp/Contract/v3`](../apps/UnlingerApp/Contract/v3): transitional shared-command fixtures;
 - [`apps/UnlingerApp/Tests/UnlingerAppTests`](../apps/UnlingerApp/Tests/UnlingerAppTests): strict decode, phase-aware transport, journal/reconciliation, concurrency/detail/notification/routing behavior.
 
 Changing wire shape, requiredness, limits, error discriminators, readiness/freshness, mutation authority, redaction, socket boundary or installed compatibility requires source tests and this document in the same change.
