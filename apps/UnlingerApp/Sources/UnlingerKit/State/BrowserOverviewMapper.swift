@@ -59,6 +59,15 @@ public enum BrowserOverviewMapper {
         }
     }
 
+    public static func productKey(for product: BrowserProduct) -> String {
+        switch product {
+        case .chromeForTesting: "browser.product.chrome_for_testing"
+        case .chromium: "browser.product.chromium"
+        case .googleChrome: "browser.product.google_chrome"
+        case .other, .unknown: "browser.product.browser"
+        }
+    }
+
     public static func detailPresentation(
         incidentID: String,
         currentSessions: [BrowserSessionPresentation],
@@ -80,6 +89,8 @@ public enum BrowserOverviewMapper {
         return BrowserSessionPresentation(
             incidentID: incidentID,
             familyKey: familyKey(for: latest.family),
+            productKey: latest.browserCompatibility.map { productKey(for: $0.product) },
+            observedVersion: latest.browserCompatibility?.observedVersion,
             state: latest.state,
             stateKey: stateKey(for: latest.state),
             reasonKey: sessionReasonKey(state: latest.state, mode: mode, coverageNotice: nil),
@@ -98,6 +109,8 @@ public enum BrowserOverviewMapper {
         return BrowserSessionPresentation(
             incidentID: session.incidentId,
             familyKey: familyKey(for: session.family),
+            productKey: productKey(for: session.compatibility.product),
+            observedVersion: session.compatibility.observedVersion,
             state: session.state,
             stateKey: stateKey(for: session.state),
             reasonKey: sessionReasonKey(state: session.state, mode: mode, coverageNotice: notice),
@@ -135,7 +148,7 @@ public enum BrowserOverviewMapper {
         }
     }
 
-    private static func coverageNotice(_ reasonID: String) -> BrowserCoverageNotice {
+    static func coverageNotice(_ reasonID: String) -> BrowserCoverageNotice {
         switch reasonID {
         case "protection.browser_version_mixed": .mixedVersions
         case "protection.browser_product_unsupported": .unsupportedProduct
@@ -191,7 +204,7 @@ public enum BrowserOverviewMapper {
         }
     }
 
-    private static func stateKey(for state: IncidentState) -> String {
+    static func stateKey(for state: IncidentState) -> String {
         switch state {
         case .active: "browser.session.active"
         case .cooling: "browser.session.verifying"
@@ -206,7 +219,7 @@ public enum BrowserOverviewMapper {
         }
     }
 
-    private static func sessionReasonKey(
+    static func sessionReasonKey(
         state: IncidentState,
         mode: EffectiveMode?,
         coverageNotice: BrowserCoverageNotice?

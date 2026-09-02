@@ -31,10 +31,54 @@ public enum BrowserProductCopy {
                 Format.bytes(session.residentMemoryBytes)
             )
         ]
+        if let identity = browserIdentity(
+            productKey: session.productKey,
+            observedVersion: session.observedVersion
+        ) {
+            parts.insert(identity, at: 1)
+        }
         if let reasonKey = session.reasonKey { parts.append(L10n.text(reasonKey)) }
         if session.isPreviousObservation {
             parts.append(L10n.text("browser.session.previous_observation"))
         }
+        return parts.joined(separator: " ")
+    }
+
+    public static func browserIdentity(
+        productKey: String?,
+        observedVersion: String?
+    ) -> String? {
+        guard let productKey else { return nil }
+        let product = L10n.text(productKey)
+        guard let observedVersion, !observedVersion.isEmpty else { return product }
+        return L10n.text("browser.product.with_version", product, observedVersion)
+    }
+
+    public static func historyAccessibilityLabel(
+        _ entry: BrowserHistoryEntryPresentation
+    ) -> String {
+        var parts = [
+            L10n.text(entry.familyKey),
+            L10n.text(entry.stateKey)
+        ]
+        if let identity = browserIdentity(
+            productKey: entry.productKey,
+            observedVersion: entry.observedVersion
+        ) {
+            parts.insert(identity, at: 1)
+        }
+        if let reasonKey = entry.reasonKey { parts.append(L10n.text(reasonKey)) }
+        if let memberCount = entry.memberCount,
+           let residentMemoryBytes = entry.residentMemoryBytes
+        {
+            parts.append(L10n.text(
+                "browser.session.metrics",
+                memberCount,
+                Format.bytes(residentMemoryBytes)
+            ))
+        }
+        parts.append(L10n.text("history.event_count", entry.eventCount))
+        parts.append(Format.relativeTime(entry.latestAt))
         return parts.joined(separator: " ")
     }
 

@@ -44,6 +44,8 @@ struct BrowserOverviewMappingTests {
         #expect(overview.coverageNotices == [.unsupportedVersion])
         #expect(overview.sessions.first?.coverageNotice == .unsupportedVersion)
         #expect(overview.sessions.first?.reasonKey == "browser.coverage.unsupported_version")
+        #expect(overview.sessions.first?.productKey == "browser.product.chrome_for_testing")
+        #expect(overview.sessions.first?.observedVersion == "151.0.7922.35")
     }
 
     @Test("unknown typed reason stays generic and never grants a stronger phase")

@@ -14,5 +14,8 @@ struct AppWindowControllerTests {
         }
 
         #expect(controller.isConfiguredForTesting)
+        #expect(AppWindowController.initialContentSize == AppSurfaceLayout.contentSize)
+        #expect(MenuBarPopoverController.contentSize == AppSurfaceLayout.contentSize)
+        #expect(MenuPopover.contentSize == AppSurfaceLayout.contentSize)
     }
 }

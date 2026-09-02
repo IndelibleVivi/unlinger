@@ -6,7 +6,7 @@ import SwiftUI
 /// tree still owns navigation and all product state.
 @MainActor
 public final class AppWindowController: NSWindowController {
-    public static let initialContentSize = NSSize(width: 340, height: 420)
+    public static let initialContentSize = AppSurfaceLayout.contentSize
 
     public init<Content: View>(
         title: String,
@@ -51,4 +51,5 @@ public final class AppWindowController: NSWindowController {
             && window.styleMask.contains(.miniaturizable)
             && !window.isReleasedWhenClosed
     }
+
 }

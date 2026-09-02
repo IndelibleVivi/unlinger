@@ -92,6 +92,7 @@ struct LocalizationTests {
         #expect(englishOverview.contains("Verified"))
         #expect(englishSession.contains("Left untouched"))
         #expect(englishSession.contains("supported"))
+        #expect(englishSession.contains("Chrome for Testing 151.0.7922.35"))
 
         settings.preference = .zhHans
         let chineseOverview = BrowserProductCopy.overviewAccessibilityLabel(overview)
@@ -100,6 +101,7 @@ struct LocalizationTests {
         #expect(chineseOverview.contains("验证"))
         #expect(chineseSession.contains("已安全保留"))
         #expect(chineseSession.contains("支持范围"))
+        #expect(chineseSession.contains("Chrome for Testing 151.0.7922.35"))
     }
 
     private func localizationKeys(bundle: Bundle, localization: String) throws -> Set<String> {

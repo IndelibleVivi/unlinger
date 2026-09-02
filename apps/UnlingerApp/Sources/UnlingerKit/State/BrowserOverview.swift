@@ -44,6 +44,8 @@ public enum BrowserCoverageNotice: Equatable, Hashable, Sendable {
 public struct BrowserSessionPresentation: Equatable, Identifiable, Sendable {
     public var incidentID: String
     public var familyKey: String
+    public var productKey: String?
+    public var observedVersion: String?
     public var state: IncidentState
     public var stateKey: String
     public var reasonKey: String?

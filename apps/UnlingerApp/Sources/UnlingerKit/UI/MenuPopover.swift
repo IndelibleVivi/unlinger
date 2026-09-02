@@ -3,6 +3,8 @@ import SwiftUI
 /// Root of the menu-bar and ordinary-window navigation surface. BrowserHomeView
 /// owns the one canonical product overview used by both AppKit hosts.
 public struct MenuPopover: View {
+    public static let contentSize = AppSurfaceLayout.contentSize
+
     @Environment(AppRouter.self) private var router
     private let allowsWindowPresentation: Bool
 
@@ -40,7 +42,10 @@ public struct MenuPopover: View {
                     .padding(.vertical, 10)
             }
         }
-        .frame(width: 360)
+        .frame(
+            width: Self.contentSize.width,
+            height: Self.contentSize.height
+        )
     }
 
     private var routeControls: some View {

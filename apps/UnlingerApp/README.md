@@ -9,12 +9,13 @@ The App owns no classification, cleanup policy, signal authorization, daemon ins
 - strict schema-v4 status/history/browser-overview/detail/diagnostics DTOs, including exact readiness and observation freshness, with no silent v3 or v1 fallback;
 - one atomic daemon-owned `BrowserOverviewSnapshot` containing the authoritative product phase, current sessions, typed compatibility/coverage, saved protections, recent settlement and a rule-generated support catalog;
 - one pure `BrowserOverviewMapper` that only selects localized copy and display shapes from that snapshot; it does not rescan evidence, join history or recompute product state;
-- a browser-first overview, current-session rows, typed coverage explanations, saved protections, exact recent settlement, history and browser-context detail; the old process-tree status/roster presentation has been retired;
+- a separate `BrowserHistoryMapper` that groups the bounded history index by incident and collapses only consecutive same-family/same-state observation events in detail; cleanup receipts and state changes remain distinct;
+- a browser-first overview, product/version-aware current-session rows, typed coverage explanations, saved protections, exact recent settlement, incident-centric history and readable browser-context detail with named safety checks; the old process-tree status/roster presentation has been retired;
 - capability-gated pause/resume/retry/protect/unprotect with namespace-aware durable receipts;
 - one global unresolved-mutation lock, crash/restart status-only reconciliation, and authority-loss truth;
 - single-flight/coalesced refreshes, polling-session generations, stale snapshot retention, and typed incident-detail failures;
 - bilingual browser copy, matching formatter locale, VoiceOver state/reason/mode/freshness labels, Settings/About and explicit “Quit Unlinger App” semantics—the daemon continues unchanged;
-- a direct AppKit `@main` whose strong process-lifetime delegate owns the status item/popover and reusable ordinary window independently of any SwiftUI scene or window lifetime; the App remains a regular Dock app so the window route is available even when a third-party menu host cannot resolve the status item; both hosts project the same SwiftUI state/router, popover detail has an explicit Back control, and it can open the current route in the window;
+- a direct AppKit `@main` whose strong process-lifetime delegate owns the status item/popover and reusable ordinary window independently of any SwiftUI scene or window lifetime; the App remains a regular Dock app so the window route is available even when a third-party menu host cannot resolve the status item; both hosts project the same SwiftUI state/router and one shared `340 × 420` content size, popover detail has an explicit Back control, and it can open the current route in the window;
 - local notifications with `off`, `attention` (default), and `attention_and_reclaims`; first trusted refresh baselines retained events, suppressed events are still marked seen, and a mode change never replays backlog;
 - duplicate-avoidance notification ledger: durable claim before one schedule attempt, stable request IDs, no sound, foreground quiet, and public-safe click routing through the reusable shared-router window;
 - launch-at-login controls only this menu-bar client via `SMAppService.mainApp`. It never manages the daemon.
@@ -25,7 +26,7 @@ Notification delivery is a best-effort local projection over bounded status/hist
 
 - `Sources/UnlingerKit/IPC` — strict v4 envelope/DTOs and single-attempt cancellable Unix-socket transport;
 - `Sources/UnlingerKit/Persistence` — owner-private `0700` directory / `0600` crash-durable atomic files;
-- `Sources/UnlingerKit/State` — coalesced polling, presentation-only browser mapping, stale-snapshot handling, durable mutation reconciliation;
+- `Sources/UnlingerKit/State` — coalesced polling, separate browser-snapshot and bounded-history presentation mapping, stale-snapshot handling, durable mutation reconciliation;
 - `Sources/UnlingerKit/Notifications` — modes, ledger, coordinator and system scheduler;
 - `Sources/UnlingerKit/Navigation` — shared notification/menu routing;
 - `Sources/UnlingerKit/Settings` — preferences and menu-client login item;

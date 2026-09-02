@@ -21,6 +21,7 @@ Automatic process admission依然极窄：controllerless exact Chrome for Testin
 - schema-v4 `BrowserOverviewSnapshot`是phase、session compatibility、coverage、support catalog、attention/protection与recent settlement的唯一canonical product projection；daemon在一个status+roster snapshot boundary内生成它；
 - daemon先验证`healthy + ready + roster.current + no scan + equal non-null observation time`，不可信或不一致直接给`phase: unknown`；其余phase优先级在server内固定为attention → reclaiming → confirmed → verifying → active → protected → clear；
 - `BrowserOverviewMapper`只负责localized copy与display shape。Popover、ordinary window、detail和preview消费同一组presentation types；Swift不得重扫evidence、重做phase truth table或再次用history join settlement；
+- `BrowserHistoryMapper`是独立的bounded-history presentation path：history index按incident聚合，detail只合并连续且family/state相同的observation；cleanup receipt与state change必须保持独立。它可以用coherent current session补足当前row的product/version与状态，但不得生成compatibility或cleanup authority；
 - transport unavailable、backend incompatible或stale retained snapshot在App层保持unknown，不能映射成all clear；失败后可保留上一份rows供查看，但不得恢复positive phase；
 - current row可以显示该row自身的member count/RSS；v4没有提供global current totals，因此不得加总展示；
 - compatibility是typed `product + observed_version + automatic|observe_only|protected|unknown + optional reason_id`。Coverage copy只接受mixed/product/version/missing version、controller unverified、observation only、debug-peer visibility incomplete；未知ID显示generic copy且不原样展示；
@@ -44,7 +45,7 @@ Schema v4 request遇到exact schema-v1 `unsupported_schema` framing时显示inco
 
 Diagnostics result属于发起view的local state；A view的success不会被B view的failure覆盖。V4 document使用required `document_schema_version: 4`，export是semantic-lossless JSON：保留未知fields但不承诺byte-for-byte layout。
 
-History row使用 public `event_token`；action row使用 event token + mutation namespace + stable sequence。Artifact-only group必须显示。Internal event/attempt/PID/fingerprint不是 Swift identity，也不进入 ordinary UI。
+History index使用redacted incident ID作为一条session row的稳定identity并显示聚合event count；detail timeline继续以最新public `event_token`标识每个保留phase。Action row使用 event token + mutation namespace + stable sequence。Artifact-only group必须显示。Internal event/attempt/PID/fingerprint不是 Swift identity，也不进入 ordinary UI。
 
 ## Notifications and routing
 

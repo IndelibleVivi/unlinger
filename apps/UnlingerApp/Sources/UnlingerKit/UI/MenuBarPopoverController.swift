@@ -6,7 +6,7 @@ import SwiftUI
 /// existing SwiftUI content continues to own presentation and data flow.
 @MainActor
 public final class MenuBarPopoverController: NSObject {
-    public static let contentSize = NSSize(width: 340, height: 420)
+    public static let contentSize = AppSurfaceLayout.contentSize
 
     private let statusItem: NSStatusItem
     private let popover = NSPopover()

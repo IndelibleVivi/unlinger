@@ -31,6 +31,7 @@ public struct IncidentDetailView: View {
             VStack(alignment: .leading, spacing: 12) {
                 switch loadState {
                 case .loaded(let detail, let staleError):
+                    let timeline = BrowserHistoryMapper.timelineEntries(events: detail.events)
                     if let staleError {
                         staleBanner(staleError)
                     }
@@ -50,8 +51,12 @@ public struct IncidentDetailView: View {
                     Text(L10n.text("browser.detail.timeline"))
                         .font(.caption)
                         .foregroundStyle(.tertiary)
-                    ForEach(detail.events) { event in
-                        EventCard(event: event)
+                    Text(L10n.text("browser.detail.timeline.hint"))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    ForEach(timeline) { entry in
+                        EventCard(entry: entry)
                     }
                     Divider()
                     Text(L10n.text("browser.detail.actions"))
@@ -91,6 +96,7 @@ public struct IncidentDetailView: View {
             .padding()
         }
         .scrollIndicators(.never)
+        .navigationTitle(L10n.text("browser.detail.title"))
         .task { await reload() }
         // A mutation confirmed from the shared banner (e.g. explicit retry)
         // also leaves capabilities stale; reload on confirmation.
@@ -259,7 +265,9 @@ private extension MutationReceipt {
 }
 
 struct EventCard: View {
-    let event: HistoryEvent
+    let entry: BrowserTimelineEntryPresentation
+
+    private var event: HistoryEvent { entry.latestEvent }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -267,6 +275,11 @@ struct EventCard: View {
                 Text(OutcomeCopy.label(for: event.state))
                     .font(.subheadline.weight(.medium))
                 Spacer()
+                if entry.eventCount > 1 {
+                    Text(L10n.text("detail.observations_grouped", entry.eventCount))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
                 Text(Format.shortTime(Date(unixMillis: event.occurredAtUnixMillis)))
                     .font(.caption)
                     .foregroundStyle(.tertiary)
@@ -357,25 +370,33 @@ struct GateLedgerView: View {
     let gates: GateLedger
 
     var body: some View {
-        let entries: [(String, Bool)] = [
-            ("same_user", gates.sameUser),
-            ("abandoned", gates.confirmedAbandonment),
-            ("isolated", gates.isolatedSession),
-            ("stable", gates.stableAcrossTwoObservations),
-            ("identity", gates.processIdentityUnchanged),
-            ("provenance", gates.strongAutomationProvenance),
-            ("unprotected", gates.noProtectionRule)
+        let entries = [
+            GateCheckPresentation(copyKey: "detail.gate.same_user", passed: gates.sameUser),
+            GateCheckPresentation(copyKey: "detail.gate.abandoned", passed: gates.confirmedAbandonment),
+            GateCheckPresentation(copyKey: "detail.gate.isolated", passed: gates.isolatedSession),
+            GateCheckPresentation(copyKey: "detail.gate.stable", passed: gates.stableAcrossTwoObservations),
+            GateCheckPresentation(copyKey: "detail.gate.identity", passed: gates.processIdentityUnchanged),
+            GateCheckPresentation(copyKey: "detail.gate.provenance", passed: gates.strongAutomationProvenance),
+            GateCheckPresentation(copyKey: "detail.gate.unprotected", passed: gates.noProtectionRule)
         ]
+        let passedCount = entries.filter(\.passed).count
 
-        if !entries.isEmpty {
-            HStack(spacing: 6) {
-                ForEach(entries, id: \.0) { name, passed in
-                    Image(systemName: passed ? "checkmark.circle" : "xmark.circle")
-                        .foregroundStyle(passed ? Color.secondary : Color.orange)
-                        .help("\(name): \(passed ? L10n.text("detail.gate.passed") : L10n.text("detail.gate.blocked"))")
+        DisclosureGroup(L10n.text("detail.gates.summary", passedCount, entries.count)) {
+            VStack(alignment: .leading, spacing: 5) {
+                ForEach(entries, id: \GateCheckPresentation.id) { entry in
+                    HStack(spacing: 6) {
+                        Image(systemName: entry.passed ? "checkmark.circle" : "xmark.circle")
+                            .foregroundStyle(entry.passed ? Color.secondary : Color.orange)
+                            .accessibilityHidden(true)
+                        Text(L10n.text(entry.copyKey))
+                        Spacer(minLength: 8)
+                        Text(L10n.text(entry.passed ? "detail.gate.passed" : "detail.gate.blocked"))
+                            .foregroundStyle(entry.passed ? Color.secondary : Color.orange)
+                    }
                 }
             }
-            .font(.caption)
+            .padding(.top, 5)
         }
+        .font(.caption)
     }
 }

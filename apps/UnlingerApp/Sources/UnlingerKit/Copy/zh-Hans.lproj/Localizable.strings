@@ -34,6 +34,11 @@
 "browser.family.puppeteer" = "Puppeteer 浏览器";
 "browser.family.chrome_for_testing" = "Chrome for Testing";
 "browser.family.automation" = "浏览器自动化";
+"browser.product.chrome_for_testing" = "Chrome for Testing";
+"browser.product.chromium" = "Chromium";
+"browser.product.google_chrome" = "Google Chrome";
+"browser.product.browser" = "浏览器";
+"browser.product.with_version" = "%@ %@";
 "browser.session.active" = "正常运行";
 "browser.session.verifying" = "正在确认";
 "browser.session.confirmed" = "已确认遗留";
@@ -45,6 +50,7 @@
 "browser.session.failed" = "清理未完成";
 "browser.session.unknown" = "状态未知";
 "browser.session.summary" = "%@ · %lld 个进程 · %@";
+"browser.session.summary.compact" = "%lld 个进程 · %@";
 "browser.session.metrics" = "%lld 个进程，使用 %@。";
 "browser.session.previous_observation" = "来自上一次已完成的观察。";
 "browser.session.reason.protected_generic" = "一个安全条件要求保留这个会话，不采取动作。";
@@ -92,7 +98,10 @@
 
 /* Browser detail */
 "browser.detail.title" = "浏览器会话";
+"browser.detail.current_session" = "当前浏览器会话";
+"browser.detail.recorded_session" = "历史浏览器会话";
 "browser.detail.timeline" = "Unlinger 观察和执行了什么";
+"browser.detail.timeline.hint" = "相同状态的连续观察已合并；清理动作和状态变化仍会单独保留。";
 "browser.detail.actions" = "可用操作";
 
 /* Daemon unavailable (app-local state) */
@@ -116,6 +125,10 @@
 /* History */
 "history.title" = "浏览器历史";
 "history.empty" = "还没有任何记录。";
+"history.description" = "按浏览器会话汇总。点开一项即可查看为什么保留不动，或实际执行了什么清理。";
+"history.session.current" = "当前";
+"history.session.recorded" = "历史";
+"history.event_count" = "%lld 条更新";
 
 /* Navigation */
 "navigation.back" = "返回";
@@ -133,12 +146,21 @@
 
 /* Incident detail */
 "detail.members" = "%lld 个进程，%@";
+"detail.observations_grouped" = "%lld 次观察";
 "detail.roles.controller" = "控制进程";
 "detail.roles.browser_root" = "浏览器主进程";
 "detail.roles.renderer" = "渲染进程";
 "detail.gates" = "安全检查";
+"detail.gates.summary" = "安全检查：%lld / %lld 项通过";
 "detail.gate.passed" = "通过";
 "detail.gate.blocked" = "阻止";
+"detail.gate.same_user" = "属于当前用户";
+"detail.gate.abandoned" = "控制进程已经退出";
+"detail.gate.isolated" = "会话彼此隔离";
+"detail.gate.stable" = "连续观察结果稳定";
+"detail.gate.identity" = "进程身份没有变化";
+"detail.gate.provenance" = "自动化来源证据充分";
+"detail.gate.unprotected" = "没有保护规则阻止清理";
 "detail.evidence" = "证据";
 "detail.resources.reclaimed" = "约释放 %@ 内存";
 "detail.resources.before_after" = "%lld 个进程 / %@ → %lld 个进程 / %@";

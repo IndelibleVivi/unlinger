@@ -67,7 +67,7 @@ private func previewMutationState() -> AppState {
         HistoryView()
     }
     .environment(previewState("browser-recent-settlement"))
-    .frame(width: 360)
+    .frame(width: AppSurfaceLayout.contentSize.width)
 }
 
 #Preview("Incident: protected") {
@@ -78,7 +78,7 @@ private func previewMutationState() -> AppState {
         statusFixture: "status-report-only",
         incidentFixture: "incident-protected"
     )))
-    .frame(width: 360)
+    .frame(width: AppSurfaceLayout.contentSize.width)
 }
 
 #Preview("Mutation delivery uncertain") {

@@ -34,6 +34,11 @@
 "browser.family.puppeteer" = "Puppeteer browser";
 "browser.family.chrome_for_testing" = "Chrome for Testing";
 "browser.family.automation" = "Browser automation";
+"browser.product.chrome_for_testing" = "Chrome for Testing";
+"browser.product.chromium" = "Chromium";
+"browser.product.google_chrome" = "Google Chrome";
+"browser.product.browser" = "Browser";
+"browser.product.with_version" = "%@ %@";
 "browser.session.active" = "Active";
 "browser.session.verifying" = "Verifying";
 "browser.session.confirmed" = "Leftover confirmed";
@@ -45,6 +50,7 @@
 "browser.session.failed" = "Cleanup incomplete";
 "browser.session.unknown" = "Unknown";
 "browser.session.summary" = "%@ · %lld processes · %@";
+"browser.session.summary.compact" = "%lld processes · %@";
 "browser.session.metrics" = "%lld processes using %@.";
 "browser.session.previous_observation" = "From the previous completed observation.";
 "browser.session.reason.protected_generic" = "A safety condition requires this session to remain untouched.";
@@ -92,7 +98,10 @@
 
 /* Browser detail */
 "browser.detail.title" = "Browser session";
+"browser.detail.current_session" = "Current browser session";
+"browser.detail.recorded_session" = "Recorded browser session";
 "browser.detail.timeline" = "What Unlinger observed and did";
+"browser.detail.timeline.hint" = "Repeated observations with the same state are grouped. Cleanup and state changes remain separate.";
 "browser.detail.actions" = "Available actions";
 
 /* Daemon unavailable (app-local state) */
@@ -116,6 +125,10 @@
 /* History */
 "history.title" = "Browser history";
 "history.empty" = "No recorded events yet.";
+"history.description" = "Grouped by browser session. Open one to see why it was left alone or what cleanup occurred.";
+"history.session.current" = "Current";
+"history.session.recorded" = "Recorded";
+"history.event_count" = "%lld updates";
 
 /* Navigation */
 "navigation.back" = "Back";
@@ -133,12 +146,21 @@
 
 /* Incident detail */
 "detail.members" = "%lld processes, %@";
+"detail.observations_grouped" = "%lld observations";
 "detail.roles.controller" = "controller";
 "detail.roles.browser_root" = "browser root";
 "detail.roles.renderer" = "renderer";
 "detail.gates" = "Safety checks";
+"detail.gates.summary" = "Safety checks: %lld of %lld passed";
 "detail.gate.passed" = "Passed";
 "detail.gate.blocked" = "Blocked";
+"detail.gate.same_user" = "Owned by the current user";
+"detail.gate.abandoned" = "Controller is gone";
+"detail.gate.isolated" = "Session is isolated";
+"detail.gate.stable" = "Stable across observations";
+"detail.gate.identity" = "Process identity is unchanged";
+"detail.gate.provenance" = "Automation provenance is strong";
+"detail.gate.unprotected" = "No protection rule applies";
 "detail.evidence" = "Evidence";
 "detail.resources.reclaimed" = "About %@ of memory reclaimed";
 "detail.resources.before_after" = "%lld processes / %@ → %lld processes / %@";
