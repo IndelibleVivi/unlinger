@@ -372,7 +372,7 @@ Reasons:
 - clean separation between shared policy and platform backends;
 - future Linux and Windows support without replacing the core engine.
 
-A native SwiftUI menu-bar app may be added later as a thin client. The UI does not own classification or cleanup policy.
+A native SwiftUI menu-bar and Dock App is the thin human-facing client. It translates schema-v3 truth into browser-session language but does not own classification, cleanup policy, lifecycle, installation, or signal authority.
 
 ### 8.2 Components
 
@@ -390,6 +390,8 @@ unlinger/
 │   └── puppeteer.toml
 ├── fixtures/
 │   └── macos/
+├── apps/
+│   └── UnlingerApp/        native browser-first menu-bar and Dock client
 ├── tests/
 │   ├── integration/
 │   └── chaos/
@@ -520,9 +522,11 @@ unlinger export-diagnostics <incident-id>
 - are any confirmed/ambiguous incidents present;
 - what was reclaimed most recently.
 
-The pre-v0.1 native menu-bar App projects schema-v3 status, the last observation roster with honest freshness, history/detail, diagnostics, ordinary actions, notification preferences, menu-client launch at login, App/daemon versions, and explicit App-only quit semantics. It must not turn the product into a dashboard the user has to watch and owns no daemon lifecycle or signal authority.
+The pre-v0.1 native menu-bar App projects schema-v3 status, the last observation roster with honest freshness, history/detail, diagnostics, ordinary actions, notification preferences, menu-client launch at login, App/daemon versions, and explicit App-only quit semantics. Its first screen answers in browser language: whether supported leftovers are absent, active, being verified, confirmed, being reclaimed, deliberately protected, or need attention; which automation family is involved; whether Unlinger is observe-only or allowed to clean; and what the latest exact settlement proved. It must not turn the product into a dashboard the user has to watch and owns no daemon lifecycle or signal authority.
 
-The roster is observability, not a work queue. A quiet App state requires healthy + ready + no attention + a current roster + no scan/cleanup activity. Starting, draining, failed, unknown, unavailable, incompatible, and stale are never all-clear.
+The roster is observability, not a work queue. A positive current App state requires a live connection, healthy `ready` status, current roster, no replacement scan, and equal non-null status/roster observation timestamps. One mismatch may request one bounded trailing refresh; it never permits a clear or active claim. Durable attention remains visible above stale/update uncertainty. Starting, draining, failed, unknown, unavailable, incompatible, and stale are never all-clear.
+
+The App may infer user-facing coverage copy only from the closed set of typed protection evidence it explicitly understands. Unknown evidence remains generic and is never displayed raw. Current roster rows may show their own process count and resident memory, but schema v3 does not authorize global current process/RSS totals. A recent settlement joins `most_recent_reclaim.event_token` to the exact cleanup event and nearest earlier observation for that incident; missing history yields a conservative fallback rather than an invented browser identity or resource estimate.
 
 ---
 

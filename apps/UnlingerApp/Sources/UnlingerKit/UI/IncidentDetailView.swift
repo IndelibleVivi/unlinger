@@ -34,10 +34,29 @@ public struct IncidentDetailView: View {
                     if let staleError {
                         staleBanner(staleError)
                     }
+                    let overview = state.browserOverview
+                    if let summary = BrowserOverviewMapper.detailPresentation(
+                        incidentID: incidentID,
+                        currentSessions: overview.sessions,
+                        events: detail.events,
+                        mode: state.status?.effectiveMode
+                    ) {
+                        BrowserSessionDetailHeader(session: summary)
+                    } else if let settlement = overview.recentSettlement,
+                              settlement.incidentID == incidentID
+                    {
+                        BrowserSettlementDetailHeader(settlement: settlement)
+                    }
+                    Text(L10n.text("browser.detail.timeline"))
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
                     ForEach(detail.events) { event in
                         EventCard(event: event)
                     }
                     Divider()
+                    Text(L10n.text("browser.detail.actions"))
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
                     actions(detail.capabilities)
                     MutationBanner()
                 case .notFound:

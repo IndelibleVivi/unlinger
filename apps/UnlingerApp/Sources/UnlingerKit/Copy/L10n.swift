@@ -10,6 +10,10 @@ public enum L10n {
     }
 
     public static func text(_ key: String, _ arguments: CVarArg...) -> String {
-        String(format: text(key), locale: .current, arguments: arguments)
+        String(
+            format: text(key),
+            locale: LanguageSettings.shared.locale,
+            arguments: arguments
+        )
     }
 }

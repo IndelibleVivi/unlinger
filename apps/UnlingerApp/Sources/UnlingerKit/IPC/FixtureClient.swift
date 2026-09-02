@@ -177,40 +177,35 @@ extension FixtureClient {
     /// Named demo scenarios (`UNLINGER_FIXTURE=<name>`) pairing a status
     /// fixture with plausible history/incident fixtures so every surface has
     /// something to show. Unknown names fall back to `status-all-clear`.
-    public static func scenario(_ name: String) -> FixtureClient {
+    public static func scenario(_ name: String) -> any UnlingerClient {
         switch name {
-        case "all-clear":
-            FixtureClient(statusFixture: "status-all-clear")
-        case "report-only":
-            FixtureClient(
-                statusFixture: "status-report-only",
-                incidentFixture: "incident-protected",
-                incidentsFixture: "incidents-current"
-            )
+        case "all-clear", "browser-clear":
+            BrowserFixtureClient(scenario: .clear)
+        case "browser-active":
+            BrowserFixtureClient(scenario: .active)
+        case "browser-verifying":
+            BrowserFixtureClient(scenario: .verifying)
+        case "report-only", "browser-confirmed-report-only":
+            BrowserFixtureClient(scenario: .confirmedReportOnly)
+        case "browser-reclaiming":
+            BrowserFixtureClient(scenario: .reclaiming)
+        case "browser-protected-unsupported":
+            BrowserFixtureClient(scenario: .protectedUnsupported)
         case "scanning":
             FixtureClient(statusFixture: "status-scanning")
         case "paused":
             FixtureClient(statusFixture: "status-paused")
-        case "recently-reclaimed":
-            FixtureClient(
-                statusFixture: "status-recently-reclaimed",
-                historyFixture: "history-cleared",
-                incidentFixture: "incident-revived"
-            )
-        case "needs-attention":
-            FixtureClient(
-                statusFixture: "status-needs-attention",
-                historyFixture: "history-cleared-with-residue",
-                incidentFixture: "incident-failed",
-                incidentsFixture: "incidents-current"
-            )
+        case "recently-reclaimed", "browser-recent-settlement":
+            BrowserFixtureClient(scenario: .recentSettlement)
+        case "needs-attention", "browser-attention":
+            BrowserFixtureClient(scenario: .attention)
         case "delivery-uncertain":
             FixtureClient(
                 statusFixture: "status-all-clear",
                 mutationResults: [.deliveryUncertain]
             )
         default:
-            FixtureClient(statusFixture: "status-all-clear")
+            BrowserFixtureClient(scenario: .clear)
         }
     }
 }

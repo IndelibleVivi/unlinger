@@ -1,16 +1,28 @@
 import Foundation
 
+@MainActor
 public enum Format {
     public static func bytes(_ value: UInt64) -> String {
         ByteCountFormatter.string(fromByteCount: Int64(value), countStyle: .memory)
     }
 
     public static func relativeTime(_ date: Date) -> String {
-        date.formatted(.relative(presentation: .named))
+        date.formatted(
+            .relative(presentation: .named)
+                .locale(LanguageSettings.shared.locale)
+        )
     }
 
     public static func shortTime(_ date: Date) -> String {
-        date.formatted(date: .abbreviated, time: .shortened)
+        date.formatted(
+            .dateTime
+                .locale(LanguageSettings.shared.locale)
+                .year()
+                .month(.abbreviated)
+                .day()
+                .hour()
+                .minute()
+        )
     }
 }
 
@@ -62,4 +74,12 @@ public enum OutcomeCopy {
         default: role.wire
         }
     }
+}
+
+extension Date {
+    init(unixMillis: UInt64) {
+        self.init(timeIntervalSince1970: TimeInterval(unixMillis) / 1_000)
+    }
+
+    var unixMillis: UInt64 { UInt64(timeIntervalSince1970 * 1_000) }
 }

@@ -7,10 +7,13 @@ The App owns no classification, cleanup policy, signal authorization, daemon ins
 ## Current behavior
 
 - strict v3 status/history/roster/detail/diagnostics DTOs, including exact readiness and observation freshness;
+- one pure `BrowserOverviewMapper` that turns coherent status + roster + history into browser phases (`clear`, `active`, `verifying`, `confirmed`, `reclaiming`, `protected`, `attention`, or conservative `unknown`) without duplicating backend policy;
+- a browser-first overview, current-session rows, typed coverage explanations, saved protections, exact-token recent settlement, history and browser-context detail; the old process-tree status/roster presentation has been retired;
+- equal non-null status/roster observation timestamps before any positive current claim, with at most one bounded trailing refresh on a coherence mismatch;
 - capability-gated pause/resume/retry/protect/unprotect with namespace-aware durable receipts;
 - one global unresolved-mutation lock, crash/restart status-only reconciliation, and authority-loss truth;
 - single-flight/coalesced refreshes, polling-session generations, stale roster retention, and typed incident-detail failures;
-- bilingual menu, detail, Settings/About and explicit “Quit Unlinger App” semantics—the daemon continues unchanged;
+- bilingual browser copy, matching formatter locale, VoiceOver state/reason/mode/freshness labels, Settings/About and explicit “Quit Unlinger App” semantics—the daemon continues unchanged;
 - a direct AppKit `@main` whose strong process-lifetime delegate owns the status item/popover and reusable ordinary window independently of any SwiftUI scene or window lifetime; the App remains a regular Dock app so the window route is available even when a third-party menu host cannot resolve the status item; both hosts project the same SwiftUI state/router, popover detail has an explicit Back control, and it can open the current route in the window;
 - local notifications with `off`, `attention` (default), and `attention_and_reclaims`; first trusted refresh baselines retained events, suppressed events are still marked seen, and a mode change never replays backlog;
 - duplicate-avoidance notification ledger: durable claim before one schedule attempt, stable request IDs, no sound, foreground quiet, and public-safe click routing through the reusable shared-router window;
@@ -22,11 +25,11 @@ Notification delivery is a best-effort local projection over bounded status/hist
 
 - `Sources/UnlingerKit/IPC` — strict v3 envelope/DTOs and single-attempt cancellable Unix-socket transport;
 - `Sources/UnlingerKit/Persistence` — owner-private `0700` directory / `0600` crash-durable atomic files;
-- `Sources/UnlingerKit/State` — coalesced polling, projection, durable mutation reconciliation;
+- `Sources/UnlingerKit/State` — coalesced polling, canonical browser projection, snapshot coherence, durable mutation reconciliation;
 - `Sources/UnlingerKit/Notifications` — modes, ledger, coordinator and system scheduler;
 - `Sources/UnlingerKit/Navigation` — shared notification/menu routing;
 - `Sources/UnlingerKit/Settings` — preferences and menu-client login item;
-- `Sources/UnlingerKit/UI` — AppKit popover/window hosts plus SwiftUI roster, history, detail, diagnostics and settings surfaces;
+- `Sources/UnlingerKit/UI` — AppKit popover/window hosts plus one shared browser-first SwiftUI home, history, detail, diagnostics and settings surfaces;
 - `Sources/UnlingerKit/Copy` — English and Simplified Chinese copy;
 - `Sources/UnlingerApp` — `@main`, packaged-live versus fixture/debug wiring;
 - `Tests/UnlingerAppTests` — fixture, transport, mutation, concurrency, detail, notification, settings and opt-in live-socket coverage.
@@ -49,8 +52,10 @@ scripts/pre-v0.1-smoke.sh
 
 For manual source-only UI work, `scripts/demo-window.sh` runs an isolated report-only daemon. `UNLINGER_WINDOW=1` presents the ordinary window immediately. The packaged App remains regular and retains its Dock entry alongside the status item; Dock reopen, the popover's explicit window action, and notification routes all show the same reusable AppKit-owned ordinary window without changing daemon state.
 
+Deterministic product-state QA can instead use `UNLINGER_FIXTURE=browser-clear|browser-active|browser-verifying|browser-confirmed-report-only|browser-reclaiming|browser-protected-unsupported|browser-attention|browser-recent-settlement` together with `UNLINGER_WINDOW=1`. These scenarios compose canonical v3 fixtures and never contact or mutate the installed service.
+
 ## Installed boundary
 
-Generation 12 and the ad-hoc-signed App are installed for private report-only dogfood. The service retains generation 9's manifest/plist/v5 database through explicit candidate accept/rollback and provides an exact report-only restart. [`../../docs/INSTALLED_DOGFOOD.md`](../../docs/INSTALLED_DOGFOOD.md) passed, including a real generation-9 rollback/open before generation 12 was installed and the App/daemon restart paths were reconciled.
+Generation 12 and its earlier ad-hoc-signed App payload are installed for private report-only dogfood. This browser-first source candidate is not installed or activated by source validation. The service retains generation 9's manifest/plist/v5 database through explicit candidate accept/rollback and provides an exact report-only restart. [`../../docs/INSTALLED_DOGFOOD.md`](../../docs/INSTALLED_DOGFOOD.md) passed, including a real generation-9 rollback/open before generation 12 was installed and the App/daemon restart paths were reconciled.
 
 The strongest claim is **pre-v0.1 installed report-only candidate**. The lease remains pending; this is not an ambient-enforcement acceptance, a signed distribution candidate or a public release.

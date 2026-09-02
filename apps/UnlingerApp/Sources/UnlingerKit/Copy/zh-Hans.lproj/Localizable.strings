@@ -1,20 +1,103 @@
-/* Status */
-"status.headline.quiet" = "一切如常";
-"status.headline.activity" = "正在检查…";
-"status.headline.attention" = "有需要关注的事项";
-"status.detail.event_source_degraded" = "实时调度信号暂时退化，定时检查仍在继续。";
-"status.detail.storage_degraded" = "历史记录存储报告了问题。";
-"mode.report_only" = "自动清理当前关闭，仅观察和记录。";
-"mode.enforce" = "自动清理已开启。";
-"paused.until" = "自动清理已暂停至 %@。观察和记录仍在继续。";
-"last_scan" = "上次检查 %@";
-"ambiguous.count" = "%lld 个拿不准的候选，原样保留未动";
+/* Browser overview */
+"browser.overview.clear" = "未发现受支持的浏览器遗留";
+"browser.overview.active" = "浏览器自动化正在运行";
+"browser.overview.active.detail" = "已识别的浏览器会话仍处于正常控制中。";
+"browser.overview.verifying" = "一个浏览器会话可能已失去控制";
+"browser.overview.verifying.detail" = "Unlinger 正在等待足够证据，再判断它是否已经成为遗留。";
+"browser.overview.confirmed" = "已确认一个遗留浏览器会话";
+"browser.overview.confirmed.report_only" = "自动清理当前关闭，没有发送任何清理信号。";
+"browser.overview.confirmed.enforce" = "当前安全条件已经通过，但清理尚未完成。";
+"browser.overview.reclaiming" = "正在清理遗留浏览器";
+"browser.overview.reclaiming.detail" = "Unlinger 正在处理这个精确浏览器会话，并会确认它没有再次出现。";
+"browser.overview.protected" = "浏览器会话已安全保留";
+"browser.overview.protected.detail" = "Unlinger 识别出了它们，但当前没有清理权限。";
+"browser.overview.attention" = "一项浏览器清理需要关注";
+"browser.overview.attention.detail" = "在已记录的问题解决前，自动重试会受到限制。";
+"browser.overview.updating" = "正在更新浏览器状态…";
+"browser.overview.updating.detail" = "当前浏览器结果尚未准备完成。";
+"browser.overview.unavailable" = "无法确认浏览器清理状态";
+"browser.overview.unavailable.detail" = "根据现有事实，Unlinger 无法给出当前浏览器结论。";
+"browser.overview.verified_at" = "已于%@验证";
+"browser.overview.last_known_at" = "最近一次完成观察：%@";
+
+/* Browser mode */
+"browser.mode.observe_only" = "仅观察";
+"browser.mode.auto_cleanup" = "自动清理";
+"browser.mode.paused" = "已暂停";
+"browser.mode.unknown" = "模式未知";
+"browser.mode.paused_until" = "自动清理已暂停至 %@，观察仍会继续。";
+
+/* Browser sessions */
+"browser.sessions.title" = "当前浏览器会话";
+"browser.family.playwright" = "Playwright 浏览器";
+"browser.family.agent_browser" = "agent-browser";
+"browser.family.puppeteer" = "Puppeteer 浏览器";
+"browser.family.chrome_for_testing" = "Chrome for Testing";
+"browser.family.automation" = "浏览器自动化";
+"browser.session.active" = "正常运行";
+"browser.session.verifying" = "正在确认";
+"browser.session.confirmed" = "已确认遗留";
+"browser.session.reclaiming" = "正在清理";
+"browser.session.protected" = "已安全保留";
+"browser.session.ambiguous" = "无法确认";
+"browser.session.cleared" = "已清理";
+"browser.session.revived" = "被重新拉起";
+"browser.session.failed" = "清理未完成";
+"browser.session.unknown" = "状态未知";
+"browser.session.summary" = "%@ · %lld 个进程 · %@";
+"browser.session.metrics" = "%lld 个进程，使用 %@。";
+"browser.session.previous_observation" = "来自上一次已完成的观察。";
+"browser.session.reason.protected_generic" = "一个安全条件要求保留这个会话，不采取动作。";
+"browser.session.reason.ambiguous_generic" = "目前没有足够证据安全地判断这个会话。";
+"browser.session.reason.confirmed_report_only" = "已经确认遗留，但仅观察模式不会清理它。";
+"browser.session.reason.failed" = "这次清理没有得到终态成功结果。";
+"browser.session.reason.revived" = "这个浏览器会话在清理后被重新拉起。";
+"browser.session.reason.unknown" = "当前 App 无法识别服务报告的状态。";
+
+/* Browser coverage */
+"browser.coverage.title" = "浏览器支持范围";
+"browser.coverage.unsupported_product" = "这个浏览器产品不在当前自动清理范围内，已保留不动。";
+"browser.coverage.unsupported_version" = "这个浏览器版本尚未进入自动清理支持范围，已保留不动。";
+"browser.coverage.version_unavailable" = "无法确认浏览器版本，因此保留这个会话不动。";
+"browser.coverage.mixed_versions" = "这个会话包含不一致的浏览器版本，已保留不动。";
+"browser.coverage.controller_unverified" = "无法验证控制进程的支持状态，因此保留这个会话不动。";
+"browser.coverage.observation_only" = "当前只能观察这个会话，不会自动清理。";
+"browser.coverage.control_path_incomplete" = "无法完整确认调试控制关系，因此保留这个会话不动。";
+
+/* Recent browser settlement */
+"browser.settlement.title" = "最近一次浏览器处理";
+"browser.settlement.cleared" = "最近清理了一个遗留浏览器会话。";
+"browser.settlement.residue" = "浏览器进程已清理；一个低风险运行端点被保留。";
+"browser.settlement.revived" = "一个浏览器会话在清理后被重新拉起。";
+"browser.settlement.failed" = "一次浏览器清理没有完成。";
+"browser.settlement.unknown" = "最近有浏览器清理活动。";
+"browser.settlement.cleared.family" = "清理了一个 %@ 会话。";
+"browser.settlement.residue.family" = "%@ 进程已清理；一个低风险运行端点被保留。";
+"browser.settlement.revived.family" = "一个 %@ 会话在清理后被重新拉起。";
+"browser.settlement.failed.family" = "一次 %@ 清理没有完成。";
+"browser.settlement.process_count" = "这次处理涉及 %lld 个浏览器进程。";
+"browser.settlement.memory" = "约释放 %@ 内存。";
+"browser.settlement.revival_checks" = "完成 %lld 次复活检查。";
+"browser.settlement.artifact_reconciled" = "一个遗留运行端点已处理。";
+"browser.settlement.artifact_residue" = "一个低风险运行端点被保留。";
+"browser.settlement.artifact_unknown" = "无法确认运行端点的处理结果。";
+
+/* Saved browser protections */
+"browser.protections.title" = "%lld 个已保存的浏览器保护";
+"browser.protections.item" = "%@起受保护";
+
+/* Browser history */
+"browser.history.title" = "浏览器历史";
+"browser.history.hint" = "查看 Unlinger 观察到了什么，以及每个浏览器会话最终如何处理。";
+
+/* Browser detail */
+"browser.detail.title" = "浏览器会话";
+"browser.detail.timeline" = "Unlinger 观察和执行了什么";
+"browser.detail.actions" = "可用操作";
 
 /* Daemon unavailable (app-local state) */
-"unavailable.title" = "连不上后台服务";
 "unavailable.body" = "Unlinger 以后台服务形式在本机运行。服务可能未安装或未在运行——当前没有在进行任何观察。";
 "unavailable.retry" = "重试";
-"incompatible.title" = "后台服务版本过旧";
 "incompatible.body" = "App 正在运行，但该服务不支持当前协议。这里无法推断自动清理状态；请通过 operator CLI 更新 backend。";
 
 /* Attention items */
@@ -24,42 +107,15 @@
 "attention.residue" = "进程已处理完毕；一个低风险残留被保留。";
 "attention.failed.delivery_unknown" = "一次清理的结果无法确认，自动重试已被阻止。";
 "attention.failed.generic" = "一次清理没有完成，不会自动重试。";
-"attention.revived" = "一棵已清理的进程树被它的监管进程重新拉起。";
+"attention.revived" = "一个已清理的浏览器会话被监管进程重新拉起。";
 "attention.event_source" = "实时调度信号暂时退化，定时检查仍在继续。";
 "attention.storage_recovered" = "历史记录存储已从问题中恢复。";
 "attention.generic" = "有一个事项需要关注。";
 "attention.more" = "还有 %lld 项";
 
-/* Recent reclaim */
-"reclaim.cleared" = "回收了一棵被遗弃的进程树。";
-"reclaim.cleared_with_residue" = "进程树已回收；一个低风险残留被保留。";
-"reclaim.revived" = "一棵已回收的进程树被重新拉起。";
-"reclaim.failed" = "一次回收没有完成。";
-"reclaim.generic" = "最近有回收活动。";
-"reclaim.section" = "最近一次回收";
-
-/* Current roster (read-only) */
-"roster.title" = "正在观察";
-"roster.item.unknown" = "未命名进程树";
-"roster.state.confirmed" = "已确认遗弃";
-"roster.state.ambiguous" = "拿不准";
-"roster.hint" = "只读列表——这些只是正在观察的对象。";
-"roster.latest_observation" = "最近一次已完成的观察";
-"roster.freshness.current" = "内容对应上方这次已完成观察。";
-"roster.freshness.scan_in_progress" = "新一轮检查正在进行；当前显示上次完成的结果。";
-"roster.freshness.stale_after_failure" = "保留自上次成功检查；当前状态未能刷新。";
-"roster.freshness.never_observed" = "还没有完成过观察。";
-"roster.freshness.unknown" = "无法确认观察结果的新鲜度。";
-
-/* Protections */
-"protection.count" = "%lld 个被保护——有意保留不动";
-"protection.item" = "%@起受保护";
-
 /* History */
-"history.title" = "历史记录";
-"history.hint" = "Unlinger 看到和做过的，都记录在这里。";
+"history.title" = "浏览器历史";
 "history.empty" = "还没有任何记录。";
-"history.section" = "最近事件";
 
 /* Navigation */
 "navigation.back" = "返回";
@@ -76,7 +132,6 @@
 "outcome.observing" = "观察中";
 
 /* Incident detail */
-"detail.timeline" = "时间线";
 "detail.members" = "%lld 个进程，%@";
 "detail.roles.controller" = "控制进程";
 "detail.roles.browser_root" = "浏览器主进程";
@@ -157,12 +212,12 @@
 
 /* Local notifications */
 "notification.title.attention" = "Unlinger 有事项需要关注";
-"notification.title.reclaim" = "Unlinger 回收了一棵进程树";
+"notification.title.reclaim" = "Unlinger 清理了一个浏览器会话";
 "notification.cleanup_failed" = "一次清理没有完成，也不会自动重试。";
 "notification.cleanup_delivery_unknown" = "一次清理的送达结果无法确认；自动重试已被阻止。";
-"notification.cleanup_revived" = "一棵已清理的进程树被监管进程重新拉起。";
+"notification.cleanup_revived" = "一个已清理的浏览器会话被监管进程重新拉起。";
 "notification.cleared_with_residue" = "进程已清理；一个低风险残留被保留。";
-"notification.reclaimed" = "一棵被遗弃的进程树已回收。";
+"notification.reclaimed" = "一个遗留浏览器会话已清理，并完成复活检查。";
 "notification.storage_recovered" = "本地历史存储已从问题中恢复。";
 "notification.daemon_failed" = "后台服务报告了一个 fail-closed 问题。";
 "notification.event_source_degraded" = "实时调度信号暂时退化；定时检查仍在继续。";

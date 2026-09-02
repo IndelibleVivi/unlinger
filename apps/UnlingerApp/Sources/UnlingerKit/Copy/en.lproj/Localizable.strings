@@ -1,20 +1,103 @@
-/* Status */
-"status.headline.quiet" = "Nothing needs attention";
-"status.headline.activity" = "Checking…";
-"status.headline.attention" = "Something needs attention";
-"status.detail.event_source_degraded" = "Live scheduling hints are degraded; periodic checks continue.";
-"status.detail.storage_degraded" = "History storage reported a problem.";
-"mode.report_only" = "Automatic cleanup is off. Unlinger only watches and records.";
-"mode.enforce" = "Automatic cleanup is on.";
-"paused.until" = "Automatic cleanup is paused until %@. Watching continues.";
-"last_scan" = "Last check %@";
-"ambiguous.count" = "%lld borderline candidate(s) left untouched";
+/* Browser overview */
+"browser.overview.clear" = "No supported browser leftovers found";
+"browser.overview.active" = "Browser automation is running";
+"browser.overview.active.detail" = "Recognized browser sessions are still under active control.";
+"browser.overview.verifying" = "A browser session may have lost control";
+"browser.overview.verifying.detail" = "Unlinger is waiting for enough evidence before deciding whether it is leftover.";
+"browser.overview.confirmed" = "A leftover browser session is confirmed";
+"browser.overview.confirmed.report_only" = "Automatic cleanup is off. No cleanup signal was sent.";
+"browser.overview.confirmed.enforce" = "All current safety conditions passed. Cleanup has not completed yet.";
+"browser.overview.reclaiming" = "Cleaning a leftover browser session";
+"browser.overview.reclaiming.detail" = "Unlinger is settling the exact browser session and will verify that it stays gone.";
+"browser.overview.protected" = "Browser sessions were left untouched";
+"browser.overview.protected.detail" = "Unlinger recognized them but did not have authority to clean them.";
+"browser.overview.attention" = "A browser cleanup needs attention";
+"browser.overview.attention.detail" = "Automatic retry is limited until the recorded condition is resolved.";
+"browser.overview.updating" = "Updating browser status…";
+"browser.overview.updating.detail" = "A current browser result is not ready yet.";
+"browser.overview.unavailable" = "Browser cleanup status unavailable";
+"browser.overview.unavailable.detail" = "Unlinger cannot make a current browser claim from the available facts.";
+"browser.overview.verified_at" = "Verified %@";
+"browser.overview.last_known_at" = "Last completed observation %@";
+
+/* Browser mode */
+"browser.mode.observe_only" = "Observe only";
+"browser.mode.auto_cleanup" = "Auto cleanup";
+"browser.mode.paused" = "Paused";
+"browser.mode.unknown" = "Mode unknown";
+"browser.mode.paused_until" = "Automatic cleanup is paused until %@. Observation continues.";
+
+/* Browser sessions */
+"browser.sessions.title" = "Current browser sessions";
+"browser.family.playwright" = "Playwright browser";
+"browser.family.agent_browser" = "agent-browser";
+"browser.family.puppeteer" = "Puppeteer browser";
+"browser.family.chrome_for_testing" = "Chrome for Testing";
+"browser.family.automation" = "Browser automation";
+"browser.session.active" = "Active";
+"browser.session.verifying" = "Verifying";
+"browser.session.confirmed" = "Leftover confirmed";
+"browser.session.reclaiming" = "Cleaning";
+"browser.session.protected" = "Left untouched";
+"browser.session.ambiguous" = "Could not verify";
+"browser.session.cleared" = "Cleared";
+"browser.session.revived" = "Restarted";
+"browser.session.failed" = "Cleanup incomplete";
+"browser.session.unknown" = "Unknown";
+"browser.session.summary" = "%@ · %lld processes · %@";
+"browser.session.metrics" = "%lld processes using %@.";
+"browser.session.previous_observation" = "From the previous completed observation.";
+"browser.session.reason.protected_generic" = "A safety condition requires this session to remain untouched.";
+"browser.session.reason.ambiguous_generic" = "There is not enough evidence to classify this session safely.";
+"browser.session.reason.confirmed_report_only" = "Confirmed, but observe-only mode cannot clean it.";
+"browser.session.reason.failed" = "Cleanup did not reach a terminal success result.";
+"browser.session.reason.revived" = "The browser session restarted after cleanup.";
+"browser.session.reason.unknown" = "This App does not recognize the reported state.";
+
+/* Browser coverage */
+"browser.coverage.title" = "Browser coverage";
+"browser.coverage.unsupported_product" = "This browser product is outside the current automatic-cleanup scope and was left untouched.";
+"browser.coverage.unsupported_version" = "This browser version is not yet supported for automatic cleanup and was left untouched.";
+"browser.coverage.version_unavailable" = "The browser version could not be verified, so the session was left untouched.";
+"browser.coverage.mixed_versions" = "This session contains inconsistent browser versions and was left untouched.";
+"browser.coverage.controller_unverified" = "Controller support could not be verified, so the session was left untouched.";
+"browser.coverage.observation_only" = "This session can currently be observed but not cleaned automatically.";
+"browser.coverage.control_path_incomplete" = "Debugging-control visibility was incomplete, so the session was left untouched.";
+
+/* Recent browser settlement */
+"browser.settlement.title" = "Recent browser settlement";
+"browser.settlement.cleared" = "Recently cleaned up a leftover browser session.";
+"browser.settlement.residue" = "Browser processes were cleared; a low-risk runtime endpoint was left in place.";
+"browser.settlement.revived" = "A browser session restarted after cleanup.";
+"browser.settlement.failed" = "A browser cleanup did not finish.";
+"browser.settlement.unknown" = "Recent browser cleanup activity.";
+"browser.settlement.cleared.family" = "Cleaned up a %@ session.";
+"browser.settlement.residue.family" = "Cleared the %@ processes; a low-risk runtime endpoint was left in place.";
+"browser.settlement.revived.family" = "A %@ session restarted after cleanup.";
+"browser.settlement.failed.family" = "A %@ cleanup did not finish.";
+"browser.settlement.process_count" = "%lld browser processes were part of the settled session.";
+"browser.settlement.memory" = "About %@ of memory was reclaimed.";
+"browser.settlement.revival_checks" = "Completed %lld revival checks.";
+"browser.settlement.artifact_reconciled" = "One leftover runtime endpoint was reconciled.";
+"browser.settlement.artifact_residue" = "One low-risk runtime endpoint was kept.";
+"browser.settlement.artifact_unknown" = "The runtime-endpoint result could not be confirmed.";
+
+/* Saved browser protections */
+"browser.protections.title" = "Saved browser protections: %lld";
+"browser.protections.item" = "Protected %@";
+
+/* Browser history */
+"browser.history.title" = "Browser history";
+"browser.history.hint" = "See what Unlinger observed and how each browser session settled.";
+
+/* Browser detail */
+"browser.detail.title" = "Browser session";
+"browser.detail.timeline" = "What Unlinger observed and did";
+"browser.detail.actions" = "Available actions";
 
 /* Daemon unavailable (app-local state) */
-"unavailable.title" = "Can't reach the background service";
 "unavailable.body" = "Unlinger runs as a local background service. It may not be installed or running — nothing is being observed right now.";
 "unavailable.retry" = "Try again";
-"incompatible.title" = "The background service is too old";
 "incompatible.body" = "The App is running, but this service does not support its protocol. Automatic cleanup state cannot be inferred here; update the backend with the operator CLI.";
 
 /* Attention items */
@@ -24,42 +107,15 @@
 "attention.residue" = "Processes were cleared; one low-risk leftover was kept.";
 "attention.failed.delivery_unknown" = "A cleanup result couldn't be confirmed, so automatic retry is blocked.";
 "attention.failed.generic" = "A cleanup didn't finish. It won't be retried automatically.";
-"attention.revived" = "A cleaned-up process tree was restarted by its supervisor.";
+"attention.revived" = "A cleaned browser session was restarted by its supervisor.";
 "attention.event_source" = "Live scheduling hints are degraded; periodic checks continue.";
 "attention.storage_recovered" = "History storage recovered from a problem.";
 "attention.generic" = "An item needs attention.";
 "attention.more" = "%lld more";
 
-/* Recent reclaim */
-"reclaim.cleared" = "Reclaimed an abandoned process tree.";
-"reclaim.cleared_with_residue" = "Reclaimed a process tree; a low-risk leftover was kept.";
-"reclaim.revived" = "A reclaimed tree was restarted.";
-"reclaim.failed" = "A reclaim didn't finish.";
-"reclaim.generic" = "Recent reclaim activity.";
-"reclaim.section" = "Most recent reclaim";
-
-/* Current roster (read-only) */
-"roster.title" = "Watching right now";
-"roster.item.unknown" = "Unnamed process tree";
-"roster.state.confirmed" = "Confirmed abandoned";
-"roster.state.ambiguous" = "Borderline";
-"roster.hint" = "Read-only — these are just being watched.";
-"roster.latest_observation" = "Latest completed observation";
-"roster.freshness.current" = "Current as of the completed observation above.";
-"roster.freshness.scan_in_progress" = "A new check is in progress; these are the last completed results.";
-"roster.freshness.stale_after_failure" = "Kept from the last successful check; current state could not be refreshed.";
-"roster.freshness.never_observed" = "No completed observation yet.";
-"roster.freshness.unknown" = "Observation freshness is unknown.";
-
-/* Protections */
-"protection.count" = "%lld protected — left alone on purpose";
-"protection.item" = "Protected %@";
-
 /* History */
-"history.title" = "History";
-"history.hint" = "Everything Unlinger has seen and done is recorded here.";
+"history.title" = "Browser history";
 "history.empty" = "No recorded events yet.";
-"history.section" = "Recent events";
 
 /* Navigation */
 "navigation.back" = "Back";
@@ -76,7 +132,6 @@
 "outcome.observing" = "Observing";
 
 /* Incident detail */
-"detail.timeline" = "Timeline";
 "detail.members" = "%lld processes, %@";
 "detail.roles.controller" = "controller";
 "detail.roles.browser_root" = "browser root";
@@ -157,12 +212,12 @@
 
 /* Local notifications */
 "notification.title.attention" = "Unlinger needs attention";
-"notification.title.reclaim" = "Unlinger reclaimed a process tree";
+"notification.title.reclaim" = "Unlinger cleaned up a browser session";
 "notification.cleanup_failed" = "A cleanup did not finish and will not be retried automatically.";
 "notification.cleanup_delivery_unknown" = "A cleanup delivery result could not be confirmed; automatic retry is blocked.";
-"notification.cleanup_revived" = "A cleaned process tree was restarted by its supervisor.";
+"notification.cleanup_revived" = "A cleaned browser session was restarted by its supervisor.";
 "notification.cleared_with_residue" = "Processes were cleared; one low-risk leftover was kept.";
-"notification.reclaimed" = "An abandoned process tree was reclaimed.";
+"notification.reclaimed" = "A leftover browser session was cleaned up and checked for revival.";
 "notification.storage_recovered" = "Local history storage recovered from a problem.";
 "notification.daemon_failed" = "The background service reported a fail-closed problem.";
 "notification.event_source_degraded" = "Live scheduling hints are degraded; periodic checks continue.";

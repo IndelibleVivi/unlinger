@@ -18,12 +18,17 @@ Automatic admission依然极窄：controllerless exact Chrome for Testing `151.0
 
 ## State mapping
 
-- Quiet 仅当 `healthy + readiness.ready + no attention + roster.current + no scan/cleanup activity`；
+- `BrowserOverviewMapper` 是唯一 canonical product projection；popover、ordinary window、detail和preview都消费同一组 browser presentation types，UI view不得各自重建 product state；
+- positive current claim 仅当 `connection.live + healthy + readiness.ready + roster.current + no replacement scan + status.latest_observation_at == roster.observed_at`，两个时间都必须存在；timestamp mismatch最多请求一次 bounded trailing refresh，仍然映射为 unknown；
 - `starting`、`draining`、`failed`、unknown、transport unavailable、backend incompatible与 stale roster都不能映射成 all clear；
 - replacement scan进行中保留上一份 roster并标 scanning；失败后保留并标 stale；never-observed不制造 timestamp；
+- durable attention优先于 stale/updating uncertainty；其余 phase优先级为 reclaiming → failed/revived attention → unknown → confirmed → verifying → active → protected → clear；
+- current row可以显示该 row 自身的 member count/RSS；schema v3没有提供 global current totals，因此不得加总展示；
+- coverage copy只接受七个 exact evidence IDs：mixed/product/version/missing version、controller unverified、observation only、debug-peer visibility incomplete。未知 ID 不进入 presentation model，也不原样显示；
+- recent settlement用 status `most_recent_reclaim.event_token` exact join cleanup event，再取同 incident更早且最近的 observation；找不到 event时只显示 conservative fallback，不猜 family/process/memory/artifact facts；
 - `cleared_with_residue` 必须同时表达 process success与 artifact residue，不写成 process cleanup failed；
 - ambiguous count、CPU、RSS、age、pressure或 protected incident只提供低调信息，不产生 action或 notification authority；
-- incident detail只有 trusted `not_found`显示不存在。Transport/store/protocol failure保留旧 detail并标 stale；旧 request结果不得覆盖新 request。
+- incident detail优先复用 coherent current session，否则使用 retained detail里的最新 observation；若 detail没有 observation但 exact-token settlement join成立，则用该 settlement继续显示 browser family和已有 typed facts，缺失 estimate保持不显示。只有 trusted `not_found`显示不存在。Transport/store/protocol failure保留旧 detail并标 stale；旧 request结果不得覆盖新 request。
 
 Copy保持安静、直接、non-antivirus。未知 enum/reason显示 generic、保守 copy；绝不把未知值扩大成 success、eligibility、action或 notification authority。
 

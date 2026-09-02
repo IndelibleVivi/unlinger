@@ -5,23 +5,10 @@ import SwiftUI
 
 @MainActor
 private func previewState(
-    _ statusFixture: String,
-    historyFixture: String? = nil,
-    incidentFixture: String? = nil,
-    incidentsFixture: String? = nil,
-    mutation: Mutation? = nil
+    _ scenario: String
 ) -> AppState {
-    let state = AppState(client: FixtureClient(
-        statusFixture: statusFixture,
-        historyFixture: historyFixture,
-        incidentFixture: incidentFixture,
-        incidentsFixture: incidentsFixture,
-        mutationResults: mutation == nil ? [] : [.deliveryUncertain]
-    ))
+    let state = AppState(client: FixtureClient.scenario(scenario))
     state.startPolling()
-    if let mutation {
-        Task { await state.perform(mutation) }
-    }
     return state
 }
 
@@ -33,41 +20,54 @@ private func previewRoot(_ state: AppState) -> some View {
         .environment(AppSettings())
 }
 
-#Preview("All clear (report-only)") {
-    previewRoot(previewState("status-all-clear"))
+@MainActor
+private func previewMutationState() -> AppState {
+    let state = AppState(client: FixtureClient.scenario("delivery-uncertain"))
+    state.startPolling()
+    Task {
+        await state.perform(.pause(durationMillis: 7_200_000, label: "2h"))
+    }
+    return state
 }
 
-#Preview("Needs attention") {
-    previewRoot(previewState(
-            "status-needs-attention",
-            historyFixture: "history-cleared-with-residue",
-            incidentFixture: "incident-failed",
-            incidentsFixture: "incidents-current"
-        ))
+#Preview("Browser: clear") {
+    previewRoot(previewState("browser-clear"))
 }
 
-#Preview("Current roster") {
-    previewRoot(previewState(
-            "status-report-only",
-            incidentFixture: "incident-protected",
-            incidentsFixture: "incidents-current"
-        ))
+#Preview("Browser: active") {
+    previewRoot(previewState("browser-active"))
 }
 
-#Preview("Paused") {
-    previewRoot(previewState("status-paused"))
+#Preview("Browser: verifying") {
+    previewRoot(previewState("browser-verifying"))
 }
 
-#Preview("Recently reclaimed") {
-    previewRoot(previewState("status-recently-reclaimed", historyFixture: "history-cleared"))
+#Preview("Browser: confirmed (report-only)") {
+    previewRoot(previewState("browser-confirmed-report-only"))
+}
+
+#Preview("Browser: reclaiming") {
+    previewRoot(previewState("browser-reclaiming"))
+}
+
+#Preview("Browser: protected unsupported") {
+    previewRoot(previewState("browser-protected-unsupported"))
+}
+
+#Preview("Browser: attention") {
+    previewRoot(previewState("browser-attention"))
+}
+
+#Preview("Browser: recent settlement") {
+    previewRoot(previewState("browser-recent-settlement"))
 }
 
 #Preview("History") {
     NavigationStack {
         HistoryView()
     }
-    .environment(previewState("status-recently-reclaimed", historyFixture: "history-cleared"))
-    .frame(width: 340)
+    .environment(previewState("browser-recent-settlement"))
+    .frame(width: 360)
 }
 
 #Preview("Incident: protected") {
@@ -78,12 +78,9 @@ private func previewRoot(_ state: AppState) -> some View {
         statusFixture: "status-report-only",
         incidentFixture: "incident-protected"
     )))
-    .frame(width: 340)
+    .frame(width: 360)
 }
 
 #Preview("Mutation delivery uncertain") {
-    previewRoot(previewState(
-            "status-all-clear",
-            mutation: .pause(durationMillis: 7_200_000, label: "2h")
-        ))
+    previewRoot(previewMutationState())
 }

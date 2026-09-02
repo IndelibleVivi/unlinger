@@ -1,16 +1,16 @@
 # Current state
 
-**Updated:** 2026-09-01
+**Updated:** 2026-09-02
 
 **Programme:** Unlinger 0.1
 
-**Source:** private pre-v0.1 schema-v3 candidate; direct-AppKit Dock fallback and source-volume-independent packaging verified
+**Source:** private pre-v0.1 schema-v3 candidate; BGX-1 browser-first App projection, direct-AppKit hosts and source-volume-independent packaging verified locally
 
-**Remote:** Dock/package-hardening implementation head `0cc3beb85d4b757bcee58c5556ece38897202aca` is on private origin `main`; exact-head `backend` run `33520850444` is green. This current-state reconciliation follows as documentation-only truth.
+**Remote:** private origin `main` still points at the pre-BGX-1 source line while this local browser-first candidate awaits commit, push and exact-head CI.
 
 **Installed runtime:** generation 12, schema-v3/v6 capable, healthy at a stable report-only floor; acceptance lease retains generation 9/v5
 
-**Activation:** unarmed; generation 12 and the packaged App are active for private report-only dogfood
+**Activation:** unarmed; generation 12 and its earlier packaged App payload remain active for private report-only dogfood. The BGX-1 source candidate is not installed or activated.
 
 **Highest claim currently permitted:** **pre-v0.1 installed report-only candidate** (acceptance level 3)
 
@@ -28,10 +28,14 @@ The native App under `apps/UnlingerApp` now has:
 - phase-aware, single-attempt, cancellable socket I/O;
 - an owner-private crash-durable pending-mutation journal written before connect/send;
 - one global unresolved mutation lock and startup/status-only reconciliation without resend;
+- one pure `BrowserOverviewMapper` that derives browser-product state from status + roster + history, with no second UI policy path;
+- exact positive-state coherence across live connection, healthy/ready status, current roster, no replacement scan and equal non-null observation timestamps; a mismatch gets at most one trailing refresh and remains unknown;
+- browser-first overview phases, family/session rows, closed-set coverage explanations, saved protections and exact-token recent settlement joins, without raw evidence IDs or unsupported global process/RSS totals;
+- browser-context detail from a coherent current row, retained observation or exact joined settlement, while absent estimates remain absent;
 - coalesced refresh generations, polling-session isolation, stale roster retention and typed incident-detail failures;
 - local-view diagnostics results with required `document_schema_version` and semantic-lossless JSON export;
 - stable event/action identity, including artifact-only action groups;
-- bilingual Settings/About/Quit surfaces, shared notification routing and menu-client-only `SMAppService.mainApp` launch at login;
+- bilingual browser copy and VoiceOver labels with language-matched value formatting, plus Settings/About/Quit surfaces, shared notification routing and menu-client-only `SMAppService.mainApp` launch at login;
 - a direct AppKit `@main` that strongly retains the single delegate for the blocking App run loop, with AppKit-owned `NSStatusItem`/`NSPopover` and reusable ordinary-window lifecycles around one shared SwiftUI state/router; the packaged App remains a regular foreground/Dock app, closing the last ordinary window does not terminate it, and Dock reopen plus popover detail retain explicit window/Back/current-route controls;
 - a release bundler that builds in an internal temporary SwiftPM scratch path, removes removable-volume toolchain rpaths, and rejects packaged executables that retain removable-volume resource fallbacks or loader paths;
 - bounded local notifications: `off`, default `attention`, or `attention_and_reclaims`; first trusted refresh baselines retained tokens, suppressed events remain seen, and durable claim precedes one schedule attempt.
@@ -44,7 +48,7 @@ The service source extends its durable install transaction through `CandidateRea
 
 ## Installed evidence
 
-Generation 12 from the previously verified source head remains the active installed candidate; the newer rollback-hardening source is not installed. The daemon exposes frontend schema v3 over the owner-private socket, uses SQLite v6, is healthy and quiescent ReadyReportOnly, has no armed generation or enforcement epoch, and retains `candidate_ready_report_only` rollback authority to generation 9. The current lease reports the prior generation and SQLite backup present with `rollback_available: true`; it has not been accepted. No daemon lifecycle or mode mutation occurred during this follow-up.
+Generation 12 from the previously verified source head remains the active installed candidate; this newer browser-first App source is not installed. The last verified daemon state exposes frontend schema v3 over the owner-private socket, uses SQLite v6, is healthy and quiescent ReadyReportOnly, has no armed generation or enforcement epoch, and retains `candidate_ready_report_only` rollback authority to generation 9. The last verified lease reports the prior generation and SQLite backup present with `rollback_available: true`; it has not been accepted. No daemon lifecycle or mode mutation occurred during this source-only work.
 
 The rollback lease was exercised rather than inspected. Generation 10 migrated the active copy to v6, passed installed v3 reads/mutations and daemon restart, then `rollback-candidate` restored generation 9 and the SQLite-v5 snapshot. The exact generation-9 CLI/daemon reopened that database and returned healthy, quiescent ReadyReportOnly with exact PID/generation/binary/permission agreement. Candidate v6 database state was preserved separately as failed-generation evidence.
 
@@ -66,17 +70,16 @@ Historical generation-9 evidence proves one owner-approved managed full-timing P
 
 ## Verification truth
 
-The level-2 source gate passed on 2026-09-01:
+The current browser-first level-2 source gate passed on 2026-09-02:
 
 - `cargo fmt --all -- --check`, strict workspace clippy and the release workspace build passed;
 - `cargo test --workspace` passed 276 tests; the two owner-only live CfT tests remained ignored;
-- source-only doctor inspected 452/452 listed processes with zero unreadable, argument-unavailable or descriptor-unavailable entries, 15 executable-identity-unavailable entries, `healthy: true` and no errors;
-- dry-run inspected 451/451 listed processes with the same complete readable/argument/descriptor coverage, 15 executable-identity-unavailable entries and no incident;
-- `swift test` passed 66 tests in 14 suites, including explicit one-level Back, current-route-preserving window presentation, actionable status-item popover and reusable AppKit-window ownership;
+- source-only doctor inspected 443/443 listed processes with zero unreadable, argument-unavailable or descriptor-unavailable entries, 17 executable-identity-unavailable entries, `healthy: true` and no errors;
+- dry-run inspected 453/453 listed processes with the same complete readable/argument/descriptor coverage, 17 executable-identity-unavailable entries and three `PROTECTED` automation sessions; no eligible incident or signal action was produced;
+- `swift test` passed 96 tests in 15 suites, including 30 browser projection truth-table cases, exact-incident retained-detail isolation, all seven product phases, one bounded coherence retry, strict-earlier exact settlement/detail fallback, bilingual VoiceOver copy, direct AppKit hosts and the existing transport/mutation/notification contracts;
 - the release App bundle assembled from its internal scratch path, its active schema-v3 fixtures and localizations validated, its ad-hoc signature verified, and both source-volume resource fallback and removable-volume loader-path checks passed;
 - the isolated smoke passed six live-socket tests, restarted the source daemon over the same private temporary SQLite database, then passed the same six tests again. It verified effective report-only mode, durable receipt replay and owner-private temp/database/socket/lock modes, and removed only its owned temporary root; and
-- the tracked candidate/diff scan found no Faye-specific absolute path, attached-audit filename or identifier, secret-shaped addition, whitespace error or generated build payload; generic `/Users/example` and `/Users/private` strings remain only in synthetic fixtures and redaction/path tests; and
-- a separate read-only installed-status check found generation 9 healthy, ready, v1/v5, quiescent, report-only and unarmed with exact PID/generation/binary/permission agreement. It did not reload, migrate or otherwise mutate the installed service.
+- source-only rendered QA exercised English and Simplified Chinese protected, attention and recent-settlement windows at the product's 360-point width, plus session/settlement detail navigation. AX readback confirmed named rows, mode/freshness/reason copy, button semantics and Chinese relative-time formatting. It used uniquely identified temporary QA bundles and did not open or mutate the installed service.
 
 The private GitHub `backend` workflow passed at rollback-lease head `ea7c5bd` (run `33482121339`), scan-race fix head `9d9d765` (run `33483324021`), the prior installed-state docs head `68085ba` (run `33484218771`), AppKit menu/window implementation head `4eb70eb` (run `33500090371`), rollback-hardening/direct-AppKit lifetime head `188e65a` (run `33513920375`), and Dock/package-hardening implementation head `0cc3beb` (run `33520850444`) on macOS: formatting, strict clippy, workspace tests, release workspace build, native frontend tests and native frontend bundle. The first AppKit run `33499759687` correctly failed because two host tests constructed `NSStatusItem`/`NSWindow` before initializing `NSApplication`; `4eb70eb` fixed that test precondition rather than skipping the hosts.
 
@@ -101,6 +104,7 @@ Owner-only `cft_fieldlab` and `managed_cft_fieldlab` remained ignored and were n
 
 - multi-day report-only dogfood and an ambient real eligible incident;
 - owner acceptance of the installed Dock/window fallback and packaged notification behavior;
+- commit/push, exact-head CI and any later owner-approved installation of the browser-first App payload;
 - Thaw/macOS hosted-menu compatibility for the still-unresolved status item; this external presentation gap does not authorize further private-default or identity workarounds in Unlinger;
 - separately owner-authorized narrow enforcement acceptance for a future candidate;
 - resolution or explicit product acceptance of both artifact P2 residuals;

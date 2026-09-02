@@ -38,6 +38,16 @@ public final class LanguageSettings {
         Self.resolveBundle(for: preference)
     }
 
+    /// Locale for formatted values that sit beside localized copy. Explicit
+    /// language choices must not leave relative dates in the system language.
+    public var locale: Locale {
+        switch preference {
+        case .system: .autoupdatingCurrent
+        case .en: Locale(identifier: "en")
+        case .zhHans: Locale(identifier: "zh-Hans")
+        }
+    }
+
     private static let defaultsKey = "ui.language"
 
     private init() {

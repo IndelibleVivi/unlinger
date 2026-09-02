@@ -52,13 +52,13 @@ public final class AppState {
     }
 
     public var currentIncidents: [CurrentIncident] { observationRoster.items }
-    public var viewModel: StatusViewModel? {
-        status.map {
-            StatusMapper.viewModel(
-                for: $0,
-                rosterFreshness: observationRoster.freshness
-            )
-        }
+    public var browserOverview: BrowserOverview {
+        BrowserOverviewMapper.make(
+            connection: connection,
+            status: status,
+            roster: observationRoster,
+            history: history
+        )
     }
     public var ordinaryMutationsLocked: Bool { pendingMutation != nil || !mutationJournalAvailable }
 
@@ -218,6 +218,7 @@ public final class AppState {
     }
 
     private func runRefreshLoop(epoch: UInt64) async {
+        var coherenceRetryAvailable = true
         repeat {
             refreshRequested = false
             let outcome = await fetchRefreshSnapshot()
@@ -229,6 +230,17 @@ public final class AppState {
                 observationRoster = snapshot.roster
                 connection = .live
                 lastRefreshAt = .now
+                if coherenceRetryAvailable,
+                   BrowserOverviewMapper.make(
+                       connection: .live,
+                       status: snapshot.status,
+                       roster: snapshot.roster,
+                       history: snapshot.history
+                   ).requiresTrailingRefresh
+                {
+                    coherenceRetryAvailable = false
+                    refreshRequested = true
+                }
                 await notificationCoordinator?.receiveTrustedRefresh(
                     status: snapshot.status,
                     history: snapshot.history,

@@ -1,12 +1,12 @@
 import SwiftUI
 
-/// Attention items: the only genuinely actionable surface. Copy comes from
-/// kind + reason_id mapping; unknown IDs render generic copy.
+/// Durable attention from typed backend facts. Incident-bound items navigate
+/// to capability-gated actions; global items remain explanatory only.
 public struct AttentionList: View {
-    let items: [AttentionViewData]
+    let items: [BrowserAttentionPresentation]
     let overflow: Int
 
-    public init(items: [AttentionViewData], overflow: Int) {
+    public init(items: [BrowserAttentionPresentation], overflow: Int) {
         self.items = items
         self.overflow = overflow
     }
@@ -35,7 +35,7 @@ public struct AttentionList: View {
     /// Items carrying an incident ID navigate to the incident detail, where
     /// its capability actions (retry/protect/export) live.
     @ViewBuilder
-    private func row(_ item: AttentionViewData) -> some View {
+    private func row(_ item: BrowserAttentionPresentation) -> some View {
         if let incidentID = item.incidentID {
             NavigationLink(value: Route.incident(incidentID)) {
                 rowContent(item, navigable: true)
@@ -46,7 +46,7 @@ public struct AttentionList: View {
         }
     }
 
-    private func rowContent(_ item: AttentionViewData, navigable: Bool) -> some View {
+    private func rowContent(_ item: BrowserAttentionPresentation, navigable: Bool) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Image(systemName: "exclamationmark.circle")
                 .foregroundStyle(.orange)

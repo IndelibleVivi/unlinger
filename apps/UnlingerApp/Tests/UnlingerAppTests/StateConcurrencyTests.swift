@@ -47,9 +47,54 @@ private actor DelayedProjectionClient: UnlingerClient {
     func exportDiagnostics(incidentID _: String) async throws(ClientError) -> DiagnosticsExport { throw .unavailable }
 }
 
+private actor MismatchedProjectionClient: UnlingerClient {
+    private var statusCalls = 0
+
+    func callCount() -> Int { statusCalls }
+
+    func status() async throws(ClientError) -> PublicStatus {
+        statusCalls += 1
+        var status = try await FixtureClient(statusFixture: "status-all-clear").status()
+        status.latestObservationAtUnixMillis = 2
+        return status
+    }
+
+    func history(limit _: Int) async throws(ClientError) -> [HistoryEvent] { [] }
+
+    func incidents() async throws(ClientError) -> ObservationRoster {
+        ObservationRoster(
+            cycleToken: "cycle-current",
+            observedAtUnixMillis: 1,
+            freshness: .current,
+            items: []
+        )
+    }
+
+    func explain(incidentID _: String) async throws(ClientError) -> IncidentDetail { throw .unavailable }
+    func mutationStatus(context _: MutationContext) async throws(ClientError) -> MutationStatus { throw .unavailable }
+    func pause(context _: MutationContext, durationMillis _: UInt64) async throws(ClientError) -> MutationReceipt { throw .unavailable }
+    func resume(context _: MutationContext) async throws(ClientError) -> MutationReceipt { throw .unavailable }
+    func retryFailedCleanup(context _: MutationContext, incidentID _: String) async throws(ClientError) -> MutationReceipt { throw .unavailable }
+    func protectIncident(context _: MutationContext, incidentID _: String) async throws(ClientError) -> MutationReceipt { throw .unavailable }
+    func unprotectIncident(context _: MutationContext, incidentID _: String) async throws(ClientError) -> MutationReceipt { throw .unavailable }
+    func exportDiagnostics(incidentID _: String) async throws(ClientError) -> DiagnosticsExport { throw .unavailable }
+}
+
 @Suite("Refresh concurrency")
 @MainActor
 struct StateConcurrencyTests {
+    @Test("a coherence miss requests exactly one trailing refresh")
+    func coherenceMissGetsOneTrailingRefresh() async {
+        let client = MismatchedProjectionClient()
+        let state = AppState(client: client, mutationLedger: TestMutationJournal())
+
+        await state.refresh()
+
+        #expect(await client.callCount() == 2)
+        #expect(state.browserOverview.phase == .unknown)
+        #expect(state.browserOverview.requiresTrailingRefresh)
+    }
+
     @Test("a stopped polling session cannot apply after restart")
     func pollingSessionCannotApplyAfterRestart() async throws {
         let client = DelayedProjectionClient()

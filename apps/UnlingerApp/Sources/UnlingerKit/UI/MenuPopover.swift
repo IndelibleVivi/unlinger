@@ -1,9 +1,8 @@
 import SwiftUI
 
-/// Root of the menu-bar popover: status, attention, recent reclaim,
-/// protections, history link, and status-level actions.
+/// Root of the menu-bar and ordinary-window navigation surface. BrowserHomeView
+/// owns the one canonical product overview used by both AppKit hosts.
 public struct MenuPopover: View {
-    @Environment(AppState.self) private var state
     @Environment(AppRouter.self) private var router
     private let allowsWindowPresentation: Bool
 
@@ -20,25 +19,7 @@ public struct MenuPopover: View {
             }
 
             NavigationStack(path: $router.path) {
-                Group {
-                    switch state.connection {
-                    case .connecting:
-                        VStack(spacing: 8) {
-                            ProgressView()
-                                .controlSize(.small)
-                            Text(L10n.text("status.headline.activity"))
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
-                        }
-                        .frame(maxWidth: .infinity, minHeight: 120)
-                    case .unavailable:
-                        unavailable
-                    case .incompatibleDaemon:
-                        incompatible
-                    case .live:
-                        live
-                    }
-                }
+                BrowserHomeView()
                 .padding()
                 .navigationDestination(for: Route.self) { route in
                     switch route {
@@ -59,7 +40,7 @@ public struct MenuPopover: View {
                     .padding(.vertical, 10)
             }
         }
-        .frame(width: 340)
+        .frame(width: 360)
     }
 
     private var routeControls: some View {
@@ -83,122 +64,4 @@ public struct MenuPopover: View {
         }
     }
 
-    private var unavailable: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Label(L10n.text("unavailable.title"), systemImage: "circle.slash")
-                .font(.headline)
-            Text(L10n.text("unavailable.body"))
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-            Button(L10n.text("unavailable.retry")) {
-                Task { await state.refresh() }
-            }
-            .padding(.top, 4)
-        }
-    }
-
-    private var incompatible: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Label(L10n.text("incompatible.title"), systemImage: "exclamationmark.triangle")
-                .font(.headline)
-            Text(L10n.text("incompatible.body"))
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-            Button(L10n.text("unavailable.retry")) {
-                Task { await state.refresh() }
-            }
-            .padding(.top, 4)
-        }
-    }
-
-    private var live: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
-                if let viewModel = state.viewModel {
-                    StatusSection(viewModel: viewModel)
-
-                    if !state.currentIncidents.isEmpty {
-                        Divider()
-                        RosterSection(roster: state.observationRoster)
-                    }
-
-                    if !viewModel.attention.isEmpty {
-                        Divider()
-                        AttentionList(items: viewModel.attention, overflow: viewModel.attentionOverflow)
-                    }
-
-                    if let reclaim = viewModel.recentReclaim {
-                        Divider()
-                        reclaimRow(reclaim)
-                    }
-
-                    if !viewModel.protections.isEmpty {
-                        Divider()
-                        VStack(alignment: .leading, spacing: 6) {
-                            Label(L10n.text("protection.count", viewModel.protections.count), systemImage: "hand.raised")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                            ForEach(viewModel.protections.prefix(3)) { protection in
-                                NavigationLink(value: Route.incident(protection.incidentId)) {
-                                    HStack {
-                                        Text(L10n.text("protection.item", Format.relativeTime(Date(unixMillis: protection.protectedAtUnixMillis))))
-                                            .font(.caption)
-                                            .foregroundStyle(.secondary)
-                                        Spacer(minLength: 0)
-                                        Image(systemName: "chevron.right")
-                                            .font(.caption2)
-                                            .foregroundStyle(.tertiary)
-                                            .accessibilityHidden(true)
-                                    }
-                                }
-                                .buttonStyle(.plain)
-                            }
-                        }
-                    }
-
-                    Divider()
-                    VStack(alignment: .leading, spacing: 2) {
-                        NavigationLink(value: Route.history) {
-                            Label(L10n.text("history.title"), systemImage: "clock")
-                                .font(.subheadline)
-                        }
-                        Text(L10n.text("history.hint"))
-                            .font(.caption)
-                            .foregroundStyle(.tertiary)
-                    }
-
-                    Divider()
-                    ActionControls(capabilities: state.status?.capabilities)
-
-                    Divider()
-                    NavigationLink(value: Route.settings) {
-                        Label(L10n.text("settings.title"), systemImage: "gearshape")
-                            .font(.subheadline)
-                    }
-                }
-            }
-        }
-        .scrollIndicators(.never)
-        .frame(maxHeight: 480)
-    }
-
-    private func reclaimRow(_ reclaim: ReclaimViewData) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(L10n.text("reclaim.section"))
-                .font(.caption)
-                .foregroundStyle(.tertiary)
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Image(systemName: "arrow.down.circle")
-                    .foregroundStyle(.secondary)
-                    .font(.subheadline)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(L10n.text(reclaim.copyKey))
-                        .font(.subheadline)
-                    Text(Format.relativeTime(reclaim.occurredAt))
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
-                }
-            }
-        }
-    }
 }
