@@ -6,7 +6,7 @@
 
 **Source:** private pre-v0.1 schema-v4 candidate; BGX-2 daemon-owned atomic browser projection, typed compatibility/catalog, v4 App and CLI verified locally and at exact remote head
 
-**Remote:** BGX-2 implementation head `19c58e5a4e486a13a1ba5af85f5c7f932af81023` passed exact-head private macOS `backend` run `33608082841`; documentation closure is pending on top.
+**Remote:** BGX-2 implementation head `19c58e5a4e486a13a1ba5af85f5c7f932af81023` passed exact-head private macOS `backend` run `33608082841`; documentation-closure head `a52ed6b6741900f81b593563c095c152752c4092` also passed run `33608496345`.
 
 **Installed runtime:** generation 12, schema-v3/v6 capable, healthy at a stable report-only floor; acceptance lease retains generation 9/v5
 
@@ -83,7 +83,7 @@ The current BGX-2 source gate passed locally on 2026-09-02:
 - the isolated smoke passed seven live-socket suite tests, including the v4 atomic browser overview, restarted the source daemon over the same private temporary SQLite database, then passed the same seven tests again. It verified effective report-only mode, durable receipt replay and owner-private temp/database/socket/lock modes, and removed only its owned temporary root; and
 - no new rendered QA was required because BGX-2 changes protocol/state ownership without changing the previously rendered 360-point layouts or localized copy. Prior BGX-1 English/Simplified Chinese and AX observations remain historical UI evidence, not a fresh BGX-2 runtime proof.
 
-BGX-2 implementation head `19c58e5` passed private GitHub exact-head macOS `backend` run `33608082841`, including formatting, strict clippy, workspace tests, release workspace build, native frontend tests and native frontend bundle. BGX-1 documentation-closure head `8c9e47e` remains separately verified by run `33597135228`.
+BGX-2 implementation head `19c58e5` passed private GitHub exact-head macOS `backend` run `33608082841`, including formatting, strict clippy, workspace tests, release workspace build, native frontend tests and native frontend bundle. Its documentation-closure head `a52ed6b` passed the same workflow in run `33608496345`; BGX-1 documentation-closure head `8c9e47e` remains separately verified by run `33597135228`.
 
 The reproducible commands were:
 
