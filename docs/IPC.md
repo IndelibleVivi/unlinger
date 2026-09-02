@@ -231,9 +231,9 @@ V1 may expose bounded internal diagnostic identities needed by CLI/service trans
 
 ## Version skew and installed boundary
 
-Current source and installed generation 13 accept schemas 1, 3 and 4. The installed App emits schema v4 only and treats a v3-only or v1-only rollback endpoint as incompatible rather than silently downgrading. Schema v3 remains a transition endpoint for its existing commands; schema v1 remains operator-only and returns a trusted `unsupported_schema` envelope to a frontend request.
+Current source and installed generation 15 accept schemas 1, 3 and 4. The installed App emits schema v4 only and treats a v3-only or v1-only rollback endpoint as incompatible rather than silently downgrading. Schema v3 remains a transition endpoint for its existing commands; schema v1 remains operator-only and returns a trusted `unsupported_schema` envelope to a frontend request.
 
-The service retains the prior snapshot and exact generation identity after candidate readiness, blocks mode/install/uninstall mutations during that lease, and exposes explicit report-only restart, accept and rollback commands. A historical real rollback restored generation 9, whose exact old CLI/daemon opened its v5 store and returned healthy ReadyReportOnly before generation 12 was reinstalled. Generation 13 is now accepted on SQLite v6 and has no pending lease. Its own lease was not executed before acceptance, so the next candidate must prove rollback to generation 13 with the exact old CLI/daemon, then reinstall as a fresh generation before acceptance.
+The service retains the prior snapshot and exact generation identity after candidate readiness, blocks mode/install/uninstall mutations during that lease, and exposes explicit report-only restart, accept and rollback commands. A historical real rollback restored generation 9, whose exact old CLI/daemon opened its v5 store before generation 12 was reinstalled. The current replacement separately installed candidate A as generation 14, restarted it report-only, rolled back to generation 13 and proved the exact old CLI/daemon reopened SQLite v6 healthy. The same candidate reinstalled as generation 15, repeated restart/App checks and was accepted before field activation. Generation 15 now has no pending lease.
 
 ## Verification anchors
 

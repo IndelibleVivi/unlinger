@@ -10,7 +10,7 @@
 
 ## Backend truth
 
-Unlinger 是 local-only macOS runtime-hygiene utility。Direct daemon默认report-only；安装中的 accepted generation 13当前也保持healthy `ReadyReportOnly`，提供schema v4与transitional v3、SQLite v6，且无arm或pending lease。Installed App只发送v4，并要求atomic `browser_overview`。Current source另有尚未安装的`0.3.0` process-only policy candidate。Frontend只投影backend truth，不拥有signal authorization、service installation/update/rollback、daemon mode switching或lifecycle recovery。
+Unlinger 是 local-only macOS runtime-hygiene utility。Direct daemon默认report-only；安装中的accepted generation 15当前是healthy `ReadyEnforce`，提供schema v4与transitional v3、SQLite v6，按generation/epoch绑定`0.3.0` process-only authority且无pending lease。Installed App只发送v4，并要求atomic `browser_overview`。Frontend只投影backend truth，不拥有signal authorization、service installation/update/rollback、daemon mode switching或lifecycle recovery。
 
 Schemas v3/v4都提供 status/history/explain/incidents/diagnostics、mutation status，以及pause/resume/named retry/exact protect/unprotect。V4另提供read-only `browser_overview`；v3请求该command会收到typed `invalid_request`，不会downgrade或拼装替代结果。所有actions使用backend capabilities，并由同一backend policy在commit前重新授权。UI缺失capability时fail closed，不从stage、score、reason string或session presence自行猜补。
 
@@ -56,6 +56,6 @@ Click routing复用 shared `AppRouter`，进入 exact incident或 global status�
 
 ## Live boundary
 
-Active generation-13 database属于安装服务并使用SQLite v6；它已accepted、healthy report-only且没有pending lease。Generation-12→9曾完成真实old-binary rollback/open，但generation 13自己的lease在accept前没有实际执行；next process-only candidate必须通过[`../../docs/INSTALLED_DOGFOOD.md`](../../docs/INSTALLED_DOGFOOD.md)走完candidate-specific install、restart、rollback到generation 13、fresh reinstall、restart与App reconciliation，不能借用旧proof。
+Active generation-15 database属于安装服务并使用SQLite v6；它已accepted、healthy process-only enforce且没有pending lease。Candidate A generation 14通过[`../../docs/INSTALLED_DOGFOOD.md`](../../docs/INSTALLED_DOGFOOD.md)完成install、restart与真实rollback到generation 13；same exact-head candidate以generation 15 fresh reinstall，重复restart与serialized App checks后才accept。Full-timing field run结束时先回到report-only，之后才独立arm并通过later sweep。
 
-使用 [`scripts/pre-v0.1-smoke.sh`](scripts/pre-v0.1-smoke.sh) 获得可重复的isolated report-only v4 App integration；它也保留v3 transitional regression coverage。Owner-only CfT harness、process-only activation与installed dogfood proof仍不属于frontend source validation。
+使用 [`scripts/pre-v0.1-smoke.sh`](scripts/pre-v0.1-smoke.sh) 获得可重复的isolated report-only v4 App integration；它也保留v3 transitional regression coverage。Owner-only CfT harness、process-only activation与installed dogfood proof仍不属于frontend source validation，即使当前generation 15已经分别通过这些runtime gates。

@@ -10,7 +10,7 @@
 - `schema_version: 2`：保留在[`v2/`](v2/)作为历史审计证据；当前server在dispatch前以schema-v1 framing返回typed `unsupported_schema`；
 - source App只发送v4，不会silent downgrade到v3或改走v1 mutation/lifecycle path。
 
-安装中的accepted generation 13提供schema-v4 App endpoint、transitional v3、operator v1与SQLite v6；当前是healthy report-only、unarmed且没有pending lease。Matching v4 App已经安装。Source-only `0.3.0` process policy validation不能被App误报成已安装或已激活。
+安装中的accepted generation 15提供schema-v4 App endpoint、transitional v3、operator v1与SQLite v6；当前是healthy `ReadyEnforce`、exact generation/epoch-bound、`0.3.0` process-only且没有pending lease。Matching v4 App已经安装。App仍只能投影backend activation truth，不能自行赋予或扩大signal authority。
 
 ## Transport and trust
 
