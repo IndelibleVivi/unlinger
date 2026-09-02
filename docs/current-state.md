@@ -6,7 +6,7 @@
 
 **Source:** private pre-v0.1 schema-v3 candidate; BGX-1 browser-first App projection, direct-AppKit hosts and source-volume-independent packaging verified locally
 
-**Remote:** private origin `main` still points at the pre-BGX-1 source line while this local browser-first candidate awaits commit, push and exact-head CI.
+**Remote:** BGX-1 implementation head `6c2d62388f75b7a3ed996113ec0bdec5ad6e8b03` is on private origin `main`; exact-head `backend` run `33596733773` is green. This current-state reconciliation follows as documentation-only truth.
 
 **Installed runtime:** generation 12, schema-v3/v6 capable, healthy at a stable report-only floor; acceptance lease retains generation 9/v5
 
@@ -81,7 +81,7 @@ The current browser-first level-2 source gate passed on 2026-09-02:
 - the isolated smoke passed six live-socket tests, restarted the source daemon over the same private temporary SQLite database, then passed the same six tests again. It verified effective report-only mode, durable receipt replay and owner-private temp/database/socket/lock modes, and removed only its owned temporary root; and
 - source-only rendered QA exercised English and Simplified Chinese protected, attention and recent-settlement windows at the product's 360-point width, plus session/settlement detail navigation. AX readback confirmed named rows, mode/freshness/reason copy, button semantics and Chinese relative-time formatting. It used uniquely identified temporary QA bundles and did not open or mutate the installed service.
 
-The private GitHub `backend` workflow passed at rollback-lease head `ea7c5bd` (run `33482121339`), scan-race fix head `9d9d765` (run `33483324021`), the prior installed-state docs head `68085ba` (run `33484218771`), AppKit menu/window implementation head `4eb70eb` (run `33500090371`), rollback-hardening/direct-AppKit lifetime head `188e65a` (run `33513920375`), and Dock/package-hardening implementation head `0cc3beb` (run `33520850444`) on macOS: formatting, strict clippy, workspace tests, release workspace build, native frontend tests and native frontend bundle. The first AppKit run `33499759687` correctly failed because two host tests constructed `NSStatusItem`/`NSWindow` before initializing `NSApplication`; `4eb70eb` fixed that test precondition rather than skipping the hosts.
+The private GitHub `backend` workflow passed at rollback-lease head `ea7c5bd` (run `33482121339`), scan-race fix head `9d9d765` (run `33483324021`), the prior installed-state docs head `68085ba` (run `33484218771`), AppKit menu/window implementation head `4eb70eb` (run `33500090371`), rollback-hardening/direct-AppKit lifetime head `188e65a` (run `33513920375`), Dock/package-hardening implementation head `0cc3beb` (run `33520850444`), and BGX-1 implementation head `6c2d623` (run `33596733773`) on macOS: formatting, strict clippy, workspace tests, release workspace build, native frontend tests and native frontend bundle. The first AppKit run `33499759687` correctly failed because two host tests constructed `NSStatusItem`/`NSWindow` before initializing `NSApplication`; `4eb70eb` fixed that test precondition rather than skipping the hosts.
 
 The reproducible commands were:
 
@@ -104,7 +104,7 @@ Owner-only `cft_fieldlab` and `managed_cft_fieldlab` remained ignored and were n
 
 - multi-day report-only dogfood and an ambient real eligible incident;
 - owner acceptance of the installed Dock/window fallback and packaged notification behavior;
-- commit/push, exact-head CI and any later owner-approved installation of the browser-first App payload;
+- any later owner-approved installation and acceptance of the browser-first App payload;
 - Thaw/macOS hosted-menu compatibility for the still-unresolved status item; this external presentation gap does not authorize further private-default or identity workarounds in Unlinger;
 - separately owner-authorized narrow enforcement acceptance for a future candidate;
 - resolution or explicit product acceptance of both artifact P2 residuals;
