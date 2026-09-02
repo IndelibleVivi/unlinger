@@ -101,4 +101,4 @@ Full command lines, executable paths, and profile paths exist only in transient 
 - [Implementation plan](docs/IMPLEMENTATION_PLAN.md)
 - [Current state](docs/current-state.md)
 
-The repository is private. No public license has been selected. Before any visibility change, the project still requires an owner-approved license/rights decision, bilingual reader documentation, a publication-grade architecture diagram, field evidence, and a public-safety/privacy scan.
+The repository is private and no public license has been selected. Before any visibility change, the project still requires an owner-approved license/rights decision, confirmation that the tracked binary icons may be redistributed, bilingual reader documentation, and a publication-grade architecture diagram. Current field evidence and the all-scope public-candidate scan are necessary inputs, not authority to publish.

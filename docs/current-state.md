@@ -129,4 +129,10 @@ For the process-only implementation, strict red/green tests first failed on the 
 - Developer ID signing, notarization, packaging/update/rollback and distribution;
 - public-safe repository/license/rights decision, public alpha and public release.
 
+## Repository visibility boundary
+
+The GitHub repository remains private and has no license file. The final clean-tree public-candidate scan covered 191 text files in each candidate view and 564 reachable historical text blobs. Its 25 scope-repeated signals were manually reviewed as synthetic machine-path fixtures/tests or notification business-token field names rather than private paths or credentials. Six tracked binary icon assets are outside automated text coverage and still require an owner rights confirmation.
+
+Field evidence and the text scan now exist. A visibility change still requires the owner to select the exact code/document/asset license scope, confirm binary-asset redistribution rights, and approve bilingual reader documentation plus a publication-grade architecture artifact. The current Mermaid document remains explicitly labelled a private working diagram. None of these preparation facts changes the highest product/release claim above.
+
 See [`PRE_V0_1_ACCEPTANCE.md`](PRE_V0_1_ACCEPTANCE.md), [`SUPPORT.md`](SUPPORT.md), and [`support-matrix.v1.json`](support-matrix.v1.json) for the exact claim and support vocabulary.
