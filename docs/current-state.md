@@ -4,13 +4,13 @@
 
 **Programme:** Unlinger 0.1
 
-**Source:** private pre-v0.1 schema-v4 process-only candidate plus incident-centric browser-history/detail UI head `267e3f3`; policy-version `0.3.0` preserves exact process TERM/KILL eligibility and disables runtime-artifact admission in every embedded pack; the full local Rust/Swift/release/bundle/isolated-smoke gate passes
+**Source:** private pre-v0.1 schema-v4 process-only candidate plus incident-centric browser-history/detail UI and bounded IPC-worker lifetime hardening; policy-version `0.3.0` preserves exact process TERM/KILL eligibility and disables runtime-artifact admission in every embedded pack; the last full Rust/Swift/release/bundle/isolated-smoke gate predates the IPC-worker change, whose focused Swift suite passes
 
 **Remote:** browser-history/detail UI head `267e3f34bf715219ee54071b9671d7f9ba9f9a94` passed exact-head private macOS `backend` run `33636283051`, including formatting, strict clippy, workspace tests, release build, native frontend tests and bundle. The installed generation-15 daemon remains sourced from process-only implementation head `17cb6a5035f979dc1849c7165038e365d8a202e1`, which passed run `33621944450`
 
 **Installed runtime:** accepted generation 15 from process-only implementation head `17cb6a5`, frontend schemas v4/v3 plus operator schema v1, SQLite v6, healthy `ReadyEnforce`; exact armed generation 15 and a non-empty enforcement epoch; no candidate rollback lease remains
 
-**Activation:** process-only enforcement is active on generation 15 after exact-head CI, candidate-A install/restart/real rollback to generation 13, candidate-B reinstall/restart/accept, a full-timing managed process-only field pass, final report-only containment, and a later stable post-arm sweep. The schema-v4 packaged App from UI head `267e3f3` is installed and running. Process eligibility remains limited to exact admitted CfT `151.0.7922.34`; newer observed CfT `152.0.7977.42` sessions remain `PROTECTED`. Runtime-artifact eligibility is disabled.
+**Activation:** process-only enforcement is active on generation 15 after exact-head CI, candidate-A install/restart/real rollback to generation 13, candidate-B reinstall/restart/accept, a full-timing managed process-only field pass, final report-only containment, and a later stable post-arm sweep. The schema-v4 packaged App from UI head `267e3f3` remains installed but is deliberately stopped after an owner-observed approximately 9 GB App-memory spike during intensive rendered QA. Process eligibility remains limited to exact admitted CfT `151.0.7922.34`; newer observed CfT `152.0.7977.42` sessions remain `PROTECTED`. Runtime-artifact eligibility is disabled.
 
 **Highest claim currently permitted:** **private enforcement candidate for the exact admitted point** (acceptance level 4). Ambient process-only enforcement is active, but it has not been accepted as private v0.1, multi-day dogfood, broad field support or release evidence.
 
@@ -29,7 +29,7 @@ BGX-2 adds typed browser product/version compatibility to the transient `Inciden
 The native App under `apps/UnlingerApp` now has:
 
 - strict schema-v4 DTO/envelope decoding, explicit v3 fixture compatibility and a narrow exact v1 incompatibility parser;
-- phase-aware, single-attempt, cancellable socket I/O;
+- phase-aware, single-attempt, cancellable socket I/O on a shared four-operation worker queue, with one explicit autorelease pool drained per request instead of three new OS threads per five-second refresh;
 - an owner-private crash-durable pending-mutation journal written before connect/send;
 - one global unresolved mutation lock and startup/status-only reconciliation without resend;
 - one pure `BrowserOverviewMapper` that maps daemon-owned v4 product truth into localized copy/display shapes without recomputing phase, scanning evidence or joining history;
@@ -75,6 +75,8 @@ After a later full completed report-only sweep remained current, quiescent and f
 
 The current packaged App fixes the prior 360-point SwiftUI root inside 340-point AppKit hosts, so overview, history and detail content no longer clip horizontally. Browser history now presents one incident-centric row rather than one row per periodic observation, and the detail timeline summarizes consecutive observations while keeping cleanup/state changes distinct. The canonical user Applications location contains only the current App; older visible sibling bundles were removed recoverably. The direct AppKit Dock/window fallback remains the supported reachability path if an external menu host cannot place the status item. The previously diagnosed Thaw/macOS hosted-menu compatibility gap remains unresolved and must not be reported as fixed.
 
+During repeated installed-App rendered and accessibility QA, the owner observed the `Unlinger` App at approximately 9 GB memory and closed it. Post-close process readback found no App process; the accepted generation-15 daemon remained healthy `ReadyEnforce` at a small resident footprint. No App memory-pressure/crash diagnostic was retained, so the exact allocator or host interaction is unproved. Source inspection found that each five-second refresh created three fresh Foundation threads and lacked an explicit per-request autorelease pool. The source candidate now replaces that churn with one shared four-operation queue and drains one pool per request. This is focused source hardening, not proof that the 9 GB incident is resolved: the installed App remains stopped and unchanged until a separately authorized, bounded memory soak accepts a rebuilt candidate.
+
 ## Safety and field truth
 
 Automatic process eligibility remains limited to controllerless `com.google.chrome.for.testing` exactly `151.0.7922.34`, plus every existing identity, isolation, durable abandonment, stability and protection gate. Agent-browser, Playwright and Puppeteer are recognized/classified families; only the exact controllerless CfT point is automatically eligible. Controller-bearing, headed/attached, standard/shared profile, wrong/mixed/unknown version and incomplete identity stay protected.
@@ -92,6 +94,7 @@ The current process-only source gate passed locally on 2026-09-02:
 - source-only doctor inspected 552/552 listed processes with zero unreadable, argument-unavailable or descriptor-unavailable entries, 17 executable-identity-unavailable entries, all three signature packs at `0.3.0`, `healthy: true` and no errors;
 - dry-run inspected 552/552 listed processes with the same complete readable/argument/descriptor coverage, 17 executable-identity-unavailable entries and seven `PROTECTED` CfT 152 automation sessions; no eligible incident, runtime-artifact candidate or signal action was produced;
 - `swift test` passed 75 tests in 16 suites, including strict v4 fixture decoding, daemon-phase preservation, typed compatibility/unknown copy, incident-grouped history, consecutive-observation collapse with cleanup retention, direct settlement projection, single-overview refresh, stale-snapshot containment, all seven product phases, bilingual VoiceOver copy, shared AppKit host geometry and existing transport/mutation/notification contracts;
+- after the memory incident, the focused 75-test Swift suite passed again with the bounded four-operation IPC queue and per-request autorelease-pool change; the App was not launched for this source-only check;
 - the release App bundle assembled from its internal scratch path, packaged explicit v4 and v3 fixture directories, validated localizations, passed ad-hoc signature verification, and rejected source-volume resource fallback and removable-volume loader paths;
 - the isolated smoke passed seven live-socket suite tests, including the v4 atomic browser overview, restarted the source daemon over the same private temporary SQLite database, then passed the same seven tests again. It verified effective report-only mode, durable receipt replay and owner-private temp/database/socket/lock modes, and removed only its owned temporary root; and
 - fresh installed Simplified Chinese rendered QA exercised overview → browser history → current browser session detail at the fixed 340 × 420 content size. It confirmed unclipped horizontal geometry, current product/version context, one incident row for repeated observations, a 56-observation grouped timeline entry, a readable `3 / 7` safety-check summary and expanded named pass/block results. Popover uses the same tested size contract, but external menu-host placement remains unresolved and packaged notification delivery was not re-observed.
@@ -121,6 +124,7 @@ For the process-only implementation, strict red/green tests first failed on the 
 
 - multi-day ambient dogfood and an ordinary real eligible incident;
 - owner observation of the installed schema-v4 App's final visual and packaged notification behavior;
+- bounded rebuilt-App memory soak without Computer Use/accessibility-tree stress, followed separately by any deliberate stress reproduction; until then the approximately 9 GB installed-App incident remains unresolved and the App stays stopped;
 - Thaw/macOS hosted-menu compatibility for the still-unresolved status item; this external presentation gap does not authorize further private-default or identity workarounds in Unlinger;
 - exact field evidence before admitting CfT `152.0.7977.42` or any other version/family expansion;
 - resolution or explicit product acceptance of both artifact P2 residuals before any future artifact re-enable;

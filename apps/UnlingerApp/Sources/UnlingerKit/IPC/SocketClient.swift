@@ -225,10 +225,22 @@ private struct UnixSocketExchanger: SocketExchanging {
     }
 }
 
-/// Bridges blocking POSIX socket I/O onto an owned Foundation Thread. Task
-/// cancellation closes the active read/write path via shutdown, so a stopped
-/// polling session cannot leave a blocking call parked on an actor executor.
+/// Bridges blocking POSIX socket I/O onto a bounded Foundation worker pool.
+/// Task cancellation closes the active read/write path via shutdown, so a
+/// stopped polling session cannot leave a blocking call parked on an actor
+/// executor.
 private final class SocketOperation: @unchecked Sendable {
+    /// One App refresh performs three reads in parallel. A fourth slot keeps an
+    /// explicit detail/action read responsive without creating three fresh OS
+    /// threads every five seconds for the lifetime of the menu client.
+    private static let workerQueue: OperationQueue = {
+        let queue = OperationQueue()
+        queue.name = "app.unlinger.ipc"
+        queue.maxConcurrentOperationCount = 4
+        queue.qualityOfService = .userInitiated
+        return queue
+    }()
+
     private let requestLine: Data
     private let socketPath: String
     private let timeout: TimeInterval
@@ -245,12 +257,13 @@ private final class SocketOperation: @unchecked Sendable {
     func run() async throws(ClientError) -> Data {
         let result: Result<Data, ClientError> = await withTaskCancellationHandler {
             await withCheckedContinuation { continuation in
-                let thread = Thread { [self] in
-                    continuation.resume(returning: execute())
+                Self.workerQueue.addOperation { [self] in
+                    // Drain every request's temporary Foundation objects so
+                    // five-second polling cannot accumulate autoreleased
+                    // Data/JSON/socket state on a reused worker thread.
+                    let result = autoreleasepool(invoking: execute)
+                    continuation.resume(returning: result)
                 }
-                thread.name = "Unlinger IPC"
-                thread.qualityOfService = .userInitiated
-                thread.start()
             }
         } onCancel: { [self] in
             cancel()
