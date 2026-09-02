@@ -1,7 +1,7 @@
 #![cfg(target_os = "macos")]
 
 use rusqlite::{Connection, OpenFlags, params};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
@@ -16,14 +16,13 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, TryRecvError};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use unlinger_core::{
-    ArtifactAction, ArtifactDisposition, ArtifactFreeze, CleanupAction, CleanupReceipt,
-    CleanupRuntime, CleanupSignal, CleanupStage, IncidentState, ProcessGraph, ProcessIdentity,
-    ProcessRecord, RuntimeArtifactCandidate, RuntimeArtifactIdentity, RuntimeArtifactKind,
-    SignalDisposition, Snapshot, fingerprint_process_identity,
+    ArtifactAction, ArtifactDisposition, CleanupAction, CleanupReceipt, CleanupRuntime,
+    CleanupSignal, CleanupStage, IncidentState, ProcessGraph, ProcessIdentity, ProcessRecord,
+    RuntimeArtifactKind, SignalDisposition, Snapshot, fingerprint_process_identity,
 };
 use unlinger_daemon::{
-    EventKind, EventPayload, HistoryEvent, IncidentDetail, IpcClient, IpcCommand, IpcError,
-    IpcPayload, LAUNCH_AGENT_LABEL,
+    DaemonMode, DaemonStatus, EventKind, EventPayload, HistoryEvent, IncidentDetail, IpcClient,
+    IpcCommand, IpcError, IpcPayload, LAUNCH_AGENT_LABEL, LocalPaths, StartupState,
 };
 use unlinger_macos::MacosRuntime;
 use unlinger_rules::{Analyzer, AnalyzerContext, RuleSet};
@@ -55,45 +54,57 @@ fn managed_acknowledgement_is_exact_and_full_timing_is_mandatory() {
 
 #[test]
 fn managed_status_requires_generation_bound_readiness() {
-    let report = serde_json::json!({
+    let service = serde_json::json!({
+        "schema_version": 1,
+        "label": "app.unlinger.daemon",
         "installed": true,
         "loaded": true,
         "healthy": true,
+        "unmanaged_daemon": false,
         "expected_mode": "enforce",
-        "launchd_pid": 4321,
         "pid_matches": true,
         "permissions_ok": true,
         "active_generation": 7,
         "generation_matches": true,
         "binary_matches": true,
-        "daemon_path": "/Users/example/Library/Application Support/Unlinger/generations/7/unlingerd",
-        "cli_path": "/Users/example/Library/Application Support/Unlinger/generations/7/unlinger",
-        "database_path": "/Users/example/Library/Application Support/Unlinger/history.sqlite3",
-        "socket_path": "/Users/example/Library/Application Support/Unlinger/run/unlingerd.sock",
-        "daemon_status": {
+        "data_preserved": true,
+        "runtime": {
             "managed": true,
-            "instance_id": "instance-7-b",
             "healthy": true,
             "ready": true,
             "startup_state": "ready_enforce",
             "requested_mode": "enforce",
             "effective_mode": "enforce",
-            "activation_generation": 7,
-            "armed_generation": 7,
-            "enforcement_epoch": "epoch-7-b",
             "draining": false,
-            "pid": 4321,
-            "last_scan_at_unix_millis": 42
-        }
+            "scan_in_progress": false,
+            "cleanup_in_progress": false
+        },
+        "problem_count": 0
     });
+    let mut daemon = DaemonStatus::new(DaemonMode::Enforce, 4321);
+    daemon.managed = true;
+    daemon.instance_id = "instance-7-b".to_owned();
+    daemon.healthy = true;
+    daemon.ready = true;
+    daemon.startup_state = StartupState::ReadyEnforce;
+    daemon.requested_mode = DaemonMode::Enforce;
+    daemon.effective_mode = DaemonMode::Enforce;
+    daemon.activation_generation = Some(7);
+    daemon.armed_generation = Some(7);
+    daemon.enforcement_epoch = Some("epoch-7-b".to_owned());
+    daemon.last_scan_at_unix_millis = Some(42);
+    let daemon = serde_json::to_value(daemon).expect("daemon JSON");
+    let paths = LocalPaths::from_home("/Users/example").expect("local paths");
+    let cli = paths.application_support.join("generations/7/unlinger");
 
-    let parsed = ManagedServiceSnapshot::parse(&report).expect("managed service report");
+    let parsed = ManagedServiceSnapshot::parse(&service, &daemon, &cli, &paths)
+        .expect("managed service report");
     parsed.require_ready_enforce().expect("armed generation");
 
-    let mut stale = report;
-    stale["daemon_status"]["armed_generation"] = Value::from(6_u64);
+    let mut stale = daemon;
+    stale["armed_generation"] = Value::from(6_u64);
     assert!(
-        ManagedServiceSnapshot::parse(&stale)
+        ManagedServiceSnapshot::parse(&service, &stale, &cli, &paths)
             .and_then(|status| status.require_ready_enforce())
             .is_err()
     );
@@ -104,17 +115,6 @@ fn journal_contract_requires_ordered_term_kill_and_full_revival() {
     let baseline_artifact = BaselineArtifact {
         kind: RuntimeArtifactKind::DevToolsActivePort,
         artifact_fingerprint: "art-field-baseline".to_owned(),
-        identity: RuntimeArtifactIdentity {
-            device: 1,
-            inode: 2,
-            owner_uid: 501,
-            mode: 0o100600,
-            link_count: 1,
-            parent_device: 1,
-            parent_inode: 3,
-            parent_owner_uid: 501,
-            parent_mode: 0o40700,
-        },
     };
     let receipt_artifacts = vec![ArtifactAction {
         kind: RuntimeArtifactKind::DevToolsActivePort,
@@ -200,12 +200,32 @@ fn journal_contract_requires_ordered_term_kill_and_full_revival() {
             epoch: "epoch-4",
             arm_command_started_at: 10_000,
             exact_tree_absent_at_ms: 116_000,
-            baseline_artifact: &baseline_artifact,
+            artifact_cleanup_expected: true,
+            baseline_artifact: Some(&baseline_artifact),
             exact_tree: std::slice::from_ref(&exact_root),
             receipt_actions: &receipt_actions,
             receipt_artifact_actions: &receipt_artifacts,
         })
         .expect("full terminal contract");
+
+    let process_only = JournalSnapshot {
+        artifact_actions: Vec::new(),
+        ..journal.clone()
+    };
+    process_only
+        .verify_terminal_contract(TerminalContract {
+            root_pid: 900,
+            root_fingerprint: &exact_root_fingerprint,
+            epoch: "epoch-4",
+            arm_command_started_at: 10_000,
+            exact_tree_absent_at_ms: 116_000,
+            artifact_cleanup_expected: false,
+            baseline_artifact: None,
+            exact_tree: std::slice::from_ref(&exact_root),
+            receipt_actions: &receipt_actions,
+            receipt_artifact_actions: &[],
+        })
+        .expect("process-only terminal contract has no artifact action");
 
     let mut duplicate = journal.clone();
     duplicate.actions.push(duplicate.actions[0].clone());
@@ -217,7 +237,8 @@ fn journal_contract_requires_ordered_term_kill_and_full_revival() {
                 epoch: "epoch-4",
                 arm_command_started_at: 10_000,
                 exact_tree_absent_at_ms: 116_000,
-                baseline_artifact: &baseline_artifact,
+                artifact_cleanup_expected: true,
+                baseline_artifact: Some(&baseline_artifact),
                 exact_tree: std::slice::from_ref(&exact_root),
                 receipt_actions: &receipt_actions,
                 receipt_artifact_actions: &receipt_artifacts,
@@ -238,7 +259,8 @@ fn journal_contract_requires_ordered_term_kill_and_full_revival() {
                 epoch: "epoch-4",
                 arm_command_started_at: 10_000,
                 exact_tree_absent_at_ms: 116_000,
-                baseline_artifact: &baseline_artifact,
+                artifact_cleanup_expected: true,
+                baseline_artifact: Some(&baseline_artifact),
                 exact_tree: std::slice::from_ref(&exact_root),
                 receipt_actions: &receipt_actions,
                 receipt_artifact_actions: &mismatched_receipt,
@@ -502,8 +524,12 @@ fn run_managed_fieldlab() -> Result<(), Box<dyn Error>> {
     launch_chrome_for_testing(&config.app, &profile)?;
     let (_, root_identity) = wait_for_detached_root(&profile)?;
     let target = wait_for_unique_field_candidate(&profile, &root_identity)?;
-    let artifact_candidate = unique_field_artifact(&target, &profile)?;
-    let baseline_artifact = wait_for_baseline_artifact(&mut snapshotter, &artifact_candidate)?;
+    if !target.runtime_artifacts.is_empty() {
+        return Err(field_error(format!(
+            "process-only managed field candidate admitted {} runtime artifact(s)",
+            target.runtime_artifacts.len()
+        )));
+    }
     let field_tree = target
         .targets
         .iter()
@@ -522,7 +548,6 @@ fn run_managed_fieldlab() -> Result<(), Box<dyn Error>> {
     }
 
     stop_exact_field_root(&profile, &root_identity)?;
-    require_exact_baseline_artifact(&mut snapshotter, &artifact_candidate, &baseline_artifact)?;
     unique_field_candidate(&snapshotter.snapshot()?, &root_identity)?;
     let arm_command_started_at = now_unix_millis()?;
     service_guard.armed = true;
@@ -553,14 +578,26 @@ fn run_managed_fieldlab() -> Result<(), Box<dyn Error>> {
         epoch: &enforcement_epoch,
         arm_command_started_at,
         exact_tree_absent_at_ms: terminal.exact_tree_absent_at_ms,
-        baseline_artifact: &baseline_artifact,
+        artifact_cleanup_expected: false,
+        baseline_artifact: None,
         exact_tree: &field_tree,
         receipt_actions: &receipt.actions,
         receipt_artifact_actions: &receipt.artifact_actions,
     })?;
-    require_canonical_artifact_absent(&artifact_candidate)?;
     write_artifact(&profile, "03-terminal-receipt.json", &receipt)?;
     write_artifact(&profile, "04-terminal-journal.json", &terminal_journal)?;
+    write_artifact(
+        &profile,
+        "04-process-only-artifact-proof.json",
+        &serde_json::json!({
+            "signature_pack": target.signature_pack,
+            "signature_version": target.signature_version,
+            "admitted_artifact_candidates": target.runtime_artifacts.len(),
+            "receipt_artifact_actions": receipt.artifact_actions.len(),
+            "journal_artifact_actions": terminal_journal.artifact_actions.len(),
+            "devtools_active_port_present_after_cleanup": profile.join("DevToolsActivePort").exists()
+        }),
+    )?;
 
     let before_restart_identity = daemon_identity(&armed)?;
     kickstart_managed_launch_agent()?;
@@ -629,7 +666,6 @@ fn run_managed_fieldlab() -> Result<(), Box<dyn Error>> {
             "field Chrome for Testing root survived its terminal receipt",
         ));
     }
-    require_canonical_artifact_absent(&artifact_candidate)?;
     ordinary_before.assert_preexisting_preserved(&postflight)?;
     write_artifact(
         &profile,
@@ -638,7 +674,7 @@ fn run_managed_fieldlab() -> Result<(), Box<dyn Error>> {
     )?;
 
     println!(
-        "managed fieldlab passed: generation={} initial_instance={} restarted_instance={} incident={}",
+        "managed process-only fieldlab passed: generation={} initial_instance={} restarted_instance={} incident={} artifact_actions=0",
         armed.active_generation,
         armed.daemon.instance_id,
         restarted.daemon.instance_id,
@@ -726,30 +762,28 @@ struct ManagedServiceSnapshot {
     cli_path: PathBuf,
     database_path: PathBuf,
     socket_path: PathBuf,
-    launchd_pid: u32,
-    expected_mode: String,
-    daemon: ManagedDaemonSnapshot,
+    expected_mode: DaemonMode,
+    daemon: DaemonStatus,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-struct ManagedDaemonSnapshot {
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
+struct PublicRuntimeSnapshot {
     managed: bool,
-    instance_id: String,
     healthy: bool,
     ready: bool,
-    startup_state: String,
-    requested_mode: String,
-    effective_mode: String,
-    activation_generation: u64,
-    armed_generation: Option<u64>,
-    enforcement_epoch: Option<String>,
+    startup_state: StartupState,
+    requested_mode: DaemonMode,
+    effective_mode: DaemonMode,
     draining: bool,
-    pid: u32,
-    last_scan_at_unix_millis: Option<u64>,
 }
 
 impl ManagedServiceSnapshot {
-    fn parse(value: &Value) -> Result<Self, Box<dyn Error>> {
+    fn parse(
+        service: &Value,
+        daemon: &Value,
+        cli: &Path,
+        paths: &LocalPaths,
+    ) -> Result<Self, Box<dyn Error>> {
         for field in [
             "installed",
             "loaded",
@@ -759,38 +793,60 @@ impl ManagedServiceSnapshot {
             "generation_matches",
             "binary_matches",
         ] {
-            if !required_bool(value, field)? {
+            if !required_bool(service, field)? {
                 return Err(field_error(format!(
                     "managed service report requires {field}=true"
                 )));
             }
         }
-        let daemon = required_object(value, "daemon_status")?;
+        if required_bool(service, "unmanaged_daemon")? {
+            return Err(field_error(
+                "managed service report marked the daemon unmanaged",
+            ));
+        }
+        if required_u64(service, "problem_count")? != 0 {
+            return Err(field_error(
+                "managed service report retained lifecycle problems",
+            ));
+        }
+        let runtime: PublicRuntimeSnapshot =
+            serde_json::from_value(required_object(service, "runtime")?.clone())
+                .map_err(|error| field_error(format!("invalid public service runtime: {error}")))?;
+        let daemon: DaemonStatus = serde_json::from_value(daemon.clone())
+            .map_err(|error| field_error(format!("invalid daemon status readback: {error}")))?;
+        if runtime.managed != daemon.managed
+            || runtime.healthy != daemon.healthy
+            || runtime.ready != daemon.ready
+            || runtime.startup_state != daemon.startup_state
+            || runtime.requested_mode != daemon.requested_mode
+            || runtime.effective_mode != daemon.effective_mode
+            || runtime.draining != daemon.draining
+        {
+            return Err(field_error(format!(
+                "public service runtime and daemon readback disagree: public={runtime:?}, daemon={daemon:?}"
+            )));
+        }
+        let active_generation = required_u64(service, "active_generation")?;
+        let expected_mode: DaemonMode = serde_json::from_value(
+            service
+                .get("expected_mode")
+                .cloned()
+                .ok_or_else(|| field_error("service JSON omitted expected_mode"))?,
+        )
+        .map_err(|error| field_error(format!("invalid expected_mode: {error}")))?;
         Ok(Self {
-            active_generation: required_u64(value, "active_generation")?,
-            generation_matches: required_bool(value, "generation_matches")?,
-            binary_matches: required_bool(value, "binary_matches")?,
-            daemon_path: PathBuf::from(required_string(value, "daemon_path")?),
-            cli_path: PathBuf::from(required_string(value, "cli_path")?),
-            database_path: PathBuf::from(required_string(value, "database_path")?),
-            socket_path: PathBuf::from(required_string(value, "socket_path")?),
-            launchd_pid: required_u32(value, "launchd_pid")?,
-            expected_mode: required_string(value, "expected_mode")?.to_owned(),
-            daemon: ManagedDaemonSnapshot {
-                managed: required_bool(daemon, "managed")?,
-                instance_id: required_string(daemon, "instance_id")?.to_owned(),
-                healthy: required_bool(daemon, "healthy")?,
-                ready: required_bool(daemon, "ready")?,
-                startup_state: required_string(daemon, "startup_state")?.to_owned(),
-                requested_mode: required_string(daemon, "requested_mode")?.to_owned(),
-                effective_mode: required_string(daemon, "effective_mode")?.to_owned(),
-                activation_generation: required_u64(daemon, "activation_generation")?,
-                armed_generation: optional_u64(daemon, "armed_generation")?,
-                enforcement_epoch: optional_string(daemon, "enforcement_epoch")?,
-                draining: required_bool(daemon, "draining")?,
-                pid: required_u32(daemon, "pid")?,
-                last_scan_at_unix_millis: optional_u64(daemon, "last_scan_at_unix_millis")?,
-            },
+            active_generation,
+            generation_matches: required_bool(service, "generation_matches")?,
+            binary_matches: required_bool(service, "binary_matches")?,
+            daemon_path: cli
+                .parent()
+                .ok_or_else(|| field_error("managed CLI has no generation directory"))?
+                .join("unlingerd"),
+            cli_path: cli.to_path_buf(),
+            database_path: paths.database.clone(),
+            socket_path: paths.socket.clone(),
+            expected_mode,
+            daemon,
         })
     }
 
@@ -802,8 +858,8 @@ impl ManagedServiceSnapshot {
             || !self.daemon.ready
             || self.daemon.draining
             || self.daemon.last_scan_at_unix_millis.is_none()
-            || self.launchd_pid != self.daemon.pid
-            || self.active_generation != self.daemon.activation_generation
+            || self.daemon.pid == 0
+            || self.daemon.activation_generation != Some(self.active_generation)
         {
             return Err(field_error(format!(
                 "service is not a ready exact managed generation: {self:?}"
@@ -819,15 +875,25 @@ impl ManagedServiceSnapshot {
                 self.daemon_path.display()
             )));
         }
+        let expected_cli_suffix = Path::new("generations")
+            .join(self.active_generation.to_string())
+            .join("unlinger");
+        if !self.cli_path.ends_with(&expected_cli_suffix) {
+            return Err(field_error(format!(
+                "active CLI path does not end in {}: {}",
+                expected_cli_suffix.display(),
+                self.cli_path.display()
+            )));
+        }
         Ok(())
     }
 
     fn require_ready_report_only(&self) -> Result<(), Box<dyn Error>> {
         self.require_common_ready()?;
-        if self.expected_mode != "report_only"
-            || self.daemon.requested_mode != "report_only"
-            || self.daemon.effective_mode != "report_only"
-            || self.daemon.startup_state != "ready_report_only"
+        if self.expected_mode != DaemonMode::ReportOnly
+            || self.daemon.requested_mode != DaemonMode::ReportOnly
+            || self.daemon.effective_mode != DaemonMode::ReportOnly
+            || self.daemon.startup_state != StartupState::ReadyReportOnly
             || self.daemon.armed_generation.is_some()
             || self.daemon.enforcement_epoch.is_some()
         {
@@ -840,10 +906,10 @@ impl ManagedServiceSnapshot {
 
     fn require_ready_enforce(&self) -> Result<(), Box<dyn Error>> {
         self.require_common_ready()?;
-        if self.expected_mode != "enforce"
-            || self.daemon.requested_mode != "enforce"
-            || self.daemon.effective_mode != "enforce"
-            || self.daemon.startup_state != "ready_enforce"
+        if self.expected_mode != DaemonMode::Enforce
+            || self.daemon.requested_mode != DaemonMode::Enforce
+            || self.daemon.effective_mode != DaemonMode::Enforce
+            || self.daemon.startup_state != StartupState::ReadyEnforce
             || self.daemon.armed_generation != Some(self.active_generation)
             || self
                 .daemon
@@ -880,40 +946,18 @@ fn required_u64(value: &Value, field: &str) -> Result<u64, Box<dyn Error>> {
         .ok_or_else(|| field_error(format!("service JSON omitted integer field {field:?}")))
 }
 
-fn required_u32(value: &Value, field: &str) -> Result<u32, Box<dyn Error>> {
-    u32::try_from(required_u64(value, field)?)
-        .map_err(|_| field_error(format!("service JSON field {field:?} overflowed u32")))
-}
-
-fn required_string<'a>(value: &'a Value, field: &str) -> Result<&'a str, Box<dyn Error>> {
-    value
-        .get(field)
-        .and_then(Value::as_str)
-        .ok_or_else(|| field_error(format!("service JSON omitted string field {field:?}")))
-}
-
-fn optional_u64(value: &Value, field: &str) -> Result<Option<u64>, Box<dyn Error>> {
-    match value.get(field) {
-        None | Some(Value::Null) => Ok(None),
-        Some(value) => value
-            .as_u64()
-            .map(Some)
-            .ok_or_else(|| field_error(format!("service JSON field {field:?} is not an integer"))),
-    }
-}
-
-fn optional_string(value: &Value, field: &str) -> Result<Option<String>, Box<dyn Error>> {
-    match value.get(field) {
-        None | Some(Value::Null) => Ok(None),
-        Some(value) => value
-            .as_str()
-            .map(|value| Some(value.to_owned()))
-            .ok_or_else(|| field_error(format!("service JSON field {field:?} is not a string"))),
-    }
-}
-
 fn set_mode(cli: &Path, mode: &str) -> Result<ManagedServiceSnapshot, Box<dyn Error>> {
-    ManagedServiceSnapshot::parse(&run_cli_json(cli, ["service", "set-mode", mode, "--json"])?)
+    let service = run_cli_json(cli, ["service", "set-mode", mode, "--json"])?;
+    read_managed_service_snapshot(cli, &service)
+}
+
+fn read_managed_service_snapshot(
+    cli: &Path,
+    service: &Value,
+) -> Result<ManagedServiceSnapshot, Box<dyn Error>> {
+    let daemon = run_cli_json(cli, ["status", "--json"])?;
+    let paths = LocalPaths::discover()?;
+    ManagedServiceSnapshot::parse(service, &daemon, cli, &paths)
 }
 
 fn run_cli_json<const N: usize>(cli: &Path, arguments: [&str; N]) -> Result<Value, Box<dyn Error>> {
@@ -1293,7 +1337,6 @@ struct JournalArtifactAction {
 struct BaselineArtifact {
     kind: RuntimeArtifactKind,
     artifact_fingerprint: String,
-    identity: RuntimeArtifactIdentity,
 }
 
 struct TerminalContract<'a> {
@@ -1302,7 +1345,8 @@ struct TerminalContract<'a> {
     epoch: &'a str,
     arm_command_started_at: u64,
     exact_tree_absent_at_ms: u64,
-    baseline_artifact: &'a BaselineArtifact,
+    artifact_cleanup_expected: bool,
+    baseline_artifact: Option<&'a BaselineArtifact>,
     exact_tree: &'a [ProcessIdentity],
     receipt_actions: &'a [CleanupAction],
     receipt_artifact_actions: &'a [ArtifactAction],
@@ -1411,6 +1455,7 @@ impl JournalSnapshot {
             epoch,
             arm_command_started_at,
             exact_tree_absent_at_ms,
+            artifact_cleanup_expected,
             baseline_artifact,
             exact_tree,
             receipt_actions,
@@ -1538,6 +1583,20 @@ impl JournalSnapshot {
             ));
         }
 
+        if !artifact_cleanup_expected {
+            if !self.artifact_actions.is_empty() || !receipt_artifact_actions.is_empty() {
+                return Err(field_error(format!(
+                    "process-only cleanup produced an artifact action: journal={:?}, receipt={receipt_artifact_actions:?}",
+                    self.artifact_actions
+                )));
+            }
+            return Ok(());
+        }
+
+        let baseline_artifact = baseline_artifact.ok_or_else(|| {
+            field_error("artifact-enabled cleanup omitted its exact baseline artifact")
+        })?;
+
         let [artifact] = self.artifact_actions.as_slice() else {
             return Err(field_error(format!(
                 "expected exactly one durable runtime-artifact row, found {:?}",
@@ -1626,11 +1685,11 @@ fn wait_for_rearmed_restart(
         match run_cli_json(cli, ["service", "status", "--json"]) {
             Ok(value) => {
                 trace.status_samples.push(value.clone());
-                match ManagedServiceSnapshot::parse(&value) {
+                match read_managed_service_snapshot(cli, &value) {
                     Ok(status) if status.daemon.instance_id != prior.daemon.instance_id => {
-                        if status.daemon.startup_state != "ready_enforce"
+                        if status.daemon.startup_state != StartupState::ReadyEnforce
                             || !status.daemon.ready
-                            || status.daemon.effective_mode != "enforce"
+                            || status.daemon.effective_mode != DaemonMode::Enforce
                         {
                             trace.transition_observed = true;
                         }
@@ -1840,100 +1899,6 @@ fn wait_for_unique_field_candidate(
             )));
         }
         thread::sleep(POLL_INTERVAL);
-    }
-}
-
-fn unique_field_artifact(
-    report: &unlinger_core::IncidentReport,
-    profile: &Path,
-) -> Result<RuntimeArtifactCandidate, Box<dyn Error>> {
-    let [candidate] = report.runtime_artifacts.as_slice() else {
-        return Err(field_error(format!(
-            "managed field candidate must expose exactly one redacted runtime-artifact plan, found {}",
-            report.runtime_artifacts.len()
-        )));
-    };
-    let expected_path = profile.join("DevToolsActivePort");
-    if candidate.kind() != RuntimeArtifactKind::DevToolsActivePort
-        || candidate.profile_path() != profile
-        || candidate.artifact_path() != expected_path
-        || candidate.artifact_fingerprint().contains('/')
-        || !candidate.artifact_fingerprint().starts_with("art-")
-    {
-        return Err(field_error(
-            "managed field candidate did not expose the exact private-path-free DevToolsActivePort plan",
-        ));
-    }
-    Ok(candidate.clone())
-}
-
-fn wait_for_baseline_artifact(
-    runtime: &mut MacosRuntime,
-    candidate: &RuntimeArtifactCandidate,
-) -> Result<BaselineArtifact, Box<dyn Error>> {
-    let deadline = Instant::now() + Duration::from_secs(20);
-    loop {
-        match runtime.freeze_artifact(candidate)? {
-            ArtifactFreeze::Frozen(frozen) => {
-                return Ok(BaselineArtifact {
-                    kind: candidate.kind(),
-                    artifact_fingerprint: candidate.artifact_fingerprint().to_owned(),
-                    identity: frozen.identity().clone(),
-                });
-            }
-            ArtifactFreeze::Absent if Instant::now() < deadline => {
-                thread::sleep(Duration::from_millis(100));
-            }
-            ArtifactFreeze::Absent => {
-                return Err(field_error(
-                    "Chrome for Testing did not create its exact DevToolsActivePort artifact within 20 seconds",
-                ));
-            }
-            ArtifactFreeze::Unsafe => {
-                return Err(field_error(
-                    "Chrome for Testing created an unsafe DevToolsActivePort artifact",
-                ));
-            }
-        }
-    }
-}
-
-fn require_exact_baseline_artifact(
-    runtime: &mut MacosRuntime,
-    candidate: &RuntimeArtifactCandidate,
-    baseline: &BaselineArtifact,
-) -> Result<(), Box<dyn Error>> {
-    match runtime.freeze_artifact(candidate)? {
-        ArtifactFreeze::Frozen(current)
-            if current.identity() == &baseline.identity
-                && current.candidate().kind() == baseline.kind
-                && current.candidate().artifact_fingerprint() == baseline.artifact_fingerprint =>
-        {
-            Ok(())
-        }
-        ArtifactFreeze::Frozen(_) => Err(field_error(
-            "DevToolsActivePort identity changed between baseline capture and managed arming",
-        )),
-        ArtifactFreeze::Absent => Err(field_error(
-            "DevToolsActivePort disappeared between baseline capture and managed arming",
-        )),
-        ArtifactFreeze::Unsafe => Err(field_error(
-            "DevToolsActivePort became unsafe between baseline capture and managed arming",
-        )),
-    }
-}
-
-fn require_canonical_artifact_absent(
-    candidate: &RuntimeArtifactCandidate,
-) -> Result<(), Box<dyn Error>> {
-    match fs::symlink_metadata(candidate.artifact_path()) {
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(field_error(format!(
-            "could not prove canonical DevToolsActivePort absence: {error}"
-        ))),
-        Ok(_) => Err(field_error(
-            "canonical DevToolsActivePort still existed after terminal cleanup",
-        )),
     }
 }
 

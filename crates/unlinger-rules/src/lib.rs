@@ -1688,6 +1688,7 @@ mod tests {
     struct SupportedArtifact {
         kind: String,
         automatic_eligibility: String,
+        current_rule_enabled: bool,
         synthetic_verified: bool,
         controlled_field_verified: bool,
         ambient_field_verified: bool,
@@ -1698,17 +1699,16 @@ mod tests {
     #[serde(deny_unknown_fields)]
     struct ProtocolSupport {
         source_app_schema: u32,
+        transitional_app_schema: u32,
         source_operator_schema: u32,
         historical_app_schema: u32,
         server_accepts: Vec<u32>,
-        installed_generation: u64,
-        installed_schemas: Vec<u32>,
-        installed_v3_integration: bool,
     }
 
     #[derive(Debug, Deserialize)]
     #[serde(deny_unknown_fields)]
     struct AcceptanceSupport {
+        private_enforcement_candidate_verified: bool,
         ambient_enforcement_accepted: bool,
         multi_day_dogfood_accepted: bool,
         public_release: bool,
@@ -1873,18 +1873,19 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["agent-browser", "playwright", "puppeteer"]
         );
-        assert!(
-            rules
-                .packs()
-                .iter()
-                .all(|pack| pack.artifact_policy.devtools_active_port)
-        );
         assert!(rules.packs().iter().all(|pack| {
             pack.schema_version == 2
+                && pack.version == "0.3.0"
                 && pack.graceful_strategy == GracefulStrategy::OsTermOnly
                 && pack.recorder_executable_basenames == ["ffmpeg"]
                 && matches!(pack.version_policy, VersionPolicy::ExactAllowlist { .. })
         }));
+        assert!(
+            rules
+                .packs()
+                .iter()
+                .all(|pack| !pack.artifact_policy.devtools_active_port)
+        );
     }
 
     #[test]
@@ -1960,20 +1961,20 @@ mod tests {
         assert_eq!(artifact.kind, "devtools_active_port");
         assert_eq!(
             artifact.automatic_eligibility,
-            "exact_admitted_file_after_tree_gone_and_both_revival_checks"
+            "disabled_in_current_process_only_policy"
         );
+        assert!(!artifact.current_rule_enabled);
         assert!(artifact.synthetic_verified);
         assert!(artifact.controlled_field_verified);
         assert!(!artifact.ambient_field_verified);
         assert_eq!(artifact.known_residuals.len(), 2);
 
-        assert_eq!(matrix.protocol.source_app_schema, 3);
+        assert_eq!(matrix.protocol.source_app_schema, 4);
+        assert_eq!(matrix.protocol.transitional_app_schema, 3);
         assert_eq!(matrix.protocol.source_operator_schema, 1);
         assert_eq!(matrix.protocol.historical_app_schema, 2);
-        assert_eq!(matrix.protocol.server_accepts, [1, 3]);
-        assert_eq!(matrix.protocol.installed_generation, 9);
-        assert_eq!(matrix.protocol.installed_schemas, [1]);
-        assert!(!matrix.protocol.installed_v3_integration);
+        assert_eq!(matrix.protocol.server_accepts, [1, 3, 4]);
+        assert!(matrix.acceptance.private_enforcement_candidate_verified);
         assert!(!matrix.acceptance.ambient_enforcement_accepted);
         assert!(!matrix.acceptance.multi_day_dogfood_accepted);
         assert!(!matrix.acceptance.public_release);
@@ -2536,7 +2537,7 @@ mod tests {
     }
 
     #[test]
-    fn abandoned_unique_ephemeral_profile_yields_one_redacted_artifact_candidate() {
+    fn process_only_policy_does_not_admit_an_artifact_candidate() {
         let corpus: Corpus =
             serde_json::from_str(include_str!("../../../fixtures/macos/phase0-corpus.json"))
                 .expect("valid corpus");
@@ -2557,11 +2558,7 @@ mod tests {
             .find(|report| report.signature_pack == "playwright")
             .expect("Playwright report");
 
-        assert_eq!(report.runtime_artifacts.len(), 1);
-        assert_eq!(
-            report.runtime_artifacts[0].kind(),
-            unlinger_core::RuntimeArtifactKind::DevToolsActivePort
-        );
+        assert!(report.runtime_artifacts.is_empty());
         let json = serde_json::to_string(report).expect("redacted report JSON");
         assert!(!json.contains("playwright_chromiumdev_profile-b"));
         assert!(!json.contains("runtime_artifacts"));

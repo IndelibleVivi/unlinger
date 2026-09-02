@@ -1,6 +1,6 @@
 # Installed report-only dogfood runbook
 
-This runbook advances only acceptance level 3. It installs the exact source candidate and packaged App for private report-only observation. It never arms enforcement, runs a signal harness, or accepts the candidate on the owner's behalf.
+This runbook advances only acceptance level 3. It installs the exact source candidate and packaged App for private report-only observation and proves that candidate's own rollback lease. It never arms enforcement, runs a signal harness, or accepts the candidate on the owner's behalf.
 
 ## Preconditions
 
@@ -33,13 +33,13 @@ While that lease is pending, ordinary install, uninstall and `set-mode` remain b
 
 ## Installed App and restart checks
 
-Install the verified ad-hoc bundle at the owner-local application target, preserving any prior bundle as a recoverable sibling until the new App has launched. The packaged executable and resource lookup must contain no source/build-volume path, and a clean launch must not request removable-volume access. Run the opt-in `LiveSocketTests` against the installed service socket, launch the packaged App, and verify that status/history/roster/detail/diagnostics and ordinary mutation reconciliation use schema v3. The regular Dock/window route must remain available independently of status-item discovery by any external menu host. Restart the daemon with:
+Install the verified ad-hoc bundle at the owner-local application target, preserving any prior bundle as a recoverable sibling until the new App has launched. The packaged executable and resource lookup must contain no source/build-volume path, and a clean launch must not request removable-volume access. Run the opt-in `LiveSocketTests` against the installed service socket, launch the packaged App, and verify that status/history/roster/detail/diagnostics and ordinary mutation reconciliation use the candidate's current frontend schema. For the current line this is schema v4, with schema v3 retained only as a transition endpoint; the App must never silently downgrade. The regular Dock/window route must remain available independently of status-item discovery by any external menu host. Restart the daemon with:
 
 ```bash
 <candidate-cli-path> service restart-report-only --json
 ```
 
-Then recreate the App/client state and repeat the v3 read/reconciliation checks. Notification authorization and final visual behavior remain owner-observed macOS UI gates.
+Then recreate the App/client state and repeat the current-schema read/reconciliation checks. Notification authorization and final visual behavior remain owner-observed macOS UI gates.
 
 ## Mandatory rollback proof
 
@@ -50,9 +50,9 @@ Before retaining the candidate for dogfood, exercise the lease rather than merel
 <recorded-prior-cli-path> service status --json
 ```
 
-The restored status must identify the prior generation, return healthy and quiescent `ReadyReportOnly`, remain unarmed, and report the prior SQLite schema. This exact prior CLI/daemon open is the required old-binary proof; a generic SQLite reader is not a substitute.
+The restored status must identify the prior generation, return healthy and quiescent `ReadyReportOnly`, remain unarmed, and report the prior SQLite schema. This exact prior CLI/daemon open is the required old-binary proof; a generic SQLite reader is not a substitute. If the prior daemon supports only an older frontend schema, the preserved prior App bundle is the rollback client; the current App failing closed as incompatible is expected and must not be bypassed with a downgrade.
 
-Reinstall the same exact-head candidate, repeat installed v3 and restart checks, and leave the second candidate at `candidate_ready_report_only` with rollback retained throughout initial dogfood.
+Reinstall the same exact-head candidate as a fresh generation and fresh acceptance transaction, repeat current-schema App and report-only restart checks, and leave the second candidate at `candidate_ready_report_only` until the owner separately accepts it. A prior candidate's rollback proof does not satisfy this fresh transaction.
 
 ## Acceptance and rollback
 
@@ -73,4 +73,4 @@ Only after the owner accepts the observed candidate may the retained prior gener
 
 ## Claim boundary
 
-Passing this runbook permits only **pre-v0.1 installed report-only candidate**. Multi-day dogfood, an ambient eligible incident, any current-candidate enforcement run, the two artifact P2 decisions, universal binaries, Developer ID signing/notarization, distribution and public release remain separate gates.
+Passing this runbook permits only **pre-v0.1 installed report-only candidate**. It does not authorize process enforcement or artifact cleanup. A later process-only field lane must separately prove its exact signal/restart contract and zero artifact actions before activation. Multi-day dogfood, an ambient eligible incident, artifact re-enable, universal binaries, Developer ID signing/notarization, distribution and public release remain separate gates.

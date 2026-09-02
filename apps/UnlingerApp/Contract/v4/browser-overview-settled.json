@@ -34,7 +34,7 @@
         "items": []
       },
       "support_catalog": {
-        "support_revision": "rules:agent-browser@0.2.0|playwright@0.2.0|puppeteer@0.2.0",
+        "support_revision": "rules:agent-browser@0.3.0|playwright@0.3.0|puppeteer@0.3.0",
         "families": [
           {
             "family": "agent-browser",

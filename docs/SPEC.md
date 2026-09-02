@@ -344,14 +344,16 @@ Memory pressure may shorten the delay before the second scan, but does not chang
 11. Send `SIGKILL` only to exact identity-matching survivors or a verified dedicated process group.
 12. Confirm the complete tree is gone.
 13. Re-check for immediate supervisor-driven revival.
-14. Clean only eligible runtime artifacts whose live references are gone.
+14. If the active pack explicitly admits an artifact, clean only artifacts whose live references are gone; current `0.3.0` packs admit none.
 15. Commit a redacted local receipt with independent process/artifact/overall outcomes.
 
 Unlinger never uses broad `killall`, process-name-only `pkill`, or an unrestricted PID list captured minutes earlier.
 
 ### 7.4 Runtime artifact cleanup
 
-Version 0.1 automatically removes only an exact `DevToolsActivePort` file admitted by the active signature pack, and only after proving its frozen file identity, safe parent, exclusive ownership, complete absence of live references, complete process-tree exit, and no revival. Socket, PID-file, lock-file, and other runtime-metadata cleanup remains part of the incident model but is not automatically admitted until a framework-specific canonical convention and the same ownership, reference, and race guarantees have field evidence.
+The engine contains a narrowly scoped `DevToolsActivePort` cleanup capability, but the current owner-approved process-only policy does not activate it. Every policy-version `0.3.0` signature pack sets `devtools_active_port = false`, so the analyzer produces no runtime-artifact candidate and enforcement cannot schedule or journal an artifact action. Re-enabling this path requires a separate owner decision after the crash-after-quarantine and final same-UID swap residuals are resolved or explicitly accepted.
+
+If a later pack explicitly admits the capability, it may remove only one exact `DevToolsActivePort` regular file after proving its frozen file identity, safe parent, exclusive ownership, complete absence of live references, complete process-tree exit, and no revival. Socket, PID-file, lock-file, and other runtime-metadata cleanup remains part of the incident model but is not automatically admitted until a framework-specific canonical convention and the same ownership, reference, and race guarantees have field evidence.
 
 Temporary profile deletion is deferred. A later version may quarantine or delete canonical ephemeral profiles only after a longer delay and a separate safety gate. Standard profiles, persistent profiles, saved authentication state, cookies, and browser data are never deleted by default.
 
@@ -579,7 +581,7 @@ The App may select user-facing coverage copy only from typed compatibility reaso
 ### Completeness
 
 - At least 99% of supported deterministic incidents leave no surviving verified process-tree member after cleanup.
-- An admitted `DevToolsActivePort` file is removed only after the tree is confirmed dead and its exact file identity, ownership, references, parent, and final unlink race are revalidated. Socket/PID artifact admission remains evidence-gated.
+- Current process-only packs produce zero runtime-artifact actions. Any future admitted `DevToolsActivePort` file may be removed only after the tree is confirmed dead and its exact file identity, ownership, references, and parent are revalidated; re-enabling also requires an accepted resolution of the remaining final unlink-race boundary. Socket/PID artifact admission remains evidence-gated.
 - Revival is detected and attributed rather than silently counted as success.
 
 ### Overhead

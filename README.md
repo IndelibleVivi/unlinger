@@ -11,12 +11,12 @@ The repository contains a macOS pre-v0.1 source candidate spanning observation, 
 
 - native current-user process snapshots through `libproc` and `sysctl`;
 - PID plus process-birth and executable-file identity;
-- one shared deterministic sessionizer parameterized by embedded schema-v2 packs for agent-browser, Playwright, and Puppeteer;
+- one shared deterministic sessionizer parameterized by embedded schema-v2, policy-version `0.3.0` packs for agent-browser, Playwright, and Puppeteer;
 - an exact automatic-eligibility point for Chrome for Testing `151.0.7922.34`, while unknown/mixed versions and every controller-bearing session fail closed as `PROTECTED`;
 - hard protection gates, a non-evidentiary 60-second minimum age, two-observation stability, and a durable 90-second abandonment grace;
 - frozen cleanup plans with durable PREPARED actions and fresh whole-incident revalidation before each exact signal stage;
 - controller/root TERM, member TERM, exact-survivor KILL, post-action scans, bounded 15/60-second revival checks, and restart-safe delivery-unknown retry lockout;
-- DAP-only runtime-artifact cleanup with a targeted Darwin pathname-reference query, a complete current-user argv pass, exact file/parent identity, an exclusive quarantine step, and a durable action journal; profiles and runtime directories are never deleted;
+- an implemented but currently dormant DAP-only runtime-artifact path with targeted Darwin pathname-reference proof, complete current-user argv proof, exact file/parent identity, exclusive quarantine, and a durable action journal; all current `0.3.0` packs disable artifact admission, so the process-only candidate cannot schedule or journal an artifact action;
 - independent process/artifact/overall cleanup outcomes, so a proved-gone tree remains visible as reclaimed when an explicitly refused artifact is safely retained; delivery uncertainty and unproved post-side-effect failures still fail closed;
 - redacted SQLite v6 timelines, durable cleanup-policy revision, stable public event tokens, namespace-aware ordinary-mutation receipts, cooling/protection/retry/lifecycle state, terminal receipts stamped at completion, and bounded retention;
 - a 0600 local newline-delimited JSON socket with frontend schema v4, a transitional schema-v3 compatibility endpoint, and a schema-v1 CLI/service lane; v4 adds one atomic daemon-owned browser overview and rule-generated compatibility catalog, while both frontend schemas omit process/service identities, retain durable mutation reconciliation, and cannot encode lifecycle commands; historical v2 is rejected rather than silently downgraded;
@@ -26,9 +26,9 @@ The repository contains a macOS pre-v0.1 source candidate spanning observation, 
 - graceful SIGTERM handling that terminates the current cycle safely, preserves same-generation desired intent for launchd restart, and removes the exact owned socket; explicit service drain clears that intent.
 - a SwiftPM native menu-bar and Dock client under `apps/UnlingerApp`, with a strict schema-v4 browser-first overview that consumes one atomic daemon-owned phase/session/compatibility/coverage/settlement snapshot; the Swift mapper now owns localization and presentation only, while a direct AppKit `@main` owns the status item/popover and reusable ordinary window around that same SwiftUI root, with reliable Dock/window fallback, crash-durable no-resend mutation handling, capability-gated ordinary actions, bounded local notifications, menu-client-only launch at login, bilingual VoiceOver copy, and a private ad-hoc-signed `.app` bundler that rejects removable-volume resource and loader paths.
 
-The current allowed claim is **pre-v0.1 installed report-only candidate**. Exact-head generation 12 and the ad-hoc-signed native App are installed for private dogfood; the daemon is healthy, schema-v3/v6 capable, report-only and unarmed. Its acceptance lease still retains generation 9's manifest/plist/v5 database. A real rollback restored generation 9, whose exact old CLI/daemon reopened v5 and returned healthy ReadyReportOnly, before the candidate was reinstalled. The candidate is deliberately not accepted yet, so rollback remains available throughout initial dogfood.
+The current allowed claim is **private enforcement candidate for the exact admitted point**. BGX-2 generation 13 and the schema-v4 ad-hoc-signed native App are installed for private dogfood. Generation 13 was accepted and later proved exact `ReadyEnforce` plus real cleanup in a controlled run, but is now deliberately contained at healthy `ReadyReportOnly`. The current locally source-complete candidate is process-only: its `0.3.0` packs preserve exact TERM/KILL authorization while setting every runtime-artifact policy to false. That source candidate is not installed or active until exact-head CI and transactional rollback gates pass.
 
-Historical field evidence remains narrower than the source surface: one owner-approved production-timing generation-9 harness passed on the exact admitted Chrome-for-Testing point, with one eight-member tree, nine exact signal actions, zero survivors, both revival checks, one exact `DevToolsActivePort` removal, restart without journal duplication, ordinary-Chrome preservation, and final report-only containment. This is one controlled point—not ambient or broad support. A crash after canonical-to-quarantine rename may still strand the exact quarantine entry, and the final revalidation-to-`unlinkat` interval retains a same-UID swap TOCTOU. Multi-day dogfood, an ambient real eligible incident, narrow enforce acceptance for this candidate, Intel/universal, signing/notarization/distribution and public alpha remain open.
+Field evidence remains narrower than the source surface. The historical generation-13 managed full-timing run reclaimed one isolated Chrome-for-Testing `151.0.7922.34` tree: eight exact processes, nine ordered signal actions, zero survivors, two revival checks, one exact `DevToolsActivePort` removal, same-generation fresh-epoch restart without journal duplication, and final harness containment. The later brief re-arm was also contained. The live v4 overview protects three observed CfT `152.0.7977.42` sessions as unsupported. The historical DAP result does not authorize the current source to delete artifacts: a crash after canonical-to-quarantine rename may strand the quarantine entry, and the final revalidation-to-`unlinkat` interval retains a same-UID swap TOCTOU. The next installed full-timing acceptance must prove the process cleanup again and require zero artifact candidates, receipt actions, and durable artifact rows. Multi-day dogfood, an ambient real eligible incident, broader version evidence, Intel/universal, signing/notarization/distribution and public alpha remain open.
 
 ## Build and inspect
 
@@ -57,7 +57,7 @@ scripts/pre-v0.1-smoke.sh
 
 The smoke script creates and owns one temporary database/socket/lock, keeps the daemon report-only, verifies the v4 App including its atomic browser overview plus the retained frontend commands and durable receipts across restart, checks private modes and no IP listener, and removes only that exact temporary root. It never touches the installed service. See [`apps/UnlingerApp/README.md`](apps/UnlingerApp/README.md).
 
-Do not improvise an installed migration or bypass the service CLI. [`docs/INSTALLED_DOGFOOD.md`](docs/INSTALLED_DOGFOOD.md) remains the operator contract. Generation 12 is intentionally parked at `candidate_ready_report_only`; use its exact CLI for status or rollback, and do not run `accept-candidate`, install/uninstall or change mode until the owner accepts the observed dogfood result.
+Do not improvise an installed migration or bypass the service CLI. [`docs/INSTALLED_DOGFOOD.md`](docs/INSTALLED_DOGFOOD.md) records the completed report-only candidate/rollback lane; [`docs/current-state.md`](docs/current-state.md) owns current runtime truth. Generation 13 is accepted and temporarily contained report-only, so there is no pending candidate rollback lease. Use the exact active-generation CLI for status and require a new owner decision before install, uninstall or another mode change.
 
 For source-only development, run the daemon in its safe default mode and use the local CLI from another terminal:
 
@@ -92,7 +92,7 @@ Full command lines, executable paths, and profile paths exist only in transient 
 - [Privacy](docs/PRIVACY.md)
 - [Local IPC contract](docs/IPC.md)
 - [Pre-v0.1 acceptance levels](docs/PRE_V0_1_ACCEPTANCE.md)
-- [Installed report-only dogfood runbook](docs/INSTALLED_DOGFOOD.md)
+- [Installed report-only dogfood runbook (completed historical lane)](docs/INSTALLED_DOGFOOD.md)
 - [Support truth](docs/SUPPORT.md)
 - [Machine-readable support matrix](docs/support-matrix.v1.json)
 - [Native frontend](apps/UnlingerApp/README.md)

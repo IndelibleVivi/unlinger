@@ -1,6 +1,6 @@
 schema_version = 2
 id = "puppeteer"
-version = "0.2.0"
+version = "0.3.0"
 supported_versions = "Chrome for Testing 151.0.7922.34 only; Puppeteer controller version remains observational"
 graceful_strategy = "os_term_only"
 controller_markers = ["puppeteer", "@puppeteer/browsers"]
@@ -15,4 +15,4 @@ bundle_id = "com.google.chrome.for.testing"
 versions = ["151.0.7922.34"]
 
 [artifact_policy]
-devtools_active_port = true
+devtools_active_port = false

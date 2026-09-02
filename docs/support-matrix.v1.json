@@ -80,7 +80,8 @@
   "artifacts": [
     {
       "kind": "devtools_active_port",
-      "automatic_eligibility": "exact_admitted_file_after_tree_gone_and_both_revival_checks",
+      "automatic_eligibility": "disabled_in_current_process_only_policy",
+      "current_rule_enabled": false,
       "synthetic_verified": true,
       "controlled_field_verified": true,
       "ambient_field_verified": false,
@@ -91,15 +92,14 @@
     }
   ],
   "protocol": {
-    "source_app_schema": 3,
+    "source_app_schema": 4,
+    "transitional_app_schema": 3,
     "source_operator_schema": 1,
     "historical_app_schema": 2,
-    "server_accepts": [1, 3],
-    "installed_generation": 9,
-    "installed_schemas": [1],
-    "installed_v3_integration": false
+    "server_accepts": [1, 3, 4]
   },
   "acceptance": {
+    "private_enforcement_candidate_verified": true,
     "ambient_enforcement_accepted": false,
     "multi_day_dogfood_accepted": false,
     "public_release": false

@@ -231,9 +231,9 @@ V1 may expose bounded internal diagnostic identities needed by CLI/service trans
 
 ## Version skew and installed boundary
 
-Current source accepts schemas 1, 3 and 4. Installed generation 12 accepts schemas 1 and 3; its installed App is correspondingly v3. The source v4 App is not installed and treats that v3-only endpoint as incompatible rather than silently downgrading. The retained generation-9 rollback target accepts only schema 1 and returns a trusted schema-v1 `unsupported_schema` envelope to a frontend request.
+Current source and installed generation 13 accept schemas 1, 3 and 4. The installed App emits schema v4 only and treats a v3-only or v1-only rollback endpoint as incompatible rather than silently downgrading. Schema v3 remains a transition endpoint for its existing commands; schema v1 remains operator-only and returns a trusted `unsupported_schema` envelope to a frontend request.
 
-Generation 12 migrated the active candidate copy to SQLite v6. Generation 9 supports v5 and cannot reopen a v6 database, so the service retains its prior v5 snapshot and exact generation identity after candidate readiness, blocks mode/install/uninstall mutations during that lease, and exposes explicit report-only restart, accept and rollback commands. The real rollback restored generation 9, whose exact old CLI/daemon opened the v5 store and returned healthy ReadyReportOnly; generation 12 was then reinstalled and passed packaged App/daemon restart reconciliation. The lease remains pending and the lane never arms.
+The service retains the prior snapshot and exact generation identity after candidate readiness, blocks mode/install/uninstall mutations during that lease, and exposes explicit report-only restart, accept and rollback commands. A historical real rollback restored generation 9, whose exact old CLI/daemon opened its v5 store and returned healthy ReadyReportOnly before generation 12 was reinstalled. Generation 13 is now accepted on SQLite v6 and has no pending lease. Its own lease was not executed before acceptance, so the next candidate must prove rollback to generation 13 with the exact old CLI/daemon, then reinstall as a fresh generation before acceptance.
 
 ## Verification anchors
 

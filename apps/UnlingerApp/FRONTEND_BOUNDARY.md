@@ -10,11 +10,11 @@
 
 ## Backend truth
 
-Unlinger 是 local-only macOS runtime-hygiene utility。Direct daemon与安装中的 generation 12默认/当前都保持 report-only；installed generation 12提供 schema-v3 App endpoint、SQLite v6，且是 unarmed。Current source daemon同时提供 schema v4与transitional v3；source App只发送v4，并要求atomic `browser_overview`。Generation 12保留到generation 9/v5的rollback lease。Frontend只投影backend truth，不拥有signal authorization、service installation/update/rollback、daemon mode switching或lifecycle recovery。
+Unlinger 是 local-only macOS runtime-hygiene utility。Direct daemon默认report-only；安装中的 accepted generation 13当前也保持healthy `ReadyReportOnly`，提供schema v4与transitional v3、SQLite v6，且无arm或pending lease。Installed App只发送v4，并要求atomic `browser_overview`。Current source另有尚未安装的`0.3.0` process-only policy candidate。Frontend只投影backend truth，不拥有signal authorization、service installation/update/rollback、daemon mode switching或lifecycle recovery。
 
 Schemas v3/v4都提供 status/history/explain/incidents/diagnostics、mutation status，以及pause/resume/named retry/exact protect/unprotect。V4另提供read-only `browser_overview`；v3请求该command会收到typed `invalid_request`，不会downgrade或拼装替代结果。所有actions使用backend capabilities，并由同一backend policy在commit前重新授权。UI缺失capability时fail closed，不从stage、score、reason string或session presence自行猜补。
 
-Automatic admission依然极窄：controllerless exact Chrome for Testing `151.0.7922.34`，且所有 hard gates成立。Unknown/mixed/wrong versions、controller-bearing、headed/attached、standard/shared profile与不完整 identity保持 `PROTECTED`。UI不得添加 manual kill绕过它。
+Automatic process admission依然极窄：controllerless exact Chrome for Testing `151.0.7922.34`，且所有 hard gates成立。Current `0.3.0` packs关闭runtime-artifact admission；这不改变frontend schema，UI也不得从settlement或历史DAP evidence推断当前会删artifact。Unknown/mixed/wrong versions、controller-bearing、headed/attached、standard/shared profile与不完整 identity保持 `PROTECTED`。UI不得添加 manual kill绕过它。
 
 ## State mapping
 
@@ -56,6 +56,6 @@ Click routing复用 shared `AppRouter`，进入 exact incident或 global status�
 
 ## Live boundary
 
-Active generation-12 database属于安装服务并使用 SQLite v6；generation-9 binary只能打开 lease 中保留的 v5 snapshot。Acceptance-scoped prior manifest/plist/v5 DB lease、explicit accept/rollback和exact report-only restart已经通过 [`../../docs/INSTALLED_DOGFOOD.md`](../../docs/INSTALLED_DOGFOOD.md) 的真实 installed proof：generation 9 rollback/open成功，generation 12重新安装，App与daemon restart完成reconciliation，全程没有arm。Lease在initial dogfood期间继续保留。
+Active generation-13 database属于安装服务并使用SQLite v6；它已accepted、healthy report-only且没有pending lease。Generation-12→9曾完成真实old-binary rollback/open，但generation 13自己的lease在accept前没有实际执行；next process-only candidate必须通过[`../../docs/INSTALLED_DOGFOOD.md`](../../docs/INSTALLED_DOGFOOD.md)走完candidate-specific install、restart、rollback到generation 13、fresh reinstall、restart与App reconciliation，不能借用旧proof。
 
-使用 [`scripts/pre-v0.1-smoke.sh`](scripts/pre-v0.1-smoke.sh) 获得可重复的isolated report-only v4 App integration；它也保留v3 transitional regression coverage。Owner-only CfT harness、ambient enforcement与installed dogfood proof仍不属于frontend source validation。
+使用 [`scripts/pre-v0.1-smoke.sh`](scripts/pre-v0.1-smoke.sh) 获得可重复的isolated report-only v4 App integration；它也保留v3 transitional regression coverage。Owner-only CfT harness、process-only activation与installed dogfood proof仍不属于frontend source validation。
