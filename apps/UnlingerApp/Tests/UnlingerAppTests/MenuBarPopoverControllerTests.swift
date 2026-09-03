@@ -9,14 +9,16 @@ struct MenuBarPopoverControllerTests {
     @Test("owns an actionable status item and explicit popover size")
     func configuresStatusItemAndPopover() {
         _ = NSApplication.shared
-        let controller = MenuBarPopoverController(
-            title: "Unlinger",
-            icon: nil
-        ) {
+        let controller = MenuBarPopoverController(title: "Unlinger") {
             Text("Status")
         }
 
         #expect(controller.isConfiguredForTesting)
+        #expect(
+            controller.statusItemAutosaveNameForTesting
+                == MenuBarPopoverController.statusItemAutosaveName
+        )
+        #expect(controller.isStatusItemVisibleForTesting)
         #expect(!controller.isContentLoadedForTesting)
         controller.prepareContentForPresentation()
         #expect(controller.isContentLoadedForTesting)

@@ -11,8 +11,7 @@ let package = Package(
             path: "Sources/UnlingerKit",
             resources: [
                 .process("Copy/en.lproj"),
-                .process("Copy/zh-Hans.lproj"),
-                .process("Assets")
+                .process("Copy/zh-Hans.lproj")
             ]
         ),
         .executableTarget(

@@ -127,8 +127,7 @@ final class UnlingerAppDelegate: NSObject, NSApplicationDelegate {
             appWindowController.show()
         } else {
             menuBarController = MenuBarPopoverController(
-                title: "Unlinger",
-                icon: MenuBarIcon.image
+                title: "Unlinger"
             ) {
                 RootView(
                     environment: self.environment,

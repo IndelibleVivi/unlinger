@@ -7,6 +7,7 @@ import SwiftUI
 @MainActor
 public final class MenuBarPopoverController: NSObject, NSPopoverDelegate {
     public static let contentSize = AppSurfaceLayout.contentSize
+    public static let statusItemAutosaveName = "app.unlinger.menu.primary"
 
     private let statusItem: NSStatusItem
     private let popover = NSPopover()
@@ -14,10 +15,10 @@ public final class MenuBarPopoverController: NSObject, NSPopoverDelegate {
 
     public init<Content: View>(
         title: String,
-        icon: NSImage?,
         @ViewBuilder content: @escaping () -> Content
     ) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        statusItem.autosaveName = Self.statusItemAutosaveName
         makeContent = {
             AnyView(
                 content()
@@ -33,7 +34,7 @@ public final class MenuBarPopoverController: NSObject, NSPopoverDelegate {
         popover.delegate = self
 
         guard let button = statusItem.button else { return }
-        button.image = icon ?? NSImage(
+        button.image = NSImage(
             systemSymbolName: "circle.dashed",
             accessibilityDescription: title
         )
@@ -46,13 +47,22 @@ public final class MenuBarPopoverController: NSObject, NSPopoverDelegate {
 
     var isConfiguredForTesting: Bool {
         guard let button = statusItem.button else { return false }
-        return button.target === self
+        return button.image != nil
+            && button.target === self
             && button.action == #selector(togglePopover(_:))
             && popover.delegate === self
     }
 
     var contentSizeForTesting: NSSize {
         popover.contentSize
+    }
+
+    var statusItemAutosaveNameForTesting: String? {
+        statusItem.autosaveName
+    }
+
+    var isStatusItemVisibleForTesting: Bool {
+        statusItem.isVisible
     }
 
     var isContentLoadedForTesting: Bool {
