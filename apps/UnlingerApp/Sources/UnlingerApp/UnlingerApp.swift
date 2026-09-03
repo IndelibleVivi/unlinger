@@ -4,7 +4,7 @@ import SwiftUI
 import UnlingerKit
 
 /// Play/debug modes via environment:
-/// - `UNLINGER_FIXTURE=<scenario>` drives the UI from canonical v3 fixtures;
+/// - `UNLINGER_FIXTURE=<scenario>` drives the UI from canonical v4 fixtures;
 /// - `UNLINGER_WINDOW=1` shows a regular window for local visual QA.
 enum LaunchMode {
     static var windowed: Bool {
@@ -14,6 +14,15 @@ enum LaunchMode {
     static var fixtureScenario: String? {
         let value = ProcessInfo.processInfo.environment["UNLINGER_FIXTURE"]
         return value?.isEmpty == false ? value : nil
+    }
+
+    static var fixtureRoute: Route? {
+        guard fixtureScenario != nil else { return nil }
+        return switch ProcessInfo.processInfo.environment["UNLINGER_FIXTURE_ROUTE"] {
+        case "history": .history
+        case "settings": .settings
+        default: nil
+        }
     }
 
     static var isBundledApp: Bool {
@@ -30,7 +39,7 @@ enum LaunchMode {
 @MainActor
 final class UnlingerEnvironment {
     let state: AppState
-    let router: AppRouter
+    let navigation: AppNavigationCoordinator
     let settings: AppSettings
 
     // Strong lifetime is part of the notification contract: the center keeps
@@ -39,7 +48,10 @@ final class UnlingerEnvironment {
     private let notificationCoordinator: NotificationCoordinator?
 
     init(fixtureScenario: String?) {
-        let router = AppRouter()
+        let navigation = AppNavigationCoordinator()
+        if let fixtureRoute = LaunchMode.fixtureRoute {
+            navigation.window.path = [fixtureRoute]
+        }
         let settings = AppSettings()
         let client: any UnlingerClient
         if let fixtureScenario {
@@ -53,7 +65,7 @@ final class UnlingerEnvironment {
         // Previews, fixture mode, `swift run`, and tests do not touch the real
         // Notification Center. Authorization belongs to the packaged App.
         if fixtureScenario == nil, LaunchMode.isBundledApp {
-            let systemScheduler = SystemNotificationScheduler(router: router)
+            let systemScheduler = SystemNotificationScheduler(router: navigation.window)
             scheduler = systemScheduler
             coordinator = NotificationCoordinator(
                 scheduler: systemScheduler,
@@ -64,7 +76,7 @@ final class UnlingerEnvironment {
             coordinator = nil
         }
 
-        self.router = router
+        self.navigation = navigation
         self.settings = settings
         self.notificationScheduler = scheduler
         self.notificationCoordinator = coordinator
@@ -96,11 +108,17 @@ final class UnlingerAppDelegate: NSObject, NSApplicationDelegate {
         let appWindowController = AppWindowController(title: "Unlinger") {
             RootView(
                 environment: self.environment,
+                router: self.environment.navigation.window,
                 allowsWindowPresentation: false
             )
         }
         self.appWindowController = appWindowController
-        environment.router.registerWindowOpener { [weak self, weak appWindowController] in
+        environment.navigation.window.registerWindowOpener { [weak appWindowController] in
+            appWindowController?.show()
+        }
+        environment.navigation.menu.registerWindowOpener {
+            [weak self, weak appWindowController, weak navigation = environment.navigation] in
+            navigation?.handOffMenuRouteToWindow()
             self?.menuBarController?.close()
             appWindowController?.show()
         }
@@ -114,6 +132,7 @@ final class UnlingerAppDelegate: NSObject, NSApplicationDelegate {
             ) {
                 RootView(
                     environment: self.environment,
+                    router: self.environment.navigation.menu,
                     allowsWindowPresentation: true
                 )
             }
@@ -135,12 +154,13 @@ final class UnlingerAppDelegate: NSObject, NSApplicationDelegate {
 
 private struct RootView: View {
     let environment: UnlingerEnvironment
+    let router: AppRouter
     let allowsWindowPresentation: Bool
 
     var body: some View {
         MenuPopover(allowsWindowPresentation: allowsWindowPresentation)
             .environment(environment.state)
-            .environment(environment.router)
+            .environment(router)
             .environment(environment.settings)
     }
 }

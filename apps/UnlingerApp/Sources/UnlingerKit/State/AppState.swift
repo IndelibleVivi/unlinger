@@ -37,6 +37,8 @@ public final class AppState {
     public private(set) var status: PublicStatus?
     public private(set) var history: [HistoryEvent] = []
     public private(set) var browserSnapshot: BrowserOverviewSnapshot?
+    public private(set) var browserOverview: BrowserOverview
+    public private(set) var browserHistoryEntries: [BrowserHistoryEntryPresentation] = []
     public private(set) var lastRefreshAt: Date?
     public private(set) var mutationState: MutationState = .idle
     public private(set) var pendingMutation: PendingMutation?
@@ -46,12 +48,6 @@ public final class AppState {
         pendingMutation.map { [$0] } ?? []
     }
 
-    public var browserOverview: BrowserOverview {
-        BrowserOverviewMapper.make(
-            connection: connection,
-            snapshot: browserSnapshot
-        )
-    }
     public var ordinaryMutationsLocked: Bool { pendingMutation != nil || !mutationJournalAvailable }
 
     private let taskCanceller = TaskCanceller()
@@ -75,6 +71,10 @@ public final class AppState {
         self.historyLimit = historyLimit
         self.mutationJournal = mutationLedger
         self.notificationCoordinator = notificationCoordinator
+        self.browserOverview = BrowserOverviewMapper.make(
+            connection: .connecting,
+            snapshot: nil
+        )
     }
 
     public func startPolling(interval: Duration = .seconds(5)) {
@@ -220,6 +220,7 @@ public final class AppState {
                 history = snapshot.history
                 browserSnapshot = snapshot.browser
                 connection = .live
+                rebuildBrowserPresentation()
                 lastRefreshAt = .now
                 await notificationCoordinator?.receiveTrustedRefresh(
                     status: snapshot.status,
@@ -317,8 +318,10 @@ public final class AppState {
             }
         } catch let error {
             switch error {
-            case .incompatibleDaemon(let reason): connection = .incompatibleDaemon(reason)
-            case .unavailable: connection = .unavailable
+            case .incompatibleDaemon(let reason):
+                updateConnection(.incompatibleDaemon(reason))
+            case .unavailable:
+                updateConnection(.unavailable)
             default: break
             }
             if pendingMutation != nil { mutationState = .unresolved(pending) }
@@ -355,7 +358,7 @@ public final class AppState {
                 refreshRequested = true
             }
         case .unavailable:
-            connection = .unavailable
+            updateConnection(.unavailable)
             if await clearPending(pending) {
                 mutationState = .failedBeforeSend(
                     pending,
@@ -367,7 +370,7 @@ public final class AppState {
                 mutationState = .failedBeforeSend(pending, reasonId: reasonID)
             }
         case .incompatibleDaemon(let reason):
-            connection = .incompatibleDaemon(reason)
+            updateConnection(.incompatibleDaemon(reason))
             if await clearPending(pending) {
                 mutationState = .failedBeforeSend(
                     pending,
@@ -421,5 +424,33 @@ public final class AppState {
 
     private func markBrowserSnapshotStaleAfterFailure() {
         browserSnapshot?.freshness = .staleAfterFailure
+        rebuildBrowserPresentation()
+    }
+
+    private func updateConnection(_ next: ConnectionState) {
+        connection = next
+        rebuildBrowserPresentation()
+    }
+
+    /// Publishes the coherent browser and history presentation once per state
+    /// transition. SwiftUI bodies consume these stable values rather than
+    /// regrouping and sorting history during AttributeGraph evaluation.
+    private func rebuildBrowserPresentation() {
+        let overview = BrowserOverviewMapper.make(
+            connection: connection,
+            snapshot: browserSnapshot
+        )
+        if browserOverview != overview {
+            browserOverview = overview
+        }
+        let historyEntries = BrowserHistoryMapper.entries(
+            events: history,
+            currentSessions: overview.sessions,
+            recentSettlement: overview.recentSettlement,
+            mode: status?.effectiveMode
+        )
+        if browserHistoryEntries != historyEntries {
+            browserHistoryEntries = historyEntries
+        }
     }
 }

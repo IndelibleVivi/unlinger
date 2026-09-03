@@ -17,6 +17,11 @@ struct MenuBarPopoverControllerTests {
         }
 
         #expect(controller.isConfiguredForTesting)
+        #expect(!controller.isContentLoadedForTesting)
+        controller.prepareContentForPresentation()
+        #expect(controller.isContentLoadedForTesting)
+        controller.popoverDidClose(Notification(name: NSPopover.didCloseNotification))
+        #expect(!controller.isContentLoadedForTesting)
         #expect(controller.contentSizeForTesting == MenuBarPopoverController.contentSize)
         #expect(controller.contentSizeForTesting.width == 340)
         #expect(controller.contentSizeForTesting.height == 420)

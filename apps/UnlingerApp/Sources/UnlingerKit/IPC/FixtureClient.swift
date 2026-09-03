@@ -255,6 +255,8 @@ extension FixtureClient {
             FixtureClient(statusFixture: "status-paused")
         case "recently-reclaimed", "browser-recent-settlement":
             BrowserFixtureClient(scenario: .recentSettlement)
+        case "browser-history-stress":
+            BrowserFixtureClient(scenario: .historyStress)
         case "needs-attention", "browser-attention":
             BrowserFixtureClient(scenario: .attention)
         case "delivery-uncertain":

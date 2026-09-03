@@ -62,9 +62,6 @@ struct BrowserHistoryRow: View {
         }
         .padding(.vertical, 10)
         .contentShape(Rectangle())
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(BrowserProductCopy.historyAccessibilityLabel(entry))
-        .accessibilityAddTraits(.isButton)
     }
 
     private var symbolName: String {

@@ -6,13 +6,12 @@ public enum Route: Hashable, Sendable {
     case incident(String)
 }
 
-/// One navigation authority shared by the menu popover and compact notification
-/// window. Notification callbacks never mutate a view-local NavigationPath.
+/// One navigation authority for exactly one NavigationStack host. Notification
+/// callbacks use the ordinary-window instance rather than a view-local path.
 @Observable
 @MainActor
 public final class AppRouter {
     public var path: [Route] = []
-    public private(set) var presentationRequested = false
     private var windowOpener: (@MainActor () -> Void)?
 
     public init() {}
@@ -22,7 +21,6 @@ public final class AppRouter {
     }
 
     public func open(_ route: NotificationRoute) {
-        presentationRequested = true
         switch route {
         case .status: path = []
         case .incident(let incidentID): path = [.incident(incidentID)]
@@ -31,15 +29,13 @@ public final class AppRouter {
     }
 
     public func openStatus() {
-        presentationRequested = true
         path = []
         windowOpener?()
     }
 
-    /// Presents the ordinary window without changing the route already chosen
-    /// in the menu-bar popover.
+    /// Requests presentation without changing this host's current route. The
+    /// menu coordinator may consume that route into the ordinary-window host.
     public func presentCurrentRoute() {
-        presentationRequested = true
         windowOpener?()
     }
 
@@ -48,5 +44,21 @@ public final class AppRouter {
     public func goBack() {
         guard !path.isEmpty else { return }
         path.removeLast()
+    }
+}
+
+/// Owns independent navigation storage for the two long-lived AppKit hosts.
+/// Route handoff consumes the hidden popover destination graph after copying
+/// it to the ordinary window, so two NavigationStacks never bind one path.
+@MainActor
+public final class AppNavigationCoordinator {
+    public let menu = AppRouter()
+    public let window = AppRouter()
+
+    public init() {}
+
+    public func handOffMenuRouteToWindow() {
+        window.path = menu.path
+        menu.path.removeAll(keepingCapacity: false)
     }
 }

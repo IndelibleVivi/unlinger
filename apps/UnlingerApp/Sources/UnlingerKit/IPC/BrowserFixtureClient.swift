@@ -9,6 +9,7 @@ public enum BrowserFixtureScenario: Equatable, Sendable {
     case protectedUnsupported
     case attention
     case recentSettlement
+    case historyStress
 }
 
 /// Composes canonical fixtures into deterministic product states for previews
@@ -24,7 +25,7 @@ public struct BrowserFixtureClient: UnlingerClient {
         var status = try await base.status()
         status.latestObservationAtUnixMillis = Self.observedAt
         switch scenario {
-        case .clear, .active, .verifying, .protectedUnsupported:
+        case .clear, .active, .verifying, .protectedUnsupported, .historyStress:
             status.effectiveMode = .reportOnly
             status.confirmedIncidentCount = 0
             status.ambiguousIncidentCount = 0
@@ -50,7 +51,7 @@ public struct BrowserFixtureClient: UnlingerClient {
         let status = try await status()
         let roster = try await incidents()
         let phase: BrowserOverviewPhase = switch scenario {
-        case .clear, .recentSettlement: .clear
+        case .clear, .recentSettlement, .historyStress: .clear
         case .active: .active
         case .verifying: .verifying
         case .confirmedReportOnly: .confirmed
@@ -135,6 +136,17 @@ public struct BrowserFixtureClient: UnlingerClient {
 
     public func history(limit: Int) async throws(ClientError) -> [HistoryEvent] {
         var history = try await base.history(limit: limit)
+        if scenario == .historyStress, let template = history.first {
+            return (0 ..< min(limit, 50)).map { index in
+                HistoryEvent(
+                    eventToken: "fixture-history-stress-event-\(index)",
+                    incidentId: "fixture-history-stress-incident-\(index)",
+                    occurredAtUnixMillis: template.occurredAtUnixMillis - UInt64(index * 60_000),
+                    state: template.state,
+                    payload: template.payload
+                )
+            }
+        }
         guard scenario == .recentSettlement,
               let cleanup = history.first,
               let sourceRoster = try? await FixtureClient(
@@ -165,7 +177,7 @@ public struct BrowserFixtureClient: UnlingerClient {
         guard var first = roster.items.first else { return roster }
 
         switch scenario {
-        case .clear, .recentSettlement:
+        case .clear, .recentSettlement, .historyStress:
             roster.items = []
         case .active:
             first.observation.state = .active
@@ -244,6 +256,12 @@ public struct BrowserFixtureClient: UnlingerClient {
             FixtureClient(
                 statusFixture: "status-all-clear",
                 incidentFixture: "incident-protected"
+            )
+        case .historyStress:
+            FixtureClient(
+                statusFixture: "status-recently-reclaimed",
+                historyFixture: "history-cleared",
+                incidentFixture: "incident-revived"
             )
         case .confirmedReportOnly:
             FixtureClient(

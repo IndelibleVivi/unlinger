@@ -8,10 +8,11 @@ public struct BrowserHomeView: View {
     public var body: some View {
         let overview = state.browserOverview
         let sections = overview.visibleSections(connection: state.connection)
+        let firstSection = sections.first
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 12) {
-                ForEach(Array(sections.enumerated()), id: \.element) { index, section in
-                    if index > 0 { Divider() }
+                ForEach(sections, id: \.self) { section in
+                    if section != firstSection { Divider() }
                     sectionView(section, overview: overview)
                 }
             }

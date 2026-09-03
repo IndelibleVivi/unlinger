@@ -8,13 +8,8 @@ public struct HistoryView: View {
     public init() {}
 
     public var body: some View {
-        let overview = state.browserOverview
-        let entries = BrowserHistoryMapper.entries(
-            events: state.history,
-            currentSessions: overview.sessions,
-            recentSettlement: overview.recentSettlement,
-            mode: state.status?.effectiveMode
-        )
+        let entries = state.browserHistoryEntries
+        let lastEntryID = entries.last?.id
         Group {
             if entries.isEmpty {
                 ContentUnavailableView(
@@ -30,12 +25,14 @@ public struct HistoryView: View {
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                             .padding(.bottom, 8)
-                        ForEach(Array(entries.enumerated()), id: \.element.id) { index, entry in
+                        ForEach(entries) { entry in
                             NavigationLink(value: Route.incident(entry.incidentID)) {
                                 BrowserHistoryRow(entry: entry)
                             }
                             .buttonStyle(.plain)
-                            if index < entries.count - 1 {
+                            .accessibilityElement(children: .ignore)
+                            .accessibilityLabel(BrowserProductCopy.historyAccessibilityLabel(entry))
+                            if entry.id != lastEntryID {
                                 Divider()
                             }
                         }

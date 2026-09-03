@@ -13,7 +13,8 @@ struct BrowserFixtureScenarioTests {
             ("browser-confirmed-report-only", BrowserOverviewPhase.confirmed),
             ("browser-reclaiming", BrowserOverviewPhase.reclaiming),
             ("browser-protected-unsupported", BrowserOverviewPhase.protected),
-            ("browser-attention", BrowserOverviewPhase.attention)
+            ("browser-attention", BrowserOverviewPhase.attention),
+            ("browser-history-stress", BrowserOverviewPhase.clear)
         ]
     )
     func phaseScenario(name: String, expected: BrowserOverviewPhase) async {
@@ -25,6 +26,20 @@ struct BrowserFixtureScenarioTests {
         await state.refresh()
 
         #expect(state.browserOverview.phase == expected)
+    }
+
+    @Test("history stress fixture publishes fifty stable incident rows")
+    func historyStressScenario() async {
+        let state = AppState(
+            client: FixtureClient.scenario("browser-history-stress"),
+            mutationLedger: TestMutationJournal()
+        )
+
+        await state.refresh()
+
+        #expect(state.history.count == 50)
+        #expect(state.browserHistoryEntries.count == 50)
+        #expect(Set(state.browserHistoryEntries.map(\.id)).count == 50)
     }
 
     @Test("recent settlement scenario exposes the atomic typed summary")
@@ -41,6 +56,13 @@ struct BrowserFixtureScenarioTests {
         #expect(settlement.familyKey == "browser.family.chrome_for_testing")
         #expect(settlement.processCount == 8)
         #expect(settlement.revivalChecksCompleted == 2)
+        let expectedHistory = BrowserHistoryMapper.entries(
+            events: state.history,
+            currentSessions: state.browserOverview.sessions,
+            recentSettlement: state.browserOverview.recentSettlement,
+            mode: state.status?.effectiveMode
+        )
+        #expect(state.browserHistoryEntries == expectedHistory)
     }
 
     @Test("unsupported scenario exposes typed coverage and no raw evidence")
