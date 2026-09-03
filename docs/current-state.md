@@ -4,9 +4,9 @@
 
 **Programme:** Unlinger 0.1
 
-**Source:** private pre-v0.1 schema-v4 process-only candidate plus a source repair for the browser-history/Accessibility memory runaway: independent AppKit-host routers, consuming menu-to-window route handoff, stored browser/history presentation, stable SwiftUI identity, one outer Accessibility element per history link, and a fixture-only real-Accessibility external-RSS gate; policy-version `0.3.0` preserves exact process TERM/KILL eligibility and disables runtime-artifact admission in every embedded pack
+**Source:** private pre-v0.1 schema-v4 process-only candidate plus browser-history/Accessibility memory-runaway repair head `e7194f1`: independent AppKit-host routers, consuming menu-to-window route handoff, stored browser/history presentation, stable SwiftUI identity, one outer Accessibility element per history link, transient popover content, and a fixture-only native-Accessibility external-RSS gate; policy-version `0.3.0` preserves exact process TERM/KILL eligibility and disables runtime-artifact admission in every embedded pack
 
-**Remote:** incident-truth head `d0db4623e98862a48cdcdc423a8b7c52c5af074f` passed exact-head private macOS `backend` run `33764324861`. The source repair described above passed the full local workspace, bundle, isolated socket and native Accessibility/RSS gates and is pending commit, push and exact-head CI. The installed generation-15 daemon remains sourced from process-only implementation head `17cb6a5035f979dc1849c7165038e365d8a202e1`
+**Remote:** source-repair head `e7194f1d1007385037c47561de7a96ce41a4914d` passed exact-head private macOS `backend` run `33774027957`, including formatting, strict clippy, workspace tests, release build, native frontend tests and bundle. The installed generation-15 daemon remains sourced from process-only implementation head `17cb6a5035f979dc1849c7165038e365d8a202e1`
 
 **Installed runtime:** accepted generation 15 from process-only implementation head `17cb6a5`, frontend schemas v4/v3 plus operator schema v1, SQLite v6, healthy `ReadyEnforce`; exact armed generation 15 and a non-empty enforcement epoch; no candidate rollback lease remains
 
