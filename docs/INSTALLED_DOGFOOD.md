@@ -1,12 +1,12 @@
 # Installed report-only dogfood runbook
 
-This runbook advances only acceptance level 3. It installs the exact source candidate and packaged App for private report-only observation and proves that candidate's own rollback lease. It never arms enforcement, runs a signal harness, or accepts the candidate on the owner's behalf.
+This runbook advances only acceptance level 3. It installs the exact source candidate and packaged App for private report-only observation and proves that candidate's own rollback lease. It never arms enforcement, runs a signal harness, or accepts the candidate on the owner's behalf. The 2026-09-04 generation-16→15→17 execution completed this level-3 lane for schema v5/SQLite v7; the owner's later acceptance and arm were separate explicit actions.
 
 ## Preconditions
 
 - The source commit is pushed and exact-head macOS CI is green.
 - `cargo test --workspace`, the Swift suite, release build and bundle gate pass at that commit.
-- The current installed service is healthy, quiescent, report-only and unarmed.
+- The current installed service is healthy and quiescent. It may already be enforce-mode only when the owner has explicitly authorized replacement; candidate install must still use the service transaction, which first disarms/drains the exact prior instance and records a report-only rollback floor.
 - Record the current `active_generation`, `cli_path`, database schema and service-status output before mutation.
 - Build candidate binaries with `cargo build --release --workspace`; build the App with `apps/UnlingerApp/scripts/bundle.sh`.
 
@@ -33,7 +33,7 @@ While that lease is pending, ordinary install, uninstall and `set-mode` remain b
 
 ## Installed App and restart checks
 
-Install the verified ad-hoc bundle at the owner-local application target, preserving any prior bundle as a recoverable sibling until the new App has launched. The packaged executable and resource lookup must contain no source/build-volume path, and a clean launch must not request removable-volume access. Run the opt-in `LiveSocketTests` against the installed service socket, launch the packaged App, and verify that status/history/roster/detail/diagnostics and ordinary mutation reconciliation use the candidate's current frontend schema. For the current line this is schema v4, with schema v3 retained only as a transition endpoint; the App must never silently downgrade. The regular Dock/window route must remain available independently of status-item discovery by any external menu host. Restart the daemon with:
+Install the verified ad-hoc bundle at the owner-local application target, preserving any prior bundle as a recoverable sibling until the new App has launched. The packaged executable and resource lookup must contain no source/build-volume path, and a clean launch must not request removable-volume access. Run the opt-in `LiveSocketTests` against the installed service socket, launch the packaged App, and verify that status/history/roster/detail/diagnostics and ordinary mutation reconciliation use the candidate's current frontend schema. For the current line this is schema v5, with v4 and v3 retained only as compatibility endpoints; the App must never silently downgrade. The regular Dock/window route must remain available independently of status-item discovery by any external menu host. Restart the daemon with:
 
 ```bash
 <candidate-cli-path> service restart-report-only --json
@@ -73,4 +73,4 @@ Only after the owner accepts the observed candidate may the retained prior gener
 
 ## Claim boundary
 
-Passing this runbook permits only **pre-v0.1 installed report-only candidate**. It does not authorize process enforcement or artifact cleanup. A later process-only field lane must separately prove its exact signal/restart contract and zero artifact actions before activation. Multi-day dogfood, an ambient eligible incident, artifact re-enable, universal binaries, Developer ID signing/notarization, distribution and public release remain separate gates.
+Passing this runbook permits only **pre-v0.1 installed report-only candidate**. It does not by itself authorize process enforcement or artifact cleanup. A later process-only field lane is the ordinary prerequisite for a Level-4 claim. On 2026-09-04 the owner separately directed generation 17 into live private enforcement after this Level-3 transaction without running the candidate-specific signal harness; that exceptional activation is recorded as active dogfood, not as generation-17 or CfT-152 Level-4 evidence. Multi-day dogfood, an ambient eligible incident, artifact re-enable, universal binaries, Developer ID signing/notarization, distribution and public release remain separate gates.
