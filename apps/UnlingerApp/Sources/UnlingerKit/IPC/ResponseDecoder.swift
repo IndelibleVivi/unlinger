@@ -1,6 +1,6 @@
 import Foundation
 
-/// Strictly validates the schema-v4 response envelope, then decodes the
+/// Strictly validates the schema-v5 response envelope, then decodes the
 /// concrete `payload.data` DTO with exact CodingKeys. JSONSerialization is used
 /// only after typed header validation to isolate and semantically re-encode the
 /// data object; it is never used to coerce trusted integer fields.

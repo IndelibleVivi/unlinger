@@ -14,6 +14,7 @@ use unlinger_core::{
     CleanupActionJournal, CleanupOutcome, CleanupReceipt, CleanupResources, CleanupSignal,
     CleanupStage, EvidenceItem, GateLedger, IncidentReport, IncidentState, ProcessOutcome,
     ProcessRoleCount, RootSummary, RuntimeArtifactKind, RuntimeFailure, SignalDisposition,
+    StorageResidueKind, StorageResidueObservation,
 };
 use unlinger_protocol::{
     MutationContext, MutationKind, MutationOutcome, MutationReceipt, MutationResult,
@@ -24,13 +25,15 @@ use crate::public_action_policy::{
     PolicyDecision, RuntimePolicyFacts, StorePolicyFacts, evaluate_action,
 };
 
-const SCHEMA_VERSION: i64 = 6;
+const SCHEMA_VERSION: i64 = 7;
+const CLEANUP_DETAIL_RETENTION_MILLIS: u64 = 14 * 24 * 60 * 60 * 1_000;
 const MAX_ATTENTION_SUMMARIES: usize = 50;
 const MAX_MUTATION_RECEIPTS: usize = 10_000;
 pub const MUTATION_RECONCILIATION_WINDOW_MILLIS: u64 = 14 * 24 * 60 * 60 * 1_000;
 const MAX_REDACTED_IDENTIFIER_CHARS: usize = 192;
 const MAX_REASON_ID_CHARS: usize = 128;
 const MAX_RESOURCE_RECEIPT_BYTES: usize = 4 * 1024;
+const MAX_STORAGE_RESIDUE_OBSERVATION_BYTES: usize = 4 * 1024;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -106,7 +109,9 @@ pub struct HistoryEvent {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub attempt_id: Option<i64>,
     pub incident_id: String,
+    pub first_occurred_at_unix_millis: u64,
     pub occurred_at_unix_millis: u64,
+    pub observation_count: usize,
     pub kind: EventKind,
     pub state: IncidentState,
     pub payload: EventPayload,
@@ -323,6 +328,50 @@ pub struct MostRecentReclaim {
     pub occurred_at_unix_millis: u64,
     pub state: IncidentState,
     pub outcome: CleanupOutcome,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ImpactHistoryCompleteness {
+    Complete,
+    PartialBackfill,
+}
+
+impl ImpactHistoryCompleteness {
+    fn parse(value: &str) -> Result<Self, StoreError> {
+        match value {
+            "complete" => Ok(Self::Complete),
+            "partial_backfill" => Ok(Self::PartialBackfill),
+            other => Err(StoreError::Corrupt(format!(
+                "unknown impact history completeness {other:?}"
+            ))),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct CleanupImpact {
+    pub event_token: String,
+    pub incident_id: String,
+    pub family: String,
+    pub family_version: String,
+    pub occurred_at_unix_millis: u64,
+    pub state: IncidentState,
+    pub outcome: CleanupOutcome,
+    pub process_count: Option<usize>,
+    pub estimated_reclaimed_memory_bytes: Option<u64>,
+    pub revival_checks_completed: usize,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct CleanupImpactSummary {
+    pub tracking_started_at_unix_millis: u64,
+    pub historical_completeness: ImpactHistoryCompleteness,
+    pub terminal_cleanup_count: usize,
+    pub proved_reclaim_count: usize,
+    pub reclaimed_process_count: Option<usize>,
+    pub estimated_reclaimed_memory_bytes: Option<u64>,
+    pub recent: Vec<CleanupImpact>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -605,6 +654,74 @@ impl HistoryStore {
                 })
             },
         )
+        .transpose()
+    }
+
+    pub fn record_storage_residue_observation(
+        &self,
+        observation: &StorageResidueObservation,
+    ) -> Result<(), StoreError> {
+        if observation.kind != StorageResidueKind::ChromeCodeSignClone
+            || observation.automatic_cleanup_eligible
+        {
+            return Err(StoreError::Invalid(
+                "storage residue observations must remain typed and observe-only".to_owned(),
+            ));
+        }
+        let payload_json = serde_json::to_string(observation)?;
+        if payload_json.len() > MAX_STORAGE_RESIDUE_OBSERVATION_BYTES {
+            return Err(StoreError::Invalid(
+                "storage residue observation exceeds its storage bound".to_owned(),
+            ));
+        }
+        let observed_at = sqlite_millis(
+            observation.observed_at_unix_millis,
+            "storage residue observation timestamp",
+        )?;
+        let connection = self.connection()?;
+        connection.execute(
+            "INSERT INTO storage_residue_latest (
+                 kind, observed_at_ms, payload_json
+             ) VALUES ('chrome_code_sign_clone', ?1, ?2)
+             ON CONFLICT(kind) DO UPDATE SET
+                 observed_at_ms = excluded.observed_at_ms,
+                 payload_json = excluded.payload_json",
+            params![observed_at, payload_json],
+        )?;
+        Ok(())
+    }
+
+    pub fn latest_storage_residue_observation(
+        &self,
+    ) -> Result<Option<StorageResidueObservation>, StoreError> {
+        let connection = self.connection()?;
+        let row = connection
+            .query_row(
+                "SELECT observed_at_ms, payload_json FROM storage_residue_latest
+                 WHERE kind = 'chrome_code_sign_clone'",
+                [],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
+            )
+            .optional()?;
+        row.map(|(observed_at, payload_json)| {
+            if payload_json.len() > MAX_STORAGE_RESIDUE_OBSERVATION_BYTES {
+                return Err(StoreError::Corrupt(
+                    "persisted storage residue observation exceeds its bound".to_owned(),
+                ));
+            }
+            let observation = serde_json::from_str::<StorageResidueObservation>(&payload_json)?;
+            let indexed_at =
+                parse_nonnegative_millis(observed_at, "storage residue observation timestamp")?;
+            if observation.kind != StorageResidueKind::ChromeCodeSignClone
+                || observation.observed_at_unix_millis != indexed_at
+                || observation.automatic_cleanup_eligible
+            {
+                return Err(StoreError::Corrupt(
+                    "storage residue index disagrees with its observe-only payload".to_owned(),
+                ));
+            }
+            Ok(observation)
+        })
         .transpose()
     }
 
@@ -1033,13 +1150,12 @@ impl HistoryStore {
         report: &IncidentReport,
     ) -> Result<i64, StoreError> {
         let redacted = ObservationRecord::from(report);
-        self.insert_event(
-            occurred_at_unix_millis,
-            &report.incident_id,
-            EventKind::Observation,
-            report.state,
-            &EventPayload::Observation { report: redacted },
-        )
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let event_id =
+            upsert_observation_span_transaction(&transaction, occurred_at_unix_millis, &redacted)?;
+        transaction.commit()?;
+        Ok(event_id)
     }
 
     /// Commits one complete owner-protection-adjusted observation snapshot.
@@ -1055,14 +1171,10 @@ impl HistoryStore {
         let mut event_ids = Vec::with_capacity(reports.len());
         for report in reports {
             let redacted = ObservationRecord::from(report);
-            event_ids.push(insert_event_transaction(
+            event_ids.push(upsert_observation_span_transaction(
                 &transaction,
-                None,
                 occurred_at_unix_millis,
-                &report.incident_id,
-                EventKind::Observation,
-                report.state,
-                &EventPayload::Observation { report: redacted },
+                &redacted,
             )?);
         }
         transaction.commit()?;
@@ -1117,15 +1229,26 @@ impl HistoryStore {
         transaction.execute(
             "INSERT INTO cleanup_attempts (
                  incident_id, tracking_key, root_identity_fingerprint,
-                 member_fingerprint, enforcement_epoch, started_at_ms
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                 member_fingerprint, enforcement_epoch, started_at_ms,
+                 signature_pack, signature_version, observed_process_count,
+                 observed_resident_memory_bytes
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             params![
                 report.incident_id,
                 report.tracking_key,
                 report.root.identity_fingerprint,
                 report.member_fingerprint,
                 enforcement_epoch,
-                occurred_at
+                occurred_at,
+                report.signature_pack,
+                report.signature_version,
+                i64::try_from(report.member_count).map_err(|_| {
+                    StoreError::Range("cleanup process count overflowed i64".to_owned())
+                })?,
+                sqlite_u64(
+                    report.resident_memory_bytes,
+                    "cleanup observed resident memory",
+                )?
             ],
         )?;
         let attempt_id = transaction.last_insert_rowid();
@@ -1527,7 +1650,7 @@ impl HistoryStore {
                 attempt.id,
             )?;
         }
-        insert_event_transaction(
+        let terminal_event_id = insert_event_transaction(
             &transaction,
             Some(attempt.id),
             occurred_at_unix_millis,
@@ -1537,6 +1660,13 @@ impl HistoryStore {
             &EventPayload::Cleanup {
                 receipt: projected.clone(),
             },
+        )?;
+        insert_cleanup_impact_transaction(
+            &transaction,
+            attempt.id,
+            terminal_event_id,
+            occurred_at_unix_millis,
+            &projected,
         )?;
         transaction.commit()?;
         Ok(projected)
@@ -1646,7 +1776,7 @@ impl HistoryStore {
                 receipt.reason_id.as_deref(),
                 attempt_id,
             )?;
-            insert_event_transaction(
+            let terminal_event_id = insert_event_transaction(
                 &transaction,
                 Some(attempt_id),
                 occurred_at_unix_millis,
@@ -1656,6 +1786,13 @@ impl HistoryStore {
                 &EventPayload::Cleanup {
                     receipt: receipt.clone(),
                 },
+            )?;
+            insert_cleanup_impact_transaction(
+                &transaction,
+                attempt_id,
+                terminal_event_id,
+                occurred_at_unix_millis,
+                &receipt,
             )?;
             recovered.push(receipt);
         }
@@ -1898,38 +2035,6 @@ impl HistoryStore {
         Ok(true)
     }
 
-    fn insert_event(
-        &self,
-        occurred_at_unix_millis: u64,
-        incident_id: &str,
-        kind: EventKind,
-        state: IncidentState,
-        payload: &EventPayload,
-    ) -> Result<i64, StoreError> {
-        let occurred_at = i64::try_from(occurred_at_unix_millis).map_err(|_| {
-            StoreError::Range("event timestamp cannot be represented by SQLite".to_owned())
-        })?;
-        let payload_json = serde_json::to_string(payload)?;
-        let mut connection = self.connection()?;
-        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        transaction.execute(
-            "INSERT INTO events (
-                 attempt_id, incident_id, occurred_at_ms, kind, state, payload_json
-             ) VALUES (NULL, ?1, ?2, ?3, ?4, ?5)",
-            params![
-                incident_id,
-                occurred_at,
-                kind.as_str(),
-                state_name(state),
-                payload_json
-            ],
-        )?;
-        let event_id = transaction.last_insert_rowid();
-        insert_public_event_token(&transaction, event_id)?;
-        transaction.commit()?;
-        Ok(event_id)
-    }
-
     pub fn history(&self, limit: usize) -> Result<Vec<HistoryEvent>, StoreError> {
         if limit == 0 {
             return Ok(Vec::new());
@@ -1938,7 +2043,8 @@ impl HistoryStore {
             .map_err(|_| StoreError::Range("history limit overflowed i64".to_owned()))?;
         self.query_events(
             "SELECT events.id, events.attempt_id, events.incident_id,
-                    events.occurred_at_ms, events.kind, events.state,
+                    events.first_occurred_at_ms, events.occurred_at_ms,
+                    events.observation_count, events.kind, events.state,
                     events.payload_json, tokens.event_token
              FROM events
              JOIN public_event_tokens AS tokens ON tokens.event_id = events.id
@@ -1948,48 +2054,99 @@ impl HistoryStore {
     }
 
     pub fn most_recent_reclaim(&self) -> Result<Option<MostRecentReclaim>, StoreError> {
-        let mut events = self.query_events(
-            "SELECT events.id, events.attempt_id, events.incident_id,
-                    events.occurred_at_ms, events.kind, events.state,
-                    events.payload_json, tokens.event_token
-             FROM events
-             JOIN public_event_tokens AS tokens ON tokens.event_id = events.id
-             LEFT JOIN cleanup_attempts ON cleanup_attempts.id = events.attempt_id
-             WHERE events.kind = 'cleanup'
-               AND (
-                   events.state = 'CLEARED'
-                   OR cleanup_attempts.reason_id IN (
-                       'cleanup.artifact_identity_changed',
-                       'cleanup.artifact_live_reference',
-                       'cleanup.artifact_unsafe',
-                       'cleanup.artifact_rejected',
-                       'cleanup.artifact_delivery_unknown'
-                   )
-               )
-             ORDER BY events.occurred_at_ms DESC, events.id DESC LIMIT 1",
+        Ok(self
+            .query_cleanup_impacts("WHERE impacts.process_outcome = 'cleared'", 1)?
+            .pop()
+            .map(|impact| MostRecentReclaim {
+                event_token: impact.event_token,
+                incident_id: project_identifier(&impact.incident_id, "redacted-incident"),
+                occurred_at_unix_millis: impact.occurred_at_unix_millis,
+                state: impact.state,
+                outcome: impact.outcome,
+            }))
+    }
+
+    pub fn impact_summary(&self, recent_limit: usize) -> Result<CleanupImpactSummary, StoreError> {
+        let connection = self.connection()?;
+        let authority = connection.query_row(
+            "SELECT tracking_started_at_ms, historical_completeness,
+                    terminal_cleanup_count, proved_reclaim_count,
+                    reclaimed_process_count, reclaimed_process_measurement_count,
+                    estimated_reclaimed_memory_bytes,
+                    reclaimed_memory_measurement_count
+             FROM impact_authority WHERE singleton = 1",
             [],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, i64>(3)?,
+                    row.get::<_, i64>(4)?,
+                    row.get::<_, i64>(5)?,
+                    row.get::<_, i64>(6)?,
+                    row.get::<_, i64>(7)?,
+                ))
+            },
         )?;
-        let Some(event) = events.pop() else {
+        let tracking_started_at_unix_millis = u64::try_from(authority.0)
+            .map_err(|_| StoreError::Corrupt("negative impact tracking timestamp".to_owned()))?;
+        let historical_completeness = ImpactHistoryCompleteness::parse(&authority.1)?;
+        let terminal_cleanup_count = usize::try_from(authority.2)
+            .map_err(|_| StoreError::Corrupt("invalid terminal cleanup count".to_owned()))?;
+        let proved_reclaim_count = usize::try_from(authority.3)
+            .map_err(|_| StoreError::Corrupt("invalid proved reclaim count".to_owned()))?;
+        let reclaimed_process_count = u64::try_from(authority.4)
+            .map_err(|_| StoreError::Corrupt("invalid reclaimed process total".to_owned()))?;
+        let reclaimed_process_measurement_count = usize::try_from(authority.5).map_err(|_| {
+            StoreError::Corrupt("invalid reclaimed process measurement count".to_owned())
+        })?;
+        let estimated_reclaimed_memory_bytes = u64::try_from(authority.6)
+            .map_err(|_| StoreError::Corrupt("invalid reclaimed memory total".to_owned()))?;
+        let reclaimed_memory_measurement_count = usize::try_from(authority.7).map_err(|_| {
+            StoreError::Corrupt("invalid reclaimed memory measurement count".to_owned())
+        })?;
+        drop(connection);
+        Ok(CleanupImpactSummary {
+            tracking_started_at_unix_millis,
+            historical_completeness,
+            terminal_cleanup_count,
+            proved_reclaim_count,
+            reclaimed_process_count: (proved_reclaim_count == reclaimed_process_measurement_count)
+                .then(|| usize::try_from(reclaimed_process_count))
+                .transpose()
+                .map_err(|_| {
+                    StoreError::Corrupt("reclaimed process total overflowed usize".to_owned())
+                })?,
+            estimated_reclaimed_memory_bytes: (proved_reclaim_count
+                == reclaimed_memory_measurement_count)
+                .then_some(estimated_reclaimed_memory_bytes),
+            recent: self.query_cleanup_impacts("", recent_limit.min(1_000))?,
+        })
+    }
+
+    pub fn cleanup_impact_for_event_token(
+        &self,
+        event_token: &str,
+    ) -> Result<Option<CleanupImpact>, StoreError> {
+        let connection = self.connection()?;
+        let impact_id = connection
+            .query_row(
+                "SELECT impacts.id
+                 FROM cleanup_impacts AS impacts
+                 JOIN public_event_tokens AS tokens ON tokens.event_id = impacts.event_id
+                 WHERE tokens.event_token = ?1",
+                params![event_token],
+                |row| row.get::<_, i64>(0),
+            )
+            .optional()?;
+        drop(connection);
+        let Some(impact_id) = impact_id else {
             return Ok(None);
         };
-        let EventPayload::Cleanup { receipt } = event.payload else {
-            return Err(StoreError::Corrupt(
-                "most recent reclaim query selected a non-cleanup payload".to_owned(),
-            ));
-        };
-        let outcome = receipt.outcome();
-        if outcome.process != ProcessOutcome::Cleared {
-            return Err(StoreError::Corrupt(
-                "most recent reclaim query selected an unproved process outcome".to_owned(),
-            ));
-        }
-        Ok(Some(MostRecentReclaim {
-            event_token: event.event_token,
-            incident_id: project_identifier(&receipt.incident_id, "redacted-incident"),
-            occurred_at_unix_millis: event.occurred_at_unix_millis,
-            state: receipt.state,
-            outcome,
-        }))
+        Ok(self
+            .query_cleanup_impacts(&format!("WHERE impacts.id = {impact_id}"), 1)?
+            .pop())
     }
 
     pub fn protect_incident(
@@ -2467,7 +2624,8 @@ impl HistoryStore {
     pub fn explain(&self, incident_id: &str) -> Result<Option<IncidentDetail>, StoreError> {
         let events = self.query_events(
             "SELECT events.id, events.attempt_id, events.incident_id,
-                    events.occurred_at_ms, events.kind, events.state,
+                    events.first_occurred_at_ms, events.occurred_at_ms,
+                    events.observation_count, events.kind, events.state,
                     events.payload_json, tokens.event_token
              FROM events
              JOIN public_event_tokens AS tokens ON tokens.event_id = events.id
@@ -2494,19 +2652,39 @@ impl HistoryStore {
         let cutoff = now_unix_millis.saturating_sub(policy.max_age_millis);
         let cutoff = i64::try_from(cutoff)
             .map_err(|_| StoreError::Range("retention cutoff overflowed i64".to_owned()))?;
+        let cleanup_cutoff = now_unix_millis
+            .saturating_sub(policy.max_age_millis.max(CLEANUP_DETAIL_RETENTION_MILLIS));
+        let cleanup_cutoff = i64::try_from(cleanup_cutoff)
+            .map_err(|_| StoreError::Range("cleanup retention cutoff overflowed i64".to_owned()))?;
         let max_events = i64::try_from(policy.max_events)
             .map_err(|_| StoreError::Range("retention event limit overflowed i64".to_owned()))?;
         let mut connection = self.connection()?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         transaction.execute(
-            "DELETE FROM events WHERE occurred_at_ms < ?1",
+            "DELETE FROM events WHERE kind = 'observation' AND occurred_at_ms < ?1",
             params![cutoff],
         )?;
         transaction.execute(
-            "DELETE FROM events WHERE id NOT IN (\
-                 SELECT id FROM events ORDER BY occurred_at_ms DESC, id DESC LIMIT ?1\
-             )",
+            "DELETE FROM events
+             WHERE kind = 'observation'
+               AND id NOT IN (
+                   SELECT id FROM events WHERE kind = 'observation'
+                   ORDER BY occurred_at_ms DESC, id DESC LIMIT ?1
+               )",
             params![max_events],
+        )?;
+        transaction.execute(
+            "DELETE FROM cleanup_impacts WHERE occurred_at_ms < ?1",
+            params![cleanup_cutoff],
+        )?;
+        transaction.execute(
+            "DELETE FROM events
+             WHERE kind = 'cleanup' AND occurred_at_ms < ?1
+               AND NOT EXISTS (
+                   SELECT 1 FROM cleanup_impacts
+                   WHERE cleanup_impacts.event_id = events.id
+               )",
+            params![cleanup_cutoff],
         )?;
         transaction.execute(
             "DELETE FROM cooling_candidates WHERE last_wall_ms < ?1",
@@ -2536,6 +2714,10 @@ impl HistoryStore {
                        SELECT 1 FROM cleanup_retry_blocks AS blocks
                        WHERE blocks.source_attempt_id = attempts.id
                    )
+                   AND NOT EXISTS (
+                       SELECT 1 FROM cleanup_impacts AS impacts
+                       WHERE impacts.attempt_id = attempts.id
+                   )
              )",
             [],
         )?;
@@ -2551,6 +2733,10 @@ impl HistoryStore {
                        SELECT 1 FROM cleanup_retry_blocks AS blocks
                        WHERE blocks.source_attempt_id = attempts.id
                    )
+                   AND NOT EXISTS (
+                       SELECT 1 FROM cleanup_impacts AS impacts
+                       WHERE impacts.attempt_id = attempts.id
+                   )
              )",
             [],
         )?;
@@ -2563,6 +2749,10 @@ impl HistoryStore {
                AND NOT EXISTS (
                    SELECT 1 FROM cleanup_retry_blocks AS blocks
                    WHERE blocks.source_attempt_id = cleanup_attempts.id
+               )
+               AND NOT EXISTS (
+                   SELECT 1 FROM cleanup_impacts AS impacts
+                   WHERE impacts.attempt_id = cleanup_attempts.id
                )",
             [],
         )?;
@@ -2765,6 +2955,105 @@ impl HistoryStore {
             .map_err(|_| StoreError::Corrupt("negative or oversized event count".to_owned()))
     }
 
+    fn query_cleanup_impacts(
+        &self,
+        predicate: &str,
+        limit: usize,
+    ) -> Result<Vec<CleanupImpact>, StoreError> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+        let limit = i64::try_from(limit)
+            .map_err(|_| StoreError::Range("cleanup impact limit overflowed i64".to_owned()))?;
+        let connection = self.connection()?;
+        let sql = format!(
+            "SELECT tokens.event_token, impacts.incident_id, impacts.family,
+                    impacts.family_version, impacts.occurred_at_ms, impacts.state,
+                    impacts.process_outcome, impacts.artifact_outcome,
+                    impacts.overall_outcome, impacts.process_count,
+                    impacts.estimated_reclaimed_memory_bytes,
+                    impacts.revival_checks_completed
+             FROM cleanup_impacts AS impacts
+             JOIN public_event_tokens AS tokens ON tokens.event_id = impacts.event_id
+             {predicate}
+             ORDER BY impacts.occurred_at_ms DESC, impacts.id DESC LIMIT ?1"
+        );
+        let mut statement = connection.prepare(&sql)?;
+        let rows = statement.query_map(params![limit], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, i64>(4)?,
+                row.get::<_, String>(5)?,
+                row.get::<_, String>(6)?,
+                row.get::<_, String>(7)?,
+                row.get::<_, String>(8)?,
+                row.get::<_, Option<i64>>(9)?,
+                row.get::<_, Option<i64>>(10)?,
+                row.get::<_, i64>(11)?,
+            ))
+        })?;
+        let mut impacts = Vec::new();
+        for row in rows {
+            let (
+                event_token,
+                incident_id,
+                family,
+                family_version,
+                occurred_at,
+                state,
+                process_outcome,
+                artifact_outcome,
+                overall_outcome,
+                process_count,
+                estimated_reclaimed_memory_bytes,
+                revival_checks_completed,
+            ) = row?;
+            if event_token.len() != 32 || !event_token.bytes().all(|byte| byte.is_ascii_hexdigit())
+            {
+                return Err(StoreError::Corrupt(
+                    "cleanup impact has an invalid public event token".to_owned(),
+                ));
+            }
+            impacts.push(CleanupImpact {
+                event_token,
+                incident_id,
+                family,
+                family_version,
+                occurred_at_unix_millis: u64::try_from(occurred_at).map_err(|_| {
+                    StoreError::Corrupt("negative cleanup impact timestamp".to_owned())
+                })?,
+                state: parse_state(&state)?,
+                outcome: CleanupOutcome {
+                    process: parse_process_outcome(&process_outcome)?,
+                    artifact: parse_artifact_outcome(&artifact_outcome)?,
+                    overall: parse_overall_outcome(&overall_outcome)?,
+                    attention_required: overall_outcome != "cleared",
+                },
+                process_count: process_count
+                    .map(|value| {
+                        usize::try_from(value).map_err(|_| {
+                            StoreError::Corrupt("invalid cleanup impact process count".to_owned())
+                        })
+                    })
+                    .transpose()?,
+                estimated_reclaimed_memory_bytes: estimated_reclaimed_memory_bytes
+                    .map(|value| {
+                        u64::try_from(value).map_err(|_| {
+                            StoreError::Corrupt("invalid cleanup impact memory value".to_owned())
+                        })
+                    })
+                    .transpose()?,
+                revival_checks_completed: usize::try_from(revival_checks_completed).map_err(
+                    |_| StoreError::Corrupt("invalid cleanup impact revival count".to_owned()),
+                )?,
+            });
+        }
+        Ok(impacts)
+    }
+
     fn query_events<P: rusqlite::Params>(
         &self,
         sql: &str,
@@ -2778,10 +3067,12 @@ impl HistoryStore {
                 row.get::<_, Option<i64>>(1)?,
                 row.get::<_, String>(2)?,
                 row.get::<_, i64>(3)?,
-                row.get::<_, String>(4)?,
-                row.get::<_, String>(5)?,
+                row.get::<_, i64>(4)?,
+                row.get::<_, i64>(5)?,
                 row.get::<_, String>(6)?,
                 row.get::<_, String>(7)?,
+                row.get::<_, String>(8)?,
+                row.get::<_, String>(9)?,
             ))
         })?;
         let mut events = Vec::new();
@@ -2790,7 +3081,9 @@ impl HistoryStore {
                 event_id,
                 attempt_id,
                 incident_id,
+                first_occurred_at,
                 occurred_at,
+                observation_count,
                 kind,
                 state,
                 payload_json,
@@ -2804,6 +3097,20 @@ impl HistoryStore {
             }
             let occurred_at_unix_millis = u64::try_from(occurred_at)
                 .map_err(|_| StoreError::Corrupt("negative event timestamp".to_owned()))?;
+            let first_occurred_at_unix_millis = u64::try_from(first_occurred_at)
+                .map_err(|_| StoreError::Corrupt("negative event start timestamp".to_owned()))?;
+            if first_occurred_at_unix_millis > occurred_at_unix_millis {
+                return Err(StoreError::Corrupt(format!(
+                    "event {event_id} starts after its latest observation"
+                )));
+            }
+            let observation_count = usize::try_from(observation_count)
+                .map_err(|_| StoreError::Corrupt("invalid event observation count".to_owned()))?;
+            if observation_count == 0 {
+                return Err(StoreError::Corrupt(format!(
+                    "event {event_id} has an empty observation span"
+                )));
+            }
             let kind = EventKind::parse(&kind)?;
             let state = parse_state(&state)?;
             let payload = serde_json::from_str::<EventPayload>(&payload_json)?;
@@ -2817,7 +3124,9 @@ impl HistoryStore {
                 event_token,
                 attempt_id,
                 incident_id,
+                first_occurred_at_unix_millis,
                 occurred_at_unix_millis,
+                observation_count,
                 kind,
                 state,
                 payload,
@@ -3009,6 +3318,10 @@ fn validate_required_schema(connection: &Connection) -> Result<(), StoreError> {
                 "survivor_pids_json",
                 "revival_checks_completed",
                 "resources_json",
+                "signature_pack",
+                "signature_version",
+                "observed_process_count",
+                "observed_resident_memory_bytes",
             ],
         ),
         (
@@ -3056,7 +3369,9 @@ fn validate_required_schema(connection: &Connection) -> Result<(), StoreError> {
             &[
                 "id",
                 "incident_id",
+                "first_occurred_at_ms",
                 "occurred_at_ms",
+                "observation_count",
                 "kind",
                 "state",
                 "payload_json",
@@ -3120,6 +3435,43 @@ fn validate_required_schema(connection: &Connection) -> Result<(), StoreError> {
             ],
         ),
         ("public_event_tokens", &["event_id", "event_token"]),
+        (
+            "cleanup_impacts",
+            &[
+                "id",
+                "attempt_id",
+                "event_id",
+                "incident_id",
+                "family",
+                "family_version",
+                "occurred_at_ms",
+                "state",
+                "process_outcome",
+                "artifact_outcome",
+                "overall_outcome",
+                "process_count",
+                "estimated_reclaimed_memory_bytes",
+                "revival_checks_completed",
+            ],
+        ),
+        (
+            "impact_authority",
+            &[
+                "singleton",
+                "tracking_started_at_ms",
+                "historical_completeness",
+                "terminal_cleanup_count",
+                "proved_reclaim_count",
+                "reclaimed_process_count",
+                "reclaimed_process_measurement_count",
+                "estimated_reclaimed_memory_bytes",
+                "reclaimed_memory_measurement_count",
+            ],
+        ),
+        (
+            "storage_residue_latest",
+            &["kind", "observed_at_ms", "payload_json"],
+        ),
         ("mutation_authority", &["singleton", "namespace_token"]),
         (
             "control_metadata",
@@ -3353,10 +3705,227 @@ fn initialize_schema(connection: &mut Connection) -> Result<(), StoreError> {
             }
             transaction.execute_batch(MIGRATION_V6_SQL)?;
         }
+        if user_version < 7 {
+            add_v7_columns(&transaction)?;
+            transaction.execute_batch(MIGRATION_V7_SQL)?;
+            migrate_v7_history_and_impacts(&transaction)?;
+        }
     }
     transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     transaction.commit()?;
     Ok(())
+}
+
+fn add_v7_columns(transaction: &Transaction<'_>) -> Result<(), StoreError> {
+    if !table_has_column(transaction, "events", "first_occurred_at_ms")? {
+        transaction.execute_batch(
+            "ALTER TABLE events
+                 ADD COLUMN first_occurred_at_ms INTEGER NOT NULL DEFAULT 0
+                     CHECK (first_occurred_at_ms >= 0);",
+        )?;
+    }
+    if !table_has_column(transaction, "events", "observation_count")? {
+        transaction.execute_batch(
+            "ALTER TABLE events
+                 ADD COLUMN observation_count INTEGER NOT NULL DEFAULT 1
+                     CHECK (observation_count >= 1);",
+        )?;
+    }
+    transaction.execute(
+        "UPDATE events SET first_occurred_at_ms = occurred_at_ms
+         WHERE first_occurred_at_ms = 0",
+        [],
+    )?;
+    for (column, definition) in [
+        ("signature_pack", "TEXT"),
+        ("signature_version", "TEXT"),
+        (
+            "observed_process_count",
+            "INTEGER CHECK (observed_process_count >= 0)",
+        ),
+        (
+            "observed_resident_memory_bytes",
+            "INTEGER CHECK (observed_resident_memory_bytes >= 0)",
+        ),
+    ] {
+        if !table_has_column(transaction, "cleanup_attempts", column)? {
+            transaction.execute_batch(&format!(
+                "ALTER TABLE cleanup_attempts ADD COLUMN {column} {definition};"
+            ))?;
+        }
+    }
+    Ok(())
+}
+
+fn table_has_column(
+    transaction: &Transaction<'_>,
+    table: &str,
+    column: &str,
+) -> Result<bool, StoreError> {
+    let pragma = format!("PRAGMA table_info({table})");
+    let mut statement = transaction.prepare(&pragma)?;
+    let rows = statement.query_map([], |row| row.get::<_, String>(1))?;
+    for stored in rows {
+        if stored? == column {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn migrate_v7_history_and_impacts(transaction: &Transaction<'_>) -> Result<(), StoreError> {
+    collapse_legacy_observation_spans(transaction)?;
+    let terminal_events = {
+        let mut statement = transaction.prepare(
+            "SELECT events.id, events.attempt_id, events.occurred_at_ms,
+                    events.payload_json
+             FROM events
+             WHERE events.kind = 'cleanup'
+               AND events.attempt_id IS NOT NULL
+               AND events.state IN ('CLEARED', 'FAILED', 'REVIVED')
+             ORDER BY events.id ASC",
+        )?;
+        statement
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, String>(3)?,
+                ))
+            })?
+            .collect::<Result<Vec<_>, _>>()?
+    };
+    for (event_id, attempt_id, occurred_at, payload_json) in terminal_events {
+        if let Some(report) = latest_observation_before_event(transaction, attempt_id, event_id)? {
+            transaction.execute(
+                "UPDATE cleanup_attempts
+                 SET signature_pack = ?1, signature_version = ?2,
+                     observed_process_count = ?3,
+                     observed_resident_memory_bytes = ?4
+                 WHERE id = ?5",
+                params![
+                    report.signature_pack,
+                    report.signature_version,
+                    i64::try_from(report.member_count).map_err(|_| {
+                        StoreError::Range("legacy impact process count overflowed i64".to_owned())
+                    })?,
+                    sqlite_u64(
+                        report.resident_memory_bytes,
+                        "legacy impact resident memory",
+                    )?,
+                    attempt_id,
+                ],
+            )?;
+        }
+        let EventPayload::Cleanup { receipt } = serde_json::from_str(&payload_json)? else {
+            return Err(StoreError::Corrupt(format!(
+                "terminal event {event_id} contains a non-cleanup payload"
+            )));
+        };
+        insert_cleanup_impact_transaction(
+            transaction,
+            attempt_id,
+            event_id,
+            u64::try_from(occurred_at)
+                .map_err(|_| StoreError::Corrupt("negative legacy impact time".to_owned()))?,
+            &receipt,
+        )?;
+    }
+    transaction.execute(
+        "UPDATE impact_authority
+         SET tracking_started_at_ms = ?1,
+             historical_completeness = 'partial_backfill'
+         WHERE singleton = 1",
+        params![sqlite_millis(
+            current_unix_millis()?,
+            "impact migration timestamp"
+        )?],
+    )?;
+    Ok(())
+}
+
+fn collapse_legacy_observation_spans(transaction: &Transaction<'_>) -> Result<(), StoreError> {
+    let rows = {
+        let mut statement = transaction.prepare(
+            "SELECT id, incident_id, occurred_at_ms, kind, payload_json
+             FROM events ORDER BY incident_id ASC, occurred_at_ms ASC, id ASC",
+        )?;
+        statement
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                ))
+            })?
+            .collect::<Result<Vec<_>, _>>()?
+    };
+    let mut previous: Option<(i64, String, i64, ObservationRecord, i64)> = None;
+    for (event_id, incident_id, occurred_at, kind, payload_json) in rows {
+        if kind != EventKind::Observation.as_str() {
+            previous = None;
+            continue;
+        }
+        let EventPayload::Observation { report } = serde_json::from_str(&payload_json)? else {
+            return Err(StoreError::Corrupt(format!(
+                "legacy observation event {event_id} contains a non-observation payload"
+            )));
+        };
+        if let Some((previous_id, previous_incident, first_at, previous_report, count)) =
+            previous.take()
+            && previous_incident == incident_id
+            && observations_semantically_equal(&previous_report, &report)
+        {
+            let next_count = count.checked_add(1).ok_or_else(|| {
+                StoreError::Range("legacy observation span count overflowed i64".to_owned())
+            })?;
+            transaction.execute(
+                "UPDATE events
+                 SET first_occurred_at_ms = ?1, observation_count = ?2
+                 WHERE id = ?3",
+                params![first_at, next_count, event_id],
+            )?;
+            transaction.execute("DELETE FROM events WHERE id = ?1", params![previous_id])?;
+            previous = Some((event_id, incident_id, first_at, report, next_count));
+        } else {
+            previous = Some((event_id, incident_id, occurred_at, report, 1));
+        }
+    }
+    Ok(())
+}
+
+fn latest_observation_before_event(
+    transaction: &Transaction<'_>,
+    attempt_id: i64,
+    event_id: i64,
+) -> Result<Option<ObservationRecord>, StoreError> {
+    let incident_id = transaction.query_row(
+        "SELECT incident_id FROM cleanup_attempts WHERE id = ?1",
+        params![attempt_id],
+        |row| row.get::<_, String>(0),
+    )?;
+    let payload_json = transaction
+        .query_row(
+            "SELECT payload_json FROM events
+             WHERE incident_id = ?1 AND kind = 'observation' AND id < ?2
+             ORDER BY id DESC LIMIT 1",
+            params![incident_id, event_id],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?;
+    payload_json
+        .map(
+            |payload_json| match serde_json::from_str::<EventPayload>(&payload_json)? {
+                EventPayload::Observation { report } => Ok(report),
+                EventPayload::Cleanup { .. } => Err(StoreError::Corrupt(
+                    "legacy observation lookup selected a cleanup payload".to_owned(),
+                )),
+            },
+        )
+        .transpose()
 }
 
 const MIGRATION_V5_SQL: &str = "DELETE FROM cooling_candidates;
@@ -3457,6 +4026,60 @@ const MIGRATION_V6_SQL: &str = "CREATE TABLE public_event_tokens (
      CREATE INDEX ordinary_mutation_receipts_recent
          ON ordinary_mutation_receipts (committed_at_ms DESC, namespace_token, mutation_id);";
 
+const MIGRATION_V7_SQL: &str = "CREATE TABLE cleanup_impacts (
+         id INTEGER PRIMARY KEY AUTOINCREMENT,
+         attempt_id INTEGER NOT NULL UNIQUE REFERENCES cleanup_attempts(id),
+         event_id INTEGER NOT NULL UNIQUE REFERENCES events(id),
+         incident_id TEXT NOT NULL,
+         family TEXT NOT NULL,
+         family_version TEXT NOT NULL,
+         occurred_at_ms INTEGER NOT NULL CHECK (occurred_at_ms >= 0),
+         state TEXT NOT NULL CHECK (state IN ('CLEARED', 'FAILED', 'REVIVED')),
+         process_outcome TEXT NOT NULL CHECK (
+             process_outcome IN ('cleared', 'revived', 'failed', 'delivery_unknown')
+         ),
+         artifact_outcome TEXT NOT NULL CHECK (
+             artifact_outcome IN ('not_applicable', 'reconciled', 'residue', 'delivery_unknown')
+         ),
+         overall_outcome TEXT NOT NULL CHECK (
+             overall_outcome IN ('cleared', 'cleared_with_residue', 'revived', 'failed')
+         ),
+         process_count INTEGER CHECK (process_count >= 0),
+         estimated_reclaimed_memory_bytes INTEGER
+             CHECK (estimated_reclaimed_memory_bytes >= 0),
+         revival_checks_completed INTEGER NOT NULL
+             CHECK (revival_checks_completed >= 0)
+     );
+     CREATE INDEX cleanup_impacts_recent
+         ON cleanup_impacts (occurred_at_ms DESC, id DESC);
+     CREATE TABLE storage_residue_latest (
+         kind TEXT PRIMARY KEY CHECK (kind IN ('chrome_code_sign_clone')),
+         observed_at_ms INTEGER NOT NULL CHECK (observed_at_ms >= 0),
+         payload_json TEXT NOT NULL
+     );
+     CREATE TABLE impact_authority (
+         singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+         tracking_started_at_ms INTEGER NOT NULL CHECK (tracking_started_at_ms >= 0),
+         historical_completeness TEXT NOT NULL CHECK (
+             historical_completeness IN ('complete', 'partial_backfill')
+         ),
+         terminal_cleanup_count INTEGER NOT NULL CHECK (terminal_cleanup_count >= 0),
+         proved_reclaim_count INTEGER NOT NULL CHECK (proved_reclaim_count >= 0),
+         reclaimed_process_count INTEGER NOT NULL CHECK (reclaimed_process_count >= 0),
+         reclaimed_process_measurement_count INTEGER NOT NULL
+             CHECK (reclaimed_process_measurement_count >= 0),
+         estimated_reclaimed_memory_bytes INTEGER NOT NULL
+             CHECK (estimated_reclaimed_memory_bytes >= 0),
+         reclaimed_memory_measurement_count INTEGER NOT NULL
+             CHECK (reclaimed_memory_measurement_count >= 0)
+     );
+     INSERT INTO impact_authority (
+         singleton, tracking_started_at_ms, historical_completeness,
+         terminal_cleanup_count, proved_reclaim_count,
+         reclaimed_process_count, reclaimed_process_measurement_count,
+         estimated_reclaimed_memory_bytes, reclaimed_memory_measurement_count
+     ) VALUES (1, 0, 'partial_backfill', 0, 0, 0, 0, 0, 0);";
+
 const MIGRATION_V3_FOUNDATIONS_SQL: &str = "CREATE TABLE IF NOT EXISTS cleanup_attempts (
          id INTEGER PRIMARY KEY AUTOINCREMENT,
          incident_id TEXT NOT NULL,
@@ -3540,6 +4163,11 @@ const SCHEMA_SQL: &str = "CREATE TABLE cleanup_attempts (
          revival_checks_completed INTEGER NOT NULL DEFAULT 0
              CHECK (revival_checks_completed >= 0),
          resources_json TEXT,
+         signature_pack TEXT,
+         signature_version TEXT,
+         observed_process_count INTEGER CHECK (observed_process_count >= 0),
+         observed_resident_memory_bytes INTEGER
+             CHECK (observed_resident_memory_bytes >= 0),
          CHECK (
              (completed_at_ms IS NULL AND terminal_state IS NULL)
              OR (completed_at_ms IS NOT NULL AND terminal_state IS NOT NULL)
@@ -3608,11 +4236,18 @@ const SCHEMA_SQL: &str = "CREATE TABLE cleanup_attempts (
      CREATE TABLE events (
          id INTEGER PRIMARY KEY AUTOINCREMENT,
          incident_id TEXT NOT NULL,
+         first_occurred_at_ms INTEGER NOT NULL CHECK (first_occurred_at_ms >= 0),
          occurred_at_ms INTEGER NOT NULL CHECK (occurred_at_ms >= 0),
+         observation_count INTEGER NOT NULL CHECK (observation_count >= 1),
          kind TEXT NOT NULL CHECK (kind IN ('observation', 'cleanup')),
          state TEXT NOT NULL,
          payload_json TEXT NOT NULL,
-         attempt_id INTEGER REFERENCES cleanup_attempts(id)
+         attempt_id INTEGER REFERENCES cleanup_attempts(id),
+         CHECK (first_occurred_at_ms <= occurred_at_ms),
+         CHECK (
+             kind = 'observation'
+             OR (first_occurred_at_ms = occurred_at_ms AND observation_count = 1)
+         )
      );
      CREATE INDEX events_incident_timeline
          ON events (incident_id, occurred_at_ms, id);
@@ -3695,6 +4330,63 @@ const SCHEMA_SQL: &str = "CREATE TABLE cleanup_attempts (
      CREATE TABLE public_event_tokens (
          event_id INTEGER PRIMARY KEY REFERENCES events(id) ON DELETE CASCADE,
          event_token TEXT NOT NULL UNIQUE CHECK (length(event_token) = 32)
+     );
+     CREATE TABLE cleanup_impacts (
+         id INTEGER PRIMARY KEY AUTOINCREMENT,
+         attempt_id INTEGER NOT NULL UNIQUE REFERENCES cleanup_attempts(id),
+         event_id INTEGER NOT NULL UNIQUE REFERENCES events(id),
+         incident_id TEXT NOT NULL,
+         family TEXT NOT NULL,
+         family_version TEXT NOT NULL,
+         occurred_at_ms INTEGER NOT NULL CHECK (occurred_at_ms >= 0),
+         state TEXT NOT NULL CHECK (state IN ('CLEARED', 'FAILED', 'REVIVED')),
+         process_outcome TEXT NOT NULL CHECK (
+             process_outcome IN ('cleared', 'revived', 'failed', 'delivery_unknown')
+         ),
+         artifact_outcome TEXT NOT NULL CHECK (
+             artifact_outcome IN ('not_applicable', 'reconciled', 'residue', 'delivery_unknown')
+         ),
+         overall_outcome TEXT NOT NULL CHECK (
+             overall_outcome IN ('cleared', 'cleared_with_residue', 'revived', 'failed')
+         ),
+         process_count INTEGER CHECK (process_count >= 0),
+         estimated_reclaimed_memory_bytes INTEGER
+             CHECK (estimated_reclaimed_memory_bytes >= 0),
+         revival_checks_completed INTEGER NOT NULL
+             CHECK (revival_checks_completed >= 0)
+     );
+     CREATE INDEX cleanup_impacts_recent
+         ON cleanup_impacts (occurred_at_ms DESC, id DESC);
+     CREATE TABLE storage_residue_latest (
+         kind TEXT PRIMARY KEY CHECK (kind IN ('chrome_code_sign_clone')),
+         observed_at_ms INTEGER NOT NULL CHECK (observed_at_ms >= 0),
+         payload_json TEXT NOT NULL
+     );
+     CREATE TABLE impact_authority (
+         singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+         tracking_started_at_ms INTEGER NOT NULL CHECK (tracking_started_at_ms >= 0),
+         historical_completeness TEXT NOT NULL CHECK (
+             historical_completeness IN ('complete', 'partial_backfill')
+         ),
+         terminal_cleanup_count INTEGER NOT NULL CHECK (terminal_cleanup_count >= 0),
+         proved_reclaim_count INTEGER NOT NULL CHECK (proved_reclaim_count >= 0),
+         reclaimed_process_count INTEGER NOT NULL CHECK (reclaimed_process_count >= 0),
+         reclaimed_process_measurement_count INTEGER NOT NULL
+             CHECK (reclaimed_process_measurement_count >= 0),
+         estimated_reclaimed_memory_bytes INTEGER NOT NULL
+             CHECK (estimated_reclaimed_memory_bytes >= 0),
+         reclaimed_memory_measurement_count INTEGER NOT NULL
+             CHECK (reclaimed_memory_measurement_count >= 0)
+     );
+     INSERT INTO impact_authority (
+         singleton, tracking_started_at_ms, historical_completeness,
+         terminal_cleanup_count, proved_reclaim_count,
+         reclaimed_process_count, reclaimed_process_measurement_count,
+         estimated_reclaimed_memory_bytes, reclaimed_memory_measurement_count
+     ) VALUES (
+         1,
+         CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER),
+         'complete', 0, 0, 0, 0, 0, 0
      );
      CREATE TABLE mutation_authority (
          singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
@@ -4041,8 +4733,9 @@ fn insert_event_transaction(
     let payload_json = serde_json::to_string(payload)?;
     transaction.execute(
         "INSERT INTO events (
-             attempt_id, incident_id, occurred_at_ms, kind, state, payload_json
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+             attempt_id, incident_id, first_occurred_at_ms, occurred_at_ms,
+             observation_count, kind, state, payload_json
+         ) VALUES (?1, ?2, ?3, ?3, 1, ?4, ?5, ?6)",
         params![
             attempt_id,
             incident_id,
@@ -4055,6 +4748,185 @@ fn insert_event_transaction(
     let event_id = transaction.last_insert_rowid();
     insert_public_event_token(transaction, event_id)?;
     Ok(event_id)
+}
+
+fn upsert_observation_span_transaction(
+    transaction: &Transaction<'_>,
+    occurred_at_unix_millis: u64,
+    report: &ObservationRecord,
+) -> Result<i64, StoreError> {
+    let occurred_at = sqlite_millis(occurred_at_unix_millis, "observation timestamp")?;
+    let latest = transaction
+        .query_row(
+            "SELECT id, occurred_at_ms, kind, payload_json
+             FROM events
+             WHERE incident_id = ?1
+             ORDER BY occurred_at_ms DESC, id DESC
+             LIMIT 1",
+            params![report.incident_id],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                ))
+            },
+        )
+        .optional()?;
+    if let Some((event_id, latest_at, kind, payload_json)) = latest
+        && kind == EventKind::Observation.as_str()
+        && latest_at <= occurred_at
+    {
+        let payload = serde_json::from_str::<EventPayload>(&payload_json)?;
+        if let EventPayload::Observation {
+            report: previous_report,
+        } = payload
+            && observations_semantically_equal(&previous_report, report)
+        {
+            let payload_json = serde_json::to_string(&EventPayload::Observation {
+                report: report.clone(),
+            })?;
+            let changed = transaction.execute(
+                "UPDATE events
+                 SET occurred_at_ms = ?1,
+                     observation_count = observation_count + 1,
+                     payload_json = ?2
+                 WHERE id = ?3 AND kind = 'observation'",
+                params![occurred_at, payload_json, event_id],
+            )?;
+            if changed != 1 {
+                return Err(StoreError::Corrupt(format!(
+                    "observation span {event_id} disappeared during extension"
+                )));
+            }
+            return Ok(event_id);
+        }
+    }
+    insert_event_transaction(
+        transaction,
+        None,
+        occurred_at_unix_millis,
+        &report.incident_id,
+        EventKind::Observation,
+        report.state,
+        &EventPayload::Observation {
+            report: report.clone(),
+        },
+    )
+}
+
+fn observations_semantically_equal(
+    previous: &ObservationRecord,
+    current: &ObservationRecord,
+) -> bool {
+    previous.incident_id == current.incident_id
+        && previous.signature_pack == current.signature_pack
+        && previous.signature_version == current.signature_version
+        && previous.state == current.state
+        && previous.root == current.root
+        && previous.member_count == current.member_count
+        && previous.member_fingerprint == current.member_fingerprint
+        && previous.roles == current.roles
+        && previous.evidence == current.evidence
+        && previous.gates == current.gates
+}
+
+fn insert_cleanup_impact_transaction(
+    transaction: &Transaction<'_>,
+    attempt_id: i64,
+    event_id: i64,
+    occurred_at_unix_millis: u64,
+    receipt: &CleanupReceipt,
+) -> Result<(), StoreError> {
+    let (family, family_version, observed_process_count) = transaction.query_row(
+        "SELECT COALESCE(NULLIF(signature_pack, ''), 'unknown'),
+                COALESCE(NULLIF(signature_version, ''), 'unknown'),
+                observed_process_count
+         FROM cleanup_attempts WHERE id = ?1",
+        params![attempt_id],
+        |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, Option<i64>>(2)?,
+            ))
+        },
+    )?;
+    let outcome = receipt.outcome();
+    let process_count = if outcome.process == ProcessOutcome::Cleared {
+        receipt
+            .resources
+            .before
+            .as_ref()
+            .map(|resources| i64::try_from(resources.process_count))
+            .transpose()
+            .map_err(|_| {
+                StoreError::Range("cleanup impact process count overflowed i64".to_owned())
+            })?
+            .or(observed_process_count)
+    } else {
+        None
+    };
+    let estimated_memory = if outcome.process == ProcessOutcome::Cleared {
+        receipt
+            .resources
+            .estimated_reclaimed_memory_bytes
+            .map(|value| sqlite_u64(value, "cleanup impact reclaimed memory"))
+            .transpose()?
+    } else {
+        None
+    };
+    let occurred_at = sqlite_millis(occurred_at_unix_millis, "cleanup impact timestamp")?;
+    transaction.execute(
+        "INSERT INTO cleanup_impacts (
+             attempt_id, event_id, incident_id, family, family_version,
+             occurred_at_ms, state, process_outcome, artifact_outcome,
+             overall_outcome, process_count, estimated_reclaimed_memory_bytes,
+             revival_checks_completed
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+        params![
+            attempt_id,
+            event_id,
+            receipt.incident_id,
+            family,
+            family_version,
+            occurred_at,
+            state_name(receipt.state),
+            process_outcome_name(outcome.process),
+            artifact_outcome_name(outcome.artifact),
+            overall_outcome_name(outcome.overall),
+            process_count,
+            estimated_memory,
+            i64::try_from(receipt.revival_checks_completed).map_err(|_| {
+                StoreError::Range("cleanup impact revival count overflowed i64".to_owned())
+            })?,
+        ],
+    )?;
+    let proved_reclaim = i64::from(outcome.process == ProcessOutcome::Cleared);
+    let process_measurement = i64::from(process_count.is_some());
+    let memory_measurement = i64::from(estimated_memory.is_some());
+    transaction.execute(
+        "UPDATE impact_authority
+         SET terminal_cleanup_count = terminal_cleanup_count + 1,
+             proved_reclaim_count = proved_reclaim_count + ?1,
+             reclaimed_process_count = reclaimed_process_count + COALESCE(?2, 0),
+             reclaimed_process_measurement_count =
+                 reclaimed_process_measurement_count + ?3,
+             estimated_reclaimed_memory_bytes =
+                 estimated_reclaimed_memory_bytes + COALESCE(?4, 0),
+             reclaimed_memory_measurement_count =
+                 reclaimed_memory_measurement_count + ?5
+         WHERE singleton = 1",
+        params![
+            proved_reclaim,
+            process_count,
+            process_measurement,
+            estimated_memory,
+            memory_measurement,
+        ],
+    )?;
+    Ok(())
 }
 
 fn insert_public_event_token(
@@ -4537,6 +5409,20 @@ fn sqlite_millis(value: u64, label: &str) -> Result<i64, StoreError> {
     i64::try_from(value).map_err(|_| StoreError::Range(format!("{label} overflowed i64")))
 }
 
+fn sqlite_u64(value: u64, label: &str) -> Result<i64, StoreError> {
+    i64::try_from(value).map_err(|_| StoreError::Range(format!("{label} overflowed i64")))
+}
+
+fn current_unix_millis() -> Result<u64, StoreError> {
+    let elapsed = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| {
+            StoreError::Invalid(format!("system clock precedes Unix epoch: {error}"))
+        })?;
+    u64::try_from(elapsed.as_millis())
+        .map_err(|_| StoreError::Range("system clock overflowed u64 milliseconds".to_owned()))
+}
+
 fn parse_nonnegative_millis(value: i64, label: &str) -> Result<u64, StoreError> {
     u64::try_from(value).map_err(|_| StoreError::Corrupt(format!("{label} is negative")))
 }
@@ -4695,6 +5581,69 @@ fn parse_artifact_disposition(value: &str) -> Result<ArtifactDisposition, StoreE
         "delivery_unknown" => Ok(ArtifactDisposition::DeliveryUnknown),
         other => Err(StoreError::Corrupt(format!(
             "unknown artifact disposition {other:?}"
+        ))),
+    }
+}
+
+fn process_outcome_name(outcome: ProcessOutcome) -> &'static str {
+    match outcome {
+        ProcessOutcome::Cleared => "cleared",
+        ProcessOutcome::Revived => "revived",
+        ProcessOutcome::Failed => "failed",
+        ProcessOutcome::DeliveryUnknown => "delivery_unknown",
+    }
+}
+
+fn parse_process_outcome(value: &str) -> Result<ProcessOutcome, StoreError> {
+    match value {
+        "cleared" => Ok(ProcessOutcome::Cleared),
+        "revived" => Ok(ProcessOutcome::Revived),
+        "failed" => Ok(ProcessOutcome::Failed),
+        "delivery_unknown" => Ok(ProcessOutcome::DeliveryUnknown),
+        other => Err(StoreError::Corrupt(format!(
+            "unknown process outcome {other:?}"
+        ))),
+    }
+}
+
+fn artifact_outcome_name(outcome: unlinger_core::ArtifactOutcome) -> &'static str {
+    match outcome {
+        unlinger_core::ArtifactOutcome::NotApplicable => "not_applicable",
+        unlinger_core::ArtifactOutcome::Reconciled => "reconciled",
+        unlinger_core::ArtifactOutcome::Residue => "residue",
+        unlinger_core::ArtifactOutcome::DeliveryUnknown => "delivery_unknown",
+    }
+}
+
+fn parse_artifact_outcome(value: &str) -> Result<unlinger_core::ArtifactOutcome, StoreError> {
+    match value {
+        "not_applicable" => Ok(unlinger_core::ArtifactOutcome::NotApplicable),
+        "reconciled" => Ok(unlinger_core::ArtifactOutcome::Reconciled),
+        "residue" => Ok(unlinger_core::ArtifactOutcome::Residue),
+        "delivery_unknown" => Ok(unlinger_core::ArtifactOutcome::DeliveryUnknown),
+        other => Err(StoreError::Corrupt(format!(
+            "unknown artifact outcome {other:?}"
+        ))),
+    }
+}
+
+fn overall_outcome_name(outcome: unlinger_core::OverallOutcome) -> &'static str {
+    match outcome {
+        unlinger_core::OverallOutcome::Cleared => "cleared",
+        unlinger_core::OverallOutcome::ClearedWithResidue => "cleared_with_residue",
+        unlinger_core::OverallOutcome::Revived => "revived",
+        unlinger_core::OverallOutcome::Failed => "failed",
+    }
+}
+
+fn parse_overall_outcome(value: &str) -> Result<unlinger_core::OverallOutcome, StoreError> {
+    match value {
+        "cleared" => Ok(unlinger_core::OverallOutcome::Cleared),
+        "cleared_with_residue" => Ok(unlinger_core::OverallOutcome::ClearedWithResidue),
+        "revived" => Ok(unlinger_core::OverallOutcome::Revived),
+        "failed" => Ok(unlinger_core::OverallOutcome::Failed),
+        other => Err(StoreError::Corrupt(format!(
+            "unknown overall outcome {other:?}"
         ))),
     }
 }

@@ -1,6 +1,6 @@
 import Foundation
 
-/// The schema-v4 ordinary command surface. Fixture-backed in previews/tests,
+/// The schema-v5 ordinary command surface. Fixture-backed in previews/tests,
 /// Unix-socket-backed in production. Every call opens a fresh connection and
 /// makes exactly one attempt — never an automatic resend.
 public protocol UnlingerClient: Sendable {
@@ -43,7 +43,7 @@ extension UnlingerClient {
             T.self,
             expectedPayloadType: expectedType,
             requestID: requestID,
-            expectedSchemaVersion: 4,
+            expectedSchemaVersion: 5,
             line: line
         )
     }

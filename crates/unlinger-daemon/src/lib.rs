@@ -13,12 +13,12 @@ pub use ipc::{
 };
 pub use paths::{DaemonInstanceLock, DaemonLockError, LAUNCH_AGENT_LABEL, LocalPaths, PathError};
 pub use store::{
-    BlockedCleanupSummary, CleanupAttemptHandle, CleanupAttemptJournal, CoolingClock, EventKind,
-    EventPayload, HistoryEvent, HistoryStore, IncidentDetail,
-    MUTATION_RECONCILIATION_WINDOW_MILLIS, ManagedLifecycle, ManagedStartupPhase,
-    MostRecentReclaim, MutationCommit, MutationLookup, ObservationRecord, ObservedIncidentIdentity,
-    OrdinaryMutation, PreparedActionHandle, PreparedArtifactActionHandle, ProtectedIncidentSummary,
-    ProtectionProjection, ProtectionReconciliation, PruneResult, RetentionPolicy,
-    RetryBlockReconciliation, StorageRecoveryOccurrence, StorageRecoveryReason,
-    StoreAttentionProjection, StoreError,
+    BlockedCleanupSummary, CleanupAttemptHandle, CleanupAttemptJournal, CleanupImpact,
+    CleanupImpactSummary, CoolingClock, EventKind, EventPayload, HistoryEvent, HistoryStore,
+    ImpactHistoryCompleteness, IncidentDetail, MUTATION_RECONCILIATION_WINDOW_MILLIS,
+    ManagedLifecycle, ManagedStartupPhase, MostRecentReclaim, MutationCommit, MutationLookup,
+    ObservationRecord, ObservedIncidentIdentity, OrdinaryMutation, PreparedActionHandle,
+    PreparedArtifactActionHandle, ProtectedIncidentSummary, ProtectionProjection,
+    ProtectionReconciliation, PruneResult, RetentionPolicy, RetryBlockReconciliation,
+    StorageRecoveryOccurrence, StorageRecoveryReason, StoreAttentionProjection, StoreError,
 };

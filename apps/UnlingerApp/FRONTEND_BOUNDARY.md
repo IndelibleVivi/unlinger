@@ -3,30 +3,32 @@
 先读：
 
 1. [`Contract/README.md`](Contract/README.md)
-2. [`Contract/v4/`](Contract/v4/) active browser-product fixtures and [`Contract/v3/`](Contract/v3/) transitional shared-command fixtures
+2. [`Contract/v5/`](Contract/v5/) current impact/residue/span fixtures, [`Contract/v4/`](Contract/v4/) transitional browser-product fixtures and [`Contract/v3/`](Contract/v3/) legacy-compatible shared-command fixtures
 3. 需要 transport/error 细节时读 [`docs/IPC.md`](../../docs/IPC.md)
 
 [`Contract/v2/`](Contract/v2/) 只保留历史审计证据。不要从它、transitional v3 data、CLI human output、schema-v1 `DaemonStatus` 或 service lifecycle code反推当前 browser UI。
 
 ## Backend truth
 
-Unlinger 是 local-only macOS runtime-hygiene utility。Direct daemon默认report-only；安装中的accepted generation 15当前是healthy `ReadyEnforce`，提供schema v4与transitional v3、SQLite v6，按generation/epoch绑定`0.3.0` process-only authority且无pending lease。Installed App只发送v4，并要求atomic `browser_overview`。Frontend只投影backend truth，不拥有signal authorization、service installation/update/rollback、daemon mode switching或lifecycle recovery。
+Unlinger 是 local-only macOS runtime-hygiene utility。Direct daemon默认report-only。Current source提供schema v5并保留v4/v3 compatibility，使用SQLite v7与`0.4.0` process-only packs；source App只发送v5，并要求atomic `browser_overview`。安装中的accepted generation 15仍是healthy `ReadyEnforce`，提供schema v4/v3、SQLite v6，按generation/epoch绑定`0.3.0` process-only authority且无pending lease；installed App只发送v4。Frontend只投影backend truth，不拥有signal authorization、storage deletion、service installation/update/rollback、daemon mode switching或lifecycle recovery。
 
-Schemas v3/v4都提供 status/history/explain/incidents/diagnostics、mutation status，以及pause/resume/named retry/exact protect/unprotect。V4另提供read-only `browser_overview`；v3请求该command会收到typed `invalid_request`，不会downgrade或拼装替代结果。所有actions使用backend capabilities，并由同一backend policy在commit前重新授权。UI缺失capability时fail closed，不从stage、score、reason string或session presence自行猜补。
+Schemas v3/v4/v5都提供 status/history/explain/incidents/diagnostics、mutation status，以及pause/resume/named retry/exact protect/unprotect。V4与v5提供read-only `browser_overview`；v5在v4 shape上增加impact、storage residue和observation spans。V3请求overview会收到typed `invalid_request`，不会downgrade或拼装替代结果。所有actions使用backend capabilities，并由同一backend policy在commit前重新授权。UI缺失capability时fail closed，不从stage、score、reason string或session presence自行猜补。
 
-Automatic process admission依然极窄：controllerless exact Chrome for Testing `151.0.7922.34`，且所有 hard gates成立。Current `0.3.0` packs关闭runtime-artifact admission；这不改变frontend schema，UI也不得从settlement或历史DAP evidence推断当前会删artifact。Unknown/mixed/wrong versions、controller-bearing、headed/attached、standard/shared profile与不完整 identity保持 `PROTECTED`。UI不得添加 manual kill绕过它。
+Automatic process admission依然极窄：source只允许controllerless exact Chrome for Testing `151.0.7922.34`或`152.0.7977.42`且所有 hard gates成立；installed generation 15仍只允许151。Source `0.4.0`与installed `0.3.0` packs都关闭runtime-artifact admission；这不改变frontend schema，UI也不得从settlement、residue observation或历史DAP evidence推断当前会删artifact。Unknown/mixed/wrong versions、controller-bearing、headed/attached、standard/shared profile与不完整 identity保持 `PROTECTED`。UI不得添加 manual kill绕过它。
 
 ## State mapping
 
-- schema-v4 `BrowserOverviewSnapshot`是phase、session compatibility、coverage、support catalog、attention/protection与recent settlement的唯一canonical product projection；daemon在一个status+roster snapshot boundary内生成它；
+- schema-v5 `BrowserOverviewSnapshot`是phase、session compatibility、coverage、support catalog、attention/protection、exact recent settlement、independent impact与typed residue的唯一canonical product projection；daemon在一个status+roster snapshot boundary内生成它；
 - daemon先验证`healthy + ready + roster.current + no scan + equal non-null observation time`，不可信或不一致直接给`phase: unknown`；其余phase优先级在server内固定为attention → reclaiming → confirmed → verifying → active → protected → clear；
 - `BrowserOverviewMapper`只负责localized copy与display shape。Popover、ordinary window、detail和preview消费同一组presentation types；Swift不得重扫evidence、重做phase truth table或再次用history join settlement；
-- `BrowserHistoryMapper`是独立的bounded-history presentation path：history index按incident聚合，detail只合并连续且family/state相同的observation；cleanup receipt与state change必须保持独立。它可以用coherent current session补足当前row的product/version与状态，但不得生成compatibility或cleanup authority；
+- `BrowserHistoryMapper`是独立的bounded-history presentation path：history index只发布terminal cleanup outcome；detail消费server-owned observation span并保持cleanup receipt/state change独立。它可以用coherent current session补足当前row的product/version与状态，但不得生成compatibility、impact或cleanup authority；
 - transport unavailable、backend incompatible或stale retained snapshot在App层保持unknown，不能映射成all clear；失败后可保留上一份rows供查看，但不得恢复positive phase；
-- current row可以显示该row自身的member count/RSS；v4没有提供global current totals，因此不得加总展示；
+- current row可以显示该row自身的member count/RSS；schema未提供global current totals，因此不得加总展示；
 - compatibility是typed `product + observed_version + automatic|observe_only|protected|unknown + optional reason_id`。Coverage copy只接受mixed/product/version/missing version、controller unverified、observation only、debug-peer visibility incomplete；未知ID显示generic copy且不原样展示；
 - support catalog必须来自embedded rule authority并携带`support_revision`，Swift fixture/UI不得维护另一份hard-coded eligibility matrix；
 - recent settlement由daemon用exact cleanup `event_token`与更早的event identity生成；同毫秒事件仍按durable event order处理。缺失proof返回nil，不由App猜family/process/memory/artifact facts；
+- impact由独立durable authority提供tracking起点、历史完整度、terminal/proved counts、process count与measurement-complete memory total；UI不得从bounded history重新累计；
+- storage residue仅显示最新typed observation。Chrome code-sign clone logical bytes不是physical reclaim承诺，`automatic_cleanup_eligible`必须为false，App没有删除入口；
 - `cleared_with_residue` 必须同时表达 process success与 artifact residue，不写成 process cleanup failed；
 - ambiguous count、CPU、RSS、age、pressure或 protected incident只提供低调信息，不产生 action或 notification authority；
 - incident detail优先复用 coherent current session，否则使用 retained detail里的最新 observation；若 detail没有 observation但 exact-token settlement join成立，则用该 settlement继续显示 browser family和已有 typed facts，缺失 estimate保持不显示。只有 trusted `not_found`显示不存在。Transport/store/protocol failure保留旧 detail并标 stale；旧 request结果不得覆盖新 request。
@@ -39,11 +41,11 @@ Copy保持安静、直接、non-antivirus。未知 enum/reason显示 generic、�
 
 任意字节可能发送后，timeout/EOF/reset/oversize/bad JSON/wrong schema或 request ID/wrong payload/DTO failure都进入 delivery uncertain。App restart或 “Check again” 只调用 `mutation_status`，永不重发原 mutation。Trusted committed/rejected或 unchanged-authority not-found可以收束；authority lost与 untrusted read保留 journal和 lock。Dismiss只隐藏 banner，不清 authority state。
 
-Schema v4 request遇到exact schema-v1 `unsupported_schema` framing时显示incompatible daemon。App绝不fallback至v3或v1 mutation。
+Schema v5 request遇到exact schema-v1 `unsupported_schema` framing时显示incompatible daemon。App绝不fallback至v4、v3或v1 mutation。
 
 ## Diagnostics and identity
 
-Diagnostics result属于发起view的local state；A view的success不会被B view的failure覆盖。V4 document使用required `document_schema_version: 4`，export是semantic-lossless JSON：保留未知fields但不承诺byte-for-byte layout。
+Diagnostics result属于发起view的local state；A view的success不会被B view的failure覆盖。V5 document使用required `document_schema_version: 5`，export是semantic-lossless JSON：保留未知fields但不承诺byte-for-byte layout。
 
 History index使用redacted incident ID作为一条session row的稳定identity并显示聚合event count；detail timeline继续以最新public `event_token`标识每个保留phase。Action row使用 event token + mutation namespace + stable sequence。Artifact-only group必须显示。Internal event/attempt/PID/fingerprint不是 Swift identity，也不进入 ordinary UI。
 
@@ -59,4 +61,4 @@ Click routing复用 shared `AppRouter`，进入 exact incident或 global status�
 
 Active generation-15 database属于安装服务并使用SQLite v6；它已accepted、healthy process-only enforce且没有pending lease。Candidate A generation 14通过[`../../docs/INSTALLED_DOGFOOD.md`](../../docs/INSTALLED_DOGFOOD.md)完成install、restart与真实rollback到generation 13；same exact-head candidate以generation 15 fresh reinstall，重复restart与serialized App checks后才accept。Full-timing field run结束时先回到report-only，之后才独立arm并通过later sweep。
 
-使用 [`scripts/pre-v0.1-smoke.sh`](scripts/pre-v0.1-smoke.sh) 获得可重复的isolated report-only v4 App integration；它也保留v3 transitional regression coverage。Owner-only CfT harness、process-only activation与installed dogfood proof仍不属于frontend source validation，即使当前generation 15已经分别通过这些runtime gates。
+使用 [`scripts/pre-v0.1-smoke.sh`](scripts/pre-v0.1-smoke.sh) 获得可重复的isolated report-only v5 App integration；它同时保留v4/v3 compatibility regression coverage。Owner-only CfT harness、process-only activation与installed dogfood proof仍不属于frontend source validation，即使当前generation 15已经分别通过这些runtime gates。

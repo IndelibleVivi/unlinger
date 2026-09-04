@@ -2,8 +2,9 @@
 
 use serde::{Deserialize, Serialize};
 
-pub const SCHEMA_VERSION: u32 = 4;
-pub const PREVIOUS_SCHEMA_VERSION: u32 = 3;
+pub const SCHEMA_VERSION: u32 = 5;
+pub const PREVIOUS_SCHEMA_VERSION: u32 = 4;
+pub const LEGACY_SCHEMA_VERSION: u32 = 3;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct RequestEnvelope {
@@ -435,8 +436,16 @@ pub struct HistoryEvent {
     pub event_token: String,
     pub incident_id: String,
     pub occurred_at_unix_millis: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub observation_span: Option<ObservationSpan>,
     pub state: IncidentState,
     pub payload: EventPayload,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ObservationSpan {
+    pub first_observed_at_unix_millis: u64,
+    pub observation_count: usize,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -563,6 +572,60 @@ pub struct BrowserSettlementSummary {
     pub overall_outcome: OverallOutcome,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ImpactHistoryCompleteness {
+    Complete,
+    PartialBackfill,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct BrowserImpactSummary {
+    pub tracking_started_at_unix_millis: u64,
+    pub historical_completeness: ImpactHistoryCompleteness,
+    pub terminal_cleanup_count: usize,
+    pub proved_reclaim_count: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reclaimed_process_count: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub estimated_reclaimed_memory_bytes: Option<u64>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StorageResidueKind {
+    ChromeCodeSignClone,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StorageResidueStatus {
+    Clear,
+    Detected,
+    Unavailable,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StorageResidueReferenceCheck {
+    Incomplete,
+    CompleteNoReferences,
+    Referenced,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct StorageResidueSummary {
+    pub kind: StorageResidueKind,
+    pub status: StorageResidueStatus,
+    pub observed_at_unix_millis: u64,
+    pub candidate_count: usize,
+    pub logical_bytes: u64,
+    pub shape_complete: bool,
+    pub reference_check: StorageResidueReferenceCheck,
+    pub automatic_cleanup_eligible: bool,
+    pub reason_ids: Vec<String>,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct BrowserOverviewSnapshot {
     pub generated_at_unix_millis: u64,
@@ -580,6 +643,10 @@ pub struct BrowserOverviewSnapshot {
     pub coverage_notices: Vec<BrowserCoverageSummary>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub recent_settlement: Option<BrowserSettlementSummary>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub impact: Option<BrowserImpactSummary>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub storage_residue: Option<StorageResidueSummary>,
     pub attention: AttentionProjection,
     pub protection: ProtectionProjection,
     pub support_catalog: BrowserSupportCatalog,
@@ -817,7 +884,7 @@ mod tests {
 
         assert_eq!(
             encoded,
-            r#"{"schema_version":4,"request_id":7,"command":{"command":"status"}}"#
+            r#"{"schema_version":5,"request_id":7,"command":{"command":"status"}}"#
         );
         for forbidden in [
             "arm",
@@ -835,11 +902,12 @@ mod tests {
     }
 
     #[test]
-    fn v4_browser_overview_request_and_response_are_version_explicit() {
+    fn v5_browser_overview_request_and_response_are_version_explicit() {
         let request = RequestEnvelope::new(41, Command::BrowserOverview);
-        assert_eq!(request.schema_version, 4);
-        assert_eq!(SCHEMA_VERSION, 4);
-        assert_eq!(PREVIOUS_SCHEMA_VERSION, 3);
+        assert_eq!(request.schema_version, 5);
+        assert_eq!(SCHEMA_VERSION, 5);
+        assert_eq!(PREVIOUS_SCHEMA_VERSION, 4);
+        assert_eq!(LEGACY_SCHEMA_VERSION, 3);
 
         let snapshot = BrowserOverviewSnapshot {
             generated_at_unix_millis: 123,
@@ -872,6 +940,25 @@ mod tests {
                 reason_id: "protection.browser_version_unsupported".to_owned(),
             }],
             recent_settlement: None,
+            impact: Some(BrowserImpactSummary {
+                tracking_started_at_unix_millis: 100,
+                historical_completeness: ImpactHistoryCompleteness::PartialBackfill,
+                terminal_cleanup_count: 0,
+                proved_reclaim_count: 0,
+                reclaimed_process_count: Some(0),
+                estimated_reclaimed_memory_bytes: Some(0),
+            }),
+            storage_residue: Some(StorageResidueSummary {
+                kind: StorageResidueKind::ChromeCodeSignClone,
+                status: StorageResidueStatus::Clear,
+                observed_at_unix_millis: 123,
+                candidate_count: 0,
+                logical_bytes: 0,
+                shape_complete: true,
+                reference_check: StorageResidueReferenceCheck::Incomplete,
+                automatic_cleanup_eligible: false,
+                reason_ids: vec!["storage_residue.code_sign_clone_absent".to_owned()],
+            }),
             attention: AttentionProjection::default(),
             protection: ProtectionProjection::default(),
             support_catalog: BrowserSupportCatalog {
@@ -884,8 +971,8 @@ mod tests {
                 }],
             },
         };
-        let response = ResponseEnvelope::success_for(4, 41, Payload::BrowserOverview(snapshot));
-        let encoded = serde_json::to_string(&response).expect("encode v4 overview response");
+        let response = ResponseEnvelope::success_for(5, 41, Payload::BrowserOverview(snapshot));
+        let encoded = serde_json::to_string(&response).expect("encode v5 overview response");
         assert!(encoded.contains(r#""type":"browser_overview""#));
         assert!(!encoded.contains("pid"));
         assert!(!encoded.contains("user_data_dir"));
@@ -895,7 +982,7 @@ mod tests {
     #[test]
     fn v3_response_constructor_preserves_the_requested_schema() {
         let response =
-            ResponseEnvelope::success_for(PREVIOUS_SCHEMA_VERSION, 9, Payload::History(Vec::new()));
+            ResponseEnvelope::success_for(LEGACY_SCHEMA_VERSION, 9, Payload::History(Vec::new()));
         assert_eq!(response.schema_version, 3);
         assert_eq!(
             serde_json::to_string(&response).expect("encode v3 response"),
@@ -922,7 +1009,7 @@ mod tests {
         ] {
             let decoded: ResponseEnvelope =
                 serde_json::from_str(source).expect("decode canonical v4 fixture");
-            assert_eq!(decoded.schema_version, SCHEMA_VERSION);
+            assert_eq!(decoded.schema_version, PREVIOUS_SCHEMA_VERSION);
             let Payload::BrowserOverview(overview) =
                 decoded.payload.as_ref().expect("v4 fixture payload")
             else {
@@ -948,6 +1035,49 @@ mod tests {
             }
             let reparsed: ResponseEnvelope =
                 serde_json::from_str(&encoded).expect("reparse canonical v4 fixture");
+            assert_eq!(reparsed, decoded);
+        }
+    }
+
+    #[test]
+    fn canonical_v5_impact_residue_and_span_fixtures_roundtrip() {
+        macro_rules! fixture {
+            ($name:literal) => {
+                include_str!(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/../../apps/UnlingerApp/Contract/v5/",
+                    $name,
+                    ".json"
+                ))
+            };
+        }
+        for source in [
+            fixture!("browser-overview-impact-empty"),
+            fixture!("browser-overview-impact-residue"),
+            fixture!("history-observation-span"),
+        ] {
+            let decoded: ResponseEnvelope =
+                serde_json::from_str(source).expect("decode canonical v5 fixture");
+            assert_eq!(decoded.schema_version, SCHEMA_VERSION);
+            let encoded = serde_json::to_string(&decoded).expect("encode canonical v5 fixture");
+            for forbidden in [
+                "\"pid\"",
+                "tracking_key",
+                "session_fingerprint",
+                "identity_fingerprint",
+                "member_fingerprint",
+                "user_data_dir",
+                "command_line",
+                "activation_generation",
+                "enforcement_epoch",
+            ] {
+                assert!(
+                    !encoded.contains(forbidden),
+                    "v5 fixture leaked {forbidden}"
+                );
+            }
+            let reparsed: ResponseEnvelope =
+                serde_json::from_str(&encoded).expect("reparse canonical v5 fixture");
             assert_eq!(reparsed, decoded);
         }
     }
@@ -994,7 +1124,7 @@ mod tests {
         for source in wire_fixtures {
             let decoded: ResponseEnvelope =
                 serde_json::from_str(source).expect("decode canonical wire fixture");
-            assert_eq!(decoded.schema_version, PREVIOUS_SCHEMA_VERSION);
+            assert_eq!(decoded.schema_version, LEGACY_SCHEMA_VERSION);
             let encoded = serde_json::to_string(&decoded).expect("encode canonical wire fixture");
             let reparsed: ResponseEnvelope =
                 serde_json::from_str(&encoded).expect("reparse canonical wire fixture");

@@ -8,6 +8,9 @@ mod events;
 mod version;
 
 #[cfg(target_os = "macos")]
+mod storage_residue;
+
+#[cfg(target_os = "macos")]
 fn parse_procargs2(buffer: &[u8]) -> Option<Vec<String>> {
     let argc_bytes: [u8; std::mem::size_of::<libc::c_int>()] = buffer
         .get(..std::mem::size_of::<libc::c_int>())?
@@ -992,6 +995,9 @@ pub use events::{EventMonitorError, MacosEventMonitor, MemoryPressureLevel, Runt
 
 #[cfg(target_os = "macos")]
 pub use platform::{MacosRuntime, MacosSnapshotter, SnapshotError};
+
+#[cfg(target_os = "macos")]
+pub use storage_residue::{inspect_code_sign_clone_root, observe_chrome_code_sign_clones};
 
 #[cfg(not(target_os = "macos"))]
 compile_error!("unlinger-macos currently supports only macOS");

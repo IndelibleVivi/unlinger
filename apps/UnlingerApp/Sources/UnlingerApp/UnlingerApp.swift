@@ -4,7 +4,7 @@ import SwiftUI
 import UnlingerKit
 
 /// Play/debug modes via environment:
-/// - `UNLINGER_FIXTURE=<scenario>` drives the UI from canonical v4 fixtures;
+/// - `UNLINGER_FIXTURE=<scenario>` drives the UI from canonical v5 fixtures;
 /// - `UNLINGER_WINDOW=1` shows a regular window for local visual QA.
 enum LaunchMode {
     static var windowed: Bool {

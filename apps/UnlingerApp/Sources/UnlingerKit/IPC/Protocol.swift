@@ -902,6 +902,8 @@ public struct BrowserOverviewSnapshot: Codable, Equatable, Sendable {
     public var sessions: [BrowserSessionSummary]
     public var coverageNotices: [BrowserCoverageSummary]
     public var recentSettlement: BrowserSettlementSummary?
+    public var impact: BrowserImpactSummary? = nil
+    public var storageResidue: StorageResidueSummary? = nil
     public var attention: AttentionProjection
     public var protection: ProtectionProjection
     public var supportCatalog: BrowserSupportCatalog
@@ -916,8 +918,72 @@ public struct BrowserOverviewSnapshot: Codable, Equatable, Sendable {
         case phase, sessions
         case coverageNotices = "coverage_notices"
         case recentSettlement = "recent_settlement"
+        case impact
+        case storageResidue = "storage_residue"
         case attention, protection
         case supportCatalog = "support_catalog"
+    }
+}
+
+public enum ImpactHistoryCompleteness: String, Codable, Equatable, Sendable {
+    case complete
+    case partialBackfill = "partial_backfill"
+}
+
+public struct BrowserImpactSummary: Codable, Equatable, Sendable {
+    public var trackingStartedAtUnixMillis: UInt64
+    public var historicalCompleteness: ImpactHistoryCompleteness
+    public var terminalCleanupCount: Int
+    public var provedReclaimCount: Int
+    public var reclaimedProcessCount: Int?
+    public var estimatedReclaimedMemoryBytes: UInt64?
+
+    private enum CodingKeys: String, CodingKey {
+        case trackingStartedAtUnixMillis = "tracking_started_at_unix_millis"
+        case historicalCompleteness = "historical_completeness"
+        case terminalCleanupCount = "terminal_cleanup_count"
+        case provedReclaimCount = "proved_reclaim_count"
+        case reclaimedProcessCount = "reclaimed_process_count"
+        case estimatedReclaimedMemoryBytes = "estimated_reclaimed_memory_bytes"
+    }
+}
+
+public enum StorageResidueKind: String, Codable, Equatable, Sendable {
+    case chromeCodeSignClone = "chrome_code_sign_clone"
+}
+
+public enum StorageResidueStatus: String, Codable, Equatable, Sendable {
+    case clear
+    case detected
+    case unavailable
+}
+
+public enum StorageResidueReferenceCheck: String, Codable, Equatable, Sendable {
+    case incomplete
+    case completeNoReferences = "complete_no_references"
+    case referenced
+}
+
+public struct StorageResidueSummary: Codable, Equatable, Sendable {
+    public var kind: StorageResidueKind
+    public var status: StorageResidueStatus
+    public var observedAtUnixMillis: UInt64
+    public var candidateCount: Int
+    public var logicalBytes: UInt64
+    public var shapeComplete: Bool
+    public var referenceCheck: StorageResidueReferenceCheck
+    public var automaticCleanupEligible: Bool
+    public var reasonIds: [String]
+
+    private enum CodingKeys: String, CodingKey {
+        case kind, status
+        case observedAtUnixMillis = "observed_at_unix_millis"
+        case candidateCount = "candidate_count"
+        case logicalBytes = "logical_bytes"
+        case shapeComplete = "shape_complete"
+        case referenceCheck = "reference_check"
+        case automaticCleanupEligible = "automatic_cleanup_eligible"
+        case reasonIds = "reason_ids"
     }
 }
 
@@ -1089,6 +1155,7 @@ public struct HistoryEvent: Decodable, Equatable, Sendable, Identifiable {
     public var eventToken: String
     public var incidentId: String
     public var occurredAtUnixMillis: UInt64
+    public var observationSpan: ObservationSpan? = nil
     public var state: IncidentState
     public var payload: HistoryPayload
     public var id: String { eventToken }
@@ -1097,7 +1164,18 @@ public struct HistoryEvent: Decodable, Equatable, Sendable, Identifiable {
         case eventToken = "event_token"
         case incidentId = "incident_id"
         case occurredAtUnixMillis = "occurred_at_unix_millis"
+        case observationSpan = "observation_span"
         case state, payload
+    }
+}
+
+public struct ObservationSpan: Decodable, Equatable, Sendable {
+    public var firstObservedAtUnixMillis: UInt64
+    public var observationCount: Int
+
+    private enum CodingKeys: String, CodingKey {
+        case firstObservedAtUnixMillis = "first_observed_at_unix_millis"
+        case observationCount = "observation_count"
     }
 }
 
@@ -1405,7 +1483,7 @@ extension Command: Encodable {
 // MARK: - Envelope
 
 struct RequestEnvelope: Encodable {
-    let schemaVersion = 4
+    let schemaVersion = 5
     let requestID: UInt64
     let command: Command
 

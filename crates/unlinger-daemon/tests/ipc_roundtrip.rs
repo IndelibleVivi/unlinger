@@ -11,7 +11,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use unlinger_core::{
     BrowserCompatibility, BrowserCompatibilityDecision, BrowserProduct, CleanupReceipt,
     CleanupResources, GateLedger, IncidentReport, IncidentState, ProcessIdentity, ProcessRole,
-    ProcessRoleCount, ProcessTarget, ResourceSnapshot, RootSummary,
+    ProcessRoleCount, ProcessTarget, ResourceSnapshot, RootSummary, StorageResidueKind,
+    StorageResidueObservation, StorageResidueReferenceCheck, StorageResidueStatus,
 };
 use unlinger_daemon::{
     AttentionKind, ControlPlane, DaemonMode, DaemonStatus, HistoryStore, IpcClient, IpcCommand,
@@ -896,6 +897,8 @@ fn frontend_schema_v4_browser_overview_is_atomic_typed_and_public_safe() {
     assert_eq!(overview["freshness"], "current");
     assert_eq!(overview["phase"], "confirmed");
     assert_eq!(overview["effective_mode"], "report_only");
+    assert!(overview.get("impact").is_none());
+    assert!(overview.get("storage_residue").is_none());
     assert_eq!(overview["sessions"][0]["family"], "playwright");
     assert_eq!(
         overview["sessions"][0]["compatibility"]["decision"],
@@ -925,7 +928,136 @@ fn frontend_schema_v4_browser_overview_is_atomic_typed_and_public_safe() {
 }
 
 #[test]
-fn v3_rejects_the_v4_only_overview_without_downgrading() {
+fn frontend_schema_v5_projects_impact_residue_and_observation_spans_without_changing_v4() {
+    let temp = TempState::new();
+    let database = temp.directory.join("history.sqlite3");
+    let socket = temp.directory.join("unlingerd.sock");
+    let store = HistoryStore::open(&database).expect("open store");
+    let report = confirmed_report("inc-v5-impact", "tracking-private");
+    store
+        .record_observation(1_000, &report)
+        .expect("record first observation");
+    store
+        .record_observation(2_000, &report)
+        .expect("extend observation span");
+    let attempt = store
+        .begin_cleanup_attempt(2_100, &report, "epoch-v5-impact")
+        .expect("begin cleanup attempt");
+    store
+        .complete_cleanup_attempt(
+            &attempt,
+            2_200,
+            &CleanupReceipt {
+                incident_id: report.incident_id.clone(),
+                state: IncidentState::Cleared,
+                reason_id: Some("cleanup.tree_gone_no_revival".to_owned()),
+                actions: Vec::new(),
+                artifact_actions: Vec::new(),
+                survivor_pids: Vec::new(),
+                revival_checks_completed: 2,
+                resources: CleanupResources {
+                    before: Some(ResourceSnapshot {
+                        process_count: 3,
+                        resident_memory_bytes: 24 * 1024 * 1024,
+                    }),
+                    after: Some(ResourceSnapshot {
+                        process_count: 0,
+                        resident_memory_bytes: 0,
+                    }),
+                    estimated_reclaimed_memory_bytes: Some(24 * 1024 * 1024),
+                },
+            },
+        )
+        .expect("complete cleanup attempt");
+    store
+        .record_storage_residue_observation(&StorageResidueObservation {
+            kind: StorageResidueKind::ChromeCodeSignClone,
+            status: StorageResidueStatus::Detected,
+            observed_at_unix_millis: 2_300,
+            candidate_count: 4,
+            logical_bytes: 8 * 1024 * 1024,
+            shape_complete: true,
+            reference_check: StorageResidueReferenceCheck::Incomplete,
+            automatic_cleanup_eligible: false,
+            reason_ids: vec!["storage_residue.observe_only".to_owned()],
+        })
+        .expect("record storage residue observation");
+
+    let mut status = DaemonStatus::new(DaemonMode::ReportOnly, 42);
+    status.healthy = true;
+    status.ready = true;
+    status.startup_state = StartupState::ReadyReportOnly;
+    let control = ControlPlane::new(store, status).expect("restore v5 projection");
+    let cycle = control.begin_observation_cycle(3_000).expect("begin cycle");
+    control
+        .publish_roster(&cycle, 3_050, Vec::new())
+        .expect("publish empty current roster");
+    control.finish_observation_cycle(&cycle, true);
+    control
+        .update_status(|status| {
+            status.scan_in_progress = false;
+            status.latest_observation_at_unix_millis = Some(3_050);
+        })
+        .expect("finish status projection");
+    let _server = IpcServer::start(&socket, control).expect("start IPC server");
+
+    let v5 = raw_request(
+        &socket,
+        r#"{"schema_version":5,"request_id":73,"command":{"command":"browser_overview"}}"#,
+    );
+    assert_eq!(v5["schema_version"], 5);
+    assert_eq!(v5["payload"]["data"]["impact"]["proved_reclaim_count"], 1);
+    assert_eq!(
+        v5["payload"]["data"]["impact"]["estimated_reclaimed_memory_bytes"],
+        24 * 1024 * 1024
+    );
+    assert_eq!(
+        v5["payload"]["data"]["storage_residue"]["status"],
+        "detected"
+    );
+    assert_eq!(
+        v5["payload"]["data"]["storage_residue"]["automatic_cleanup_eligible"],
+        false
+    );
+
+    let v4 = raw_request(
+        &socket,
+        r#"{"schema_version":4,"request_id":74,"command":{"command":"browser_overview"}}"#,
+    );
+    assert!(v4["payload"]["data"].get("impact").is_none());
+    assert!(v4["payload"]["data"].get("storage_residue").is_none());
+
+    let history_v5 = raw_request(
+        &socket,
+        r#"{"schema_version":5,"request_id":75,"command":{"command":"history","limit":20}}"#,
+    );
+    let observation_v5 = history_v5["payload"]["data"]
+        .as_array()
+        .expect("v5 history")
+        .iter()
+        .find(|event| event["payload"]["record_type"] == "observation")
+        .expect("v5 observation");
+    assert_eq!(observation_v5["observation_span"]["observation_count"], 2);
+    assert_eq!(
+        observation_v5["observation_span"]["first_observed_at_unix_millis"],
+        1_000
+    );
+
+    let history_v4 = raw_request(
+        &socket,
+        r#"{"schema_version":4,"request_id":76,"command":{"command":"history","limit":20}}"#,
+    );
+    assert!(
+        history_v4["payload"]["data"]
+            .as_array()
+            .expect("v4 history")
+            .iter()
+            .all(|event| event.get("observation_span").is_none())
+    );
+}
+
+#[test]
+fn v3_rejects_the_browser_overview_without_downgrading() {
     let temp = TempState::new();
     let database = temp.directory.join("history.sqlite3");
     let socket = temp.directory.join("unlingerd.sock");
@@ -945,12 +1077,12 @@ fn v3_rejects_the_v4_only_overview_without_downgrading() {
 }
 
 #[test]
-fn schema_v4_browser_overview_joins_the_exact_recent_settlement_by_event_identity() {
+fn schema_v5_browser_overview_joins_the_exact_recent_settlement_by_event_identity() {
     let temp = TempState::new();
     let database = temp.directory.join("history.sqlite3");
     let socket = temp.directory.join("unlingerd.sock");
     let store = HistoryStore::open(&database).expect("open store");
-    let report = confirmed_report("inc-v4-settlement", "tracking-private");
+    let report = confirmed_report("inc-v5-settlement", "tracking-private");
 
     // Use the same millisecond for all three events. The product join must use
     // the exact cleanup event token and event ordering, never timestamp alone.
@@ -958,7 +1090,7 @@ fn schema_v4_browser_overview_joins_the_exact_recent_settlement_by_event_identit
         .record_observation(2_000, &report)
         .expect("record settlement source observation");
     let attempt = store
-        .begin_cleanup_attempt(2_000, &report, "epoch-v4-settlement")
+        .begin_cleanup_attempt(2_000, &report, "epoch-v5-settlement")
         .expect("begin settlement attempt");
     store
         .complete_cleanup_attempt(
@@ -986,6 +1118,8 @@ fn schema_v4_browser_overview_joins_the_exact_recent_settlement_by_event_identit
             },
         )
         .expect("complete settlement attempt");
+    let failed_report = confirmed_report("inc-v5-later-failure", "tracking-later-failure");
+    fail_cleanup(&store, &failed_report, 2_500, "cleanup.signal_rejected");
 
     let mut status = DaemonStatus::new(DaemonMode::ReportOnly, 42);
     status.healthy = true;
@@ -1009,7 +1143,7 @@ fn schema_v4_browser_overview_joins_the_exact_recent_settlement_by_event_identit
         .request_browser_overview()
         .expect("typed browser overview");
     let settlement = overview.recent_settlement.expect("recent settlement");
-    assert_eq!(settlement.incident_id, "inc-v4-settlement");
+    assert_eq!(settlement.incident_id, "inc-v5-settlement");
     assert_eq!(settlement.family, "agent-browser");
     assert_eq!(settlement.occurred_at_unix_millis, 2_000);
     assert_eq!(settlement.process_count, Some(3));
@@ -1654,7 +1788,7 @@ fn status_projects_bounded_cleanup_and_event_source_attention() {
 }
 
 #[test]
-fn malformed_projection_fails_control_restore_without_erasing_durable_pause() {
+fn malformed_history_projection_cannot_erase_independent_impact_or_durable_pause() {
     let temp = TempState::new();
     let database = temp.directory.join("history.sqlite3");
     let store = HistoryStore::open(&database).expect("open store");
@@ -1693,16 +1827,21 @@ fn malformed_projection_fails_control_restore_without_erasing_durable_pause() {
     drop(connection);
 
     let reopened = HistoryStore::open(&database).expect("schema remains structurally valid");
-    let error = match ControlPlane::new(
+    let control = ControlPlane::new(
         reopened.clone(),
         DaemonStatus::new(DaemonMode::Enforce, std::process::id()),
-    ) {
-        Ok(_) => panic!("malformed persisted projection must stop control-plane startup"),
-        Err(error) => error,
-    };
+    )
+    .expect("independent impact authority restores without parsing bounded history");
     assert!(
-        error.to_string().contains("most recent reclaim"),
-        "unexpected restore error: {error}"
+        control
+            .status()
+            .expect("restored status")
+            .most_recent_reclaim
+            .is_some()
+    );
+    assert!(
+        reopened.history(20).is_err(),
+        "the malformed optional history projection must remain visibly unreadable"
     );
     assert_eq!(
         reopened.pause_until().expect("read preserved owner pause"),

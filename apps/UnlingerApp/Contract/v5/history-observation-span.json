@@ -1,0 +1,47 @@
+{
+  "schema_version": 5,
+  "request_id": 503,
+  "ok": true,
+  "payload": {
+    "type": "history",
+    "data": [
+      {
+        "event_token": "history-v5-span-1",
+        "incident_id": "redacted-browser-503",
+        "occurred_at_unix_millis": 1788148799000,
+        "observation_span": {
+          "first_observed_at_unix_millis": 1788145200000,
+          "observation_count": 60
+        },
+        "state": "PROTECTED",
+        "payload": {
+          "record_type": "observation",
+          "observation": {
+            "family": "playwright",
+            "family_version": "0.4.0",
+            "state": "PROTECTED",
+            "executable_basename": "Google Chrome for Testing",
+            "member_count": 8,
+            "resident_memory_bytes": 536870912,
+            "roles": [
+              {"role": "browser_root", "count": 1},
+              {"role": "renderer", "count": 7}
+            ],
+            "evidence": [
+              {"id": "protection.browser_version_unsupported", "family": "protection"}
+            ],
+            "gates": {
+              "same_user": true,
+              "strong_automation_provenance": true,
+              "confirmed_abandonment": false,
+              "isolated_session": true,
+              "stable_across_two_observations": true,
+              "process_identity_unchanged": true,
+              "no_protection_rule": false
+            }
+          }
+        }
+      }
+    ]
+  }
+}

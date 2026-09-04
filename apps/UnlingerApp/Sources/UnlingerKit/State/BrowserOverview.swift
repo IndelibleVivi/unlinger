@@ -82,11 +82,32 @@ public struct RecentBrowserSettlement: Equatable, Sendable {
     public var isFallback: Bool
 }
 
+public struct BrowserImpactPresentation: Equatable, Sendable {
+    public var trackingStartedAt: Date
+    public var historicalCompleteness: ImpactHistoryCompleteness
+    public var terminalCleanupCount: Int
+    public var provedReclaimCount: Int
+    public var reclaimedProcessCount: Int?
+    public var estimatedReclaimedMemoryBytes: UInt64?
+}
+
+public struct StorageResiduePresentation: Equatable, Sendable {
+    public var status: StorageResidueStatus
+    public var observedAt: Date
+    public var candidateCount: Int
+    public var logicalBytes: UInt64
+    public var shapeComplete: Bool
+    public var referenceCheck: StorageResidueReferenceCheck
+    public var automaticCleanupEligible: Bool
+}
+
 public enum BrowserPopoverSection: Equatable, Hashable, Sendable {
     case overview
     case connection
-    case sessions
+    case impact
     case coverage
+    case storageResidue
+    case sessions
     case savedProtections
     case attention
     case recentSettlement
@@ -106,6 +127,8 @@ public struct BrowserOverview: Equatable, Sendable {
     public var observedAt: Date?
     public var pausedUntil: Date?
     public var sessions: [BrowserSessionPresentation]
+    public var impact: BrowserImpactPresentation?
+    public var storageResidue: StorageResiduePresentation?
     public var coverageNotices: [BrowserCoverageNotice]
     public var attention: [BrowserAttentionPresentation]
     public var attentionOverflow: Int
@@ -115,8 +138,10 @@ public struct BrowserOverview: Equatable, Sendable {
     public func visibleSections(connection: ConnectionState) -> [BrowserPopoverSection] {
         var result: [BrowserPopoverSection] = [.overview]
         if connection != .live { result.append(.connection) }
-        if !sessions.isEmpty { result.append(.sessions) }
+        if impact != nil { result.append(.impact) }
         if !coverageNotices.isEmpty { result.append(.coverage) }
+        if storageResidue?.status != .clear { result.append(.storageResidue) }
+        if !sessions.isEmpty { result.append(.sessions) }
         if !savedProtections.isEmpty { result.append(.savedProtections) }
         if !attention.isEmpty || attentionOverflow > 0 { result.append(.attention) }
         if recentSettlement != nil { result.append(.recentSettlement) }

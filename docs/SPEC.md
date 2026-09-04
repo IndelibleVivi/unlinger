@@ -344,18 +344,24 @@ Memory pressure may shorten the delay before the second scan, but does not chang
 11. Send `SIGKILL` only to exact identity-matching survivors or a verified dedicated process group.
 12. Confirm the complete tree is gone.
 13. Re-check for immediate supervisor-driven revival.
-14. If the active pack explicitly admits an artifact, clean only artifacts whose live references are gone; current `0.3.0` packs admit none.
+14. If the active pack explicitly admits an artifact, clean only artifacts whose live references are gone; source `0.4.0` and installed `0.3.0` packs admit none.
 15. Commit a redacted local receipt with independent process/artifact/overall outcomes.
 
 Unlinger never uses broad `killall`, process-name-only `pkill`, or an unrestricted PID list captured minutes earlier.
 
 ### 7.4 Runtime artifact cleanup
 
-The engine contains a narrowly scoped `DevToolsActivePort` cleanup capability, but the current owner-approved process-only policy does not activate it. Every policy-version `0.3.0` signature pack sets `devtools_active_port = false`, so the analyzer produces no runtime-artifact candidate and enforcement cannot schedule or journal an artifact action. Re-enabling this path requires a separate owner decision after the crash-after-quarantine and final same-UID swap residuals are resolved or explicitly accepted.
+The engine contains a narrowly scoped `DevToolsActivePort` cleanup capability, but the current owner-approved process-only policy does not activate it. Every source `0.4.0` and installed `0.3.0` signature pack sets `devtools_active_port = false`, so the analyzer produces no runtime-artifact candidate and enforcement cannot schedule or journal an artifact action. Re-enabling this path requires a separate owner decision after the crash-after-quarantine and final same-UID swap residuals are resolved or explicitly accepted.
 
 If a later pack explicitly admits the capability, it may remove only one exact `DevToolsActivePort` regular file after proving its frozen file identity, safe parent, exclusive ownership, complete absence of live references, complete process-tree exit, and no revival. Socket, PID-file, lock-file, and other runtime-metadata cleanup remains part of the incident model but is not automatically admitted until a framework-specific canonical convention and the same ownership, reference, and race guarantees have field evidence.
 
 Temporary profile deletion is deferred. A later version may quarantine or delete canonical ephemeral profiles only after a longer delay and a separate safety gate. Standard profiles, persistent profiles, saved authentication state, cookies, and browser data are never deleted by default.
+
+### 7.5 Storage residue observation
+
+Chrome code-sign clone residue is a separate storage family, not a process runtime artifact and not an automatic-cleanup extension. Source may observe only the exact current-user `X/com.google.Chrome.code_sign_clone` root and exact `code_sign_clone.<six ASCII alphanumeric characters>/Google Chrome.app` child shape. It may report candidate count, logical regular-file size, observation time, shape status, reference-check status, and typed reason IDs. It must not persist or display the path or file contents.
+
+Logical size is not a reclaim promise because APFS clones may share physical blocks. Symlinks, unexpected names/nodes, wrong ownership, unreadable traversal, or arithmetic overflow make the observation unavailable. Reference proof is currently incomplete, so `automatic_cleanup_eligible` is always false and no source path deletes these clones. Any future quarantine/deletion work requires complete live-reference proof, recovery and race contracts, tests, a separate owner decision, and its own installed acceptance.
 
 ---
 
@@ -374,7 +380,7 @@ Reasons:
 - clean separation between shared policy and platform backends;
 - future Linux and Windows support without replacing the core engine.
 
-A native SwiftUI menu-bar and Dock App is the thin human-facing client. It translates one daemon-owned schema-v4 browser snapshot into browser-session language but does not own classification, compatibility, product phase, cleanup policy, lifecycle, installation, or signal authority.
+A native SwiftUI menu-bar and Dock App is the thin human-facing client. It translates one daemon-owned schema-v5 browser snapshot into browser-session, cleanup-impact, and storage-residue language but does not own classification, compatibility, product phase, cleanup policy, lifecycle, installation, signal authority, or file-deletion authority.
 
 ### 8.2 Components
 
@@ -427,10 +433,13 @@ The daemon stores a compact local SQLite database containing:
 - resource estimates before/after;
 - signature pack/version;
 - bounded error details.
+- coalesced observation span boundaries/counts;
+- cleanup-impact rows and lifetime aggregate authority;
+- the latest typed observe-only storage-residue observation.
 
-Event history defaults to 14 days or 10,000 events, whichever is smaller. Ordinary-mutation receipts have a separate minimum 14-day reconciliation window and cannot be pruned early to satisfy a count cap; capacity pressure rejects a new mutation rather than destroying authority.
+Observation history defaults to 14 days or 10,000 observation rows, whichever is smaller. Consecutive semantically identical observations for one incident extend one span; resource sampling may update without creating a new semantic state. Cleanup detail has an independent minimum 14-day retention and is never evicted by the observation count cap. Lifetime impact aggregates survive cleanup-detail expiry. A migrated database labels pre-v7 totals `partial_backfill`; a fresh v7 authority begins `complete`. Ordinary-mutation receipts retain their separate minimum 14-day reconciliation window and cannot be pruned early to satisfy a count cap; capacity pressure rejects a new mutation rather than destroying authority.
 
-A Unix-domain socket exposes read-mostly local IPC. Schema v1 remains the Rust CLI/service compatibility protocol. Frontend schema v4 projects strict public status/history/incident/roster/diagnostics DTOs, exact readiness/freshness, stable public event tokens, explicit capabilities, ordinary mutations, read-only mutation reconciliation, and one atomic browser overview. Schema v3 remains a transitional endpoint for its existing request/response meaning but cannot return the v4-only overview. Both omit process and service lifecycle identities. Schema v2 was superseded before installation and receives typed `unsupported_schema`; the source App never downgrades to v3 or v1.
+A Unix-domain socket exposes read-mostly local IPC. Schema v1 remains the Rust CLI/service compatibility protocol. Frontend schema v5 projects strict public status/history/incident/roster/diagnostics DTOs, exact readiness/freshness, stable public event tokens, observation spans, explicit capabilities, ordinary mutations, read-only mutation reconciliation, and one atomic browser overview with impact/residue facts. Schema v4 retains the previous browser overview and existing response meaning without v5-only fields. Schema v3 retains its existing request/response meaning but cannot return the overview. All frontend schemas omit process and service lifecycle identities. Schema v2 was superseded before installation and receives typed `unsupported_schema`; the source App never downgrades to v4, v3, or v1.
 
 Every frontend mutation carries a public-safe receipt namespace and canonical UUID. Before applying a new request, the daemon serializes lifecycle state with one immediate SQLite transaction, replays an exact receipt before current lifecycle policy, recomputes the same shared policy used for capability projection, and atomically commits state, durable cleanup-policy revision, and a typed `applied | no_change | rejected` receipt. Pruning rotates namespace in the same transaction. Current-authority `not_found` can prove absence; `authority_lost` cannot.
 
@@ -438,11 +447,11 @@ The App durably records pending mutation intent before connect/send. Any post-se
 
 Ordinary user mutations are pause/resume, explicit protect/unprotect, and named retry failed cleanup. Diagnostics export and browser overview are read-only. Generation- and instance-bound arm, disarm, and drain messages exist only in schema v1; frontend schemas have no install, mode, signal, update, rollback, or lifecycle authority.
 
-The browser overview captures status and the latest roster under one in-memory source boundary, then projects the authoritative phase, bounded session summaries, typed product/version compatibility and coverage, attention/protection, exact recent settlement, and a support catalog generated from embedded rule packs. Any unhealthy, not-ready, scanning, stale, never-observed, or observation-time-incoherent source becomes `unknown`. Trusted phase precedence is `attention → reclaiming → confirmed → verifying → active → protected → clear`. The App and CLI may format this result but may not recompute it from separate calls.
+The browser overview captures status and the latest roster under one in-memory source boundary, then projects the authoritative phase, bounded session summaries, typed product/version compatibility and coverage, attention/protection, exact recent settlement, cleanup-impact totals, latest typed storage-residue observation, and a support catalog generated from embedded rule packs. Any unhealthy, not-ready, scanning, stale, never-observed, or observation-time-incoherent source becomes `unknown`. Trusted phase precedence is `attention → reclaiming → confirmed → verifying → active → protected → clear`. The App and CLI may format this result but may not recompute it from separate calls. Storage residue does not change the browser-process phase or grant cleanup authority.
 
-Compatibility is a typed classification fact, not an evidence-string convention. Current in-memory reports carry browser product, optional observed version, `automatic | observe_only | protected | unknown`, and an optional stable reason ID. These app-bundle facts may enter the current v4 projection but do not enter retained SQLite history. The generated support catalog carries a readable revision and must remain derived from the same embedded version policies that authorize classification.
+Compatibility is a typed classification fact, not an evidence-string convention. Current in-memory reports carry browser product, optional observed version, `automatic | observe_only | protected | unknown`, and an optional stable reason ID. These app-bundle facts may enter current v5 and transitional v4 projections but do not enter retained SQLite history. The generated support catalog carries a readable revision and must remain derived from the same embedded version policies that authorize classification.
 
-A recent browser settlement joins the exact public cleanup event token to its durable receipt and then selects the greatest earlier event ID containing an observation for that incident. This preserves event identity when multiple records share a millisecond. Missing or contradictory links return no settlement; bounded frontend history and timestamps are not substitutes.
+A recent browser settlement resolves the exact public cleanup event token against independent durable impact authority and verifies incident, time, and outcome agreement. This remains stable when observation rows are compacted/pruned or a later failed cleanup exists. Missing or contradictory links return no settlement; bounded frontend history and timestamps are not substitutes.
 
 ### 8.5 Signature packs
 
@@ -460,7 +469,7 @@ Each supported runtime has a versioned signature pack that parameterizes one sha
 
 Version 0.1 ships rules inside the signed binary. Remote executable rule updates are out of scope. Later data-only updates must be signed and auditable.
 
-The first automatic-cleanup admission is intentionally narrower than the recognized family list: a controllerless Chrome-for-Testing browser root with bundle identifier `com.google.chrome.for.testing` at exact version `151.0.7922.34`, plus every ordinary hard gate. Controller anchors remain protected until their own product/version identity is verified. Broader versions or family shapes require a positive fixture and the nearest normal/manual counterexample before their pack policy may expand.
+Automatic-cleanup admission remains intentionally narrower than the recognized family list: a controllerless Chrome-for-Testing browser root with bundle identifier `com.google.chrome.for.testing` at exact source-allowlisted version `151.0.7922.34` or `152.0.7977.42`, plus every ordinary hard gate. This is an exact two-version allowlist, not a range. Controller anchors remain protected until their own product/version identity is verified. Every other version or family shape requires a positive fixture and the nearest normal/manual counterexample before its pack policy may expand. Installed generation 15 remains on the earlier `0.3.0` policy and admits only `151.0.7922.34`.
 
 ---
 
@@ -531,11 +540,11 @@ unlinger export-diagnostics <incident-id>
 - are any confirmed/ambiguous incidents present;
 - what was reclaimed most recently.
 
-The pre-v0.1 native menu-bar App projects schema-v4 status, atomic browser overview, history/detail, diagnostics, ordinary actions, notification preferences, menu-client launch at login, App/daemon versions, and explicit App-only quit semantics. Its first screen answers in browser language: whether supported leftovers are absent, active, being verified, confirmed, being reclaimed, deliberately protected, or need attention; which automation family is involved; whether Unlinger is observe-only or allowed to clean; and what the latest exact settlement proved. It must not turn the product into a dashboard the user has to watch and owns no daemon lifecycle or signal authority.
+The pre-v0.1 native menu-bar App projects schema-v5 status, atomic browser overview, cleanup-impact totals, typed storage residue, cleanup-outcome history/detail, diagnostics, ordinary actions, notification preferences, menu-client launch at login, App/daemon versions, and explicit App-only quit semantics. Its first screen answers in browser language: whether supported leftovers are absent, active, being verified, confirmed, being reclaimed, deliberately protected, or need attention; which automation family is involved; whether Unlinger is observe-only or allowed to clean; what cleanup has been proved since impact tracking began; and whether the exact Chrome code-sign clone family was safely observed. It must not turn the product into a dashboard the user has to watch and owns no daemon lifecycle, signal, or file-deletion authority.
 
 The transitional roster is observability, not a work queue. The browser overview is the composition surface: the daemon alone validates healthy `ready` status, current roster, no replacement scan, and equal non-null status/roster observation timestamps before returning a positive phase. Starting, draining, failed, unknown, unavailable, incompatible, and stale are never all-clear. On transport loss the App may retain old rows as stale context, but it must display an App-local unknown phase rather than reinterpret the snapshot.
 
-The App may select user-facing coverage copy only from typed compatibility reason IDs it explicitly understands. Unknown reasons remain generic and are never displayed raw. Current session rows may show their own process count and resident memory, but schema v4 does not authorize global current process/RSS totals. The App consumes the server's exact settlement as-is; it does not join bounded history or invent a browser identity or resource estimate.
+The App may select user-facing coverage copy only from typed compatibility reason IDs it explicitly understands. Unknown reasons remain generic and are never displayed raw. Current session rows may show their own process count and resident memory, but schema v5 does not authorize global current process/RSS totals. The App consumes server-owned settlement, impact, residue, and observation-span facts as-is; it does not join bounded history or invent a browser identity, resource estimate, physical disk reclaim, or cleanup eligibility. The history index shows completed cleanup outcomes; periodic observations remain available only as compact spans in incident detail.
 
 ---
 
@@ -713,7 +722,7 @@ The goal is not to imitate another project's UI or wording. The fieldlab identif
 - Windows backend using native process identity and optional Job Object integration;
 - carefully admitted non-browser automation families.
 
-Pre-v0.1 source, isolated, installed, enforcement, private acceptance, public-alpha, and public-release claims are defined separately in [`PRE_V0_1_ACCEPTANCE.md`](PRE_V0_1_ACCEPTANCE.md). The source SQLite-v6 candidate may enter the owner-authorized installed report-only lane only with the acceptance-scoped v5 rollback lease active; level 3 still requires a real generation-9 rollback/open and packaged App/restart acceptance before any installed claim.
+Pre-v0.1 source, isolated, installed, enforcement, private acceptance, public-alpha, and public-release claims are defined separately in [`PRE_V0_1_ACCEPTANCE.md`](PRE_V0_1_ACCEPTANCE.md). The source SQLite-v7 candidate may enter a new owner-authorized installed report-only lane only through a fresh acceptance-scoped rollback lease, exact prior-generation SQLite-v6 restoration/open proof, and packaged schema-v5 App/restart acceptance. Existing generation-15 evidence cannot be borrowed as installation or activation evidence for this source tranche.
 
 ---
 

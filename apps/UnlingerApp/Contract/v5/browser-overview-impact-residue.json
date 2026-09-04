@@ -1,0 +1,84 @@
+{
+  "schema_version": 5,
+  "request_id": 502,
+  "ok": true,
+  "payload": {
+    "type": "browser_overview",
+    "data": {
+      "generated_at_unix_millis": 1788148800000,
+      "cycle_token": "cycle-v5-impact",
+      "observed_at_unix_millis": 1788148799000,
+      "freshness": "current",
+      "healthy": true,
+      "effective_mode": "enforce",
+      "phase": "clear",
+      "sessions": [],
+      "coverage_notices": [],
+      "recent_settlement": {
+        "event_token": "event-v5-settlement-1",
+        "incident_id": "redacted-browser-502",
+        "family": "playwright",
+        "occurred_at_unix_millis": 1788148700000,
+        "process_count": 8,
+        "estimated_reclaimed_memory_bytes": 912261120,
+        "revival_checks_completed": 2,
+        "artifact_outcome": "not_applicable",
+        "overall_outcome": "cleared"
+      },
+      "impact": {
+        "tracking_started_at_unix_millis": 1788000000000,
+        "historical_completeness": "partial_backfill",
+        "terminal_cleanup_count": 3,
+        "proved_reclaim_count": 2,
+        "reclaimed_process_count": 12,
+        "estimated_reclaimed_memory_bytes": 1073741824
+      },
+      "storage_residue": {
+        "kind": "chrome_code_sign_clone",
+        "status": "detected",
+        "observed_at_unix_millis": 1788148795000,
+        "candidate_count": 49,
+        "logical_bytes": 72230658048,
+        "shape_complete": true,
+        "reference_check": "incomplete",
+        "automatic_cleanup_eligible": false,
+        "reason_ids": [
+          "storage_residue.code_sign_clone_detected",
+          "storage_residue.logical_size_not_physical_reclaim",
+          "storage_residue.reference_check_incomplete"
+        ]
+      },
+      "attention": {
+        "total_count": 0,
+        "items": []
+      },
+      "protection": {
+        "total_count": 0,
+        "items": []
+      },
+      "support_catalog": {
+        "support_revision": "rules:agent-browser@0.4.0|playwright@0.4.0|puppeteer@0.4.0",
+        "families": [
+          {
+            "family": "agent-browser",
+            "product": "chrome_for_testing",
+            "admitted_versions": ["151.0.7922.34", "152.0.7977.42"],
+            "automatic_action_level": "automatic"
+          },
+          {
+            "family": "playwright",
+            "product": "chrome_for_testing",
+            "admitted_versions": ["151.0.7922.34", "152.0.7977.42"],
+            "automatic_action_level": "automatic"
+          },
+          {
+            "family": "puppeteer",
+            "product": "chrome_for_testing",
+            "admitted_versions": ["151.0.7922.34", "152.0.7977.42"],
+            "automatic_action_level": "automatic"
+          }
+        ]
+      }
+    }
+  }
+}

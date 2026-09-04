@@ -10,7 +10,11 @@ public enum BrowserHistoryMapper {
         recentSettlement: RecentBrowserSettlement?,
         mode: EffectiveMode?
     ) -> [BrowserHistoryEntryPresentation] {
-        Dictionary(grouping: events, by: \HistoryEvent.incidentId)
+        let settledEvents = events.filter { event in
+            guard case .cleanup = event.payload else { return false }
+            return [.cleared, .failed, .revived].contains(event.state)
+        }
+        return Dictionary(grouping: settledEvents, by: \HistoryEvent.incidentId)
             .compactMap { incidentID, incidentEvents in
                 historyEntry(
                     incidentID: incidentID,
@@ -39,12 +43,12 @@ public enum BrowserHistoryMapper {
                observationsCanCoalesce(previous.latestEvent, event)
             {
                 previous.latestEvent = event
-                previous.eventCount += 1
+                previous.eventCount += event.observationSpan?.observationCount ?? 1
                 result[result.count - 1] = previous
             } else {
                 result.append(BrowserTimelineEntryPresentation(
                     latestEvent: event,
-                    eventCount: 1
+                    eventCount: event.observationSpan?.observationCount ?? 1
                 ))
             }
         }

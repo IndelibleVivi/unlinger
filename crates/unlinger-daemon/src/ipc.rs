@@ -2058,7 +2058,9 @@ fn serve_connection(stream: &mut UnixStream, control: &ControlPlane) -> Result<(
             };
             write_response(stream, &response)
         }
-        unlinger_protocol::PREVIOUS_SCHEMA_VERSION | unlinger_protocol::SCHEMA_VERSION => {
+        unlinger_protocol::LEGACY_SCHEMA_VERSION
+        | unlinger_protocol::PREVIOUS_SCHEMA_VERSION
+        | unlinger_protocol::SCHEMA_VERSION => {
             let frontend_schema_version = header.schema_version;
             let request = match serde_json::from_slice::<unlinger_protocol::RequestEnvelope>(
                 &request_bytes,
@@ -2075,14 +2077,14 @@ fn serve_connection(stream: &mut UnixStream, control: &ControlPlane) -> Result<(
                     return Ok(());
                 }
             };
-            if frontend_schema_version == unlinger_protocol::PREVIOUS_SCHEMA_VERSION
+            if frontend_schema_version == unlinger_protocol::LEGACY_SCHEMA_VERSION
                 && matches!(request.command, unlinger_protocol::Command::BrowserOverview)
             {
                 let response = unlinger_protocol::ResponseEnvelope::failure_for(
                     frontend_schema_version,
                     request.request_id,
                     unlinger_protocol::ErrorCode::InvalidRequest,
-                    "browser_overview requires frontend schema 4",
+                    "browser_overview requires frontend schema 4 or 5",
                 );
                 write_public_response(stream, &response)?;
                 return Ok(());
@@ -2117,7 +2119,8 @@ fn serve_connection(stream: &mut UnixStream, control: &ControlPlane) -> Result<(
                 error: Some(IpcErrorBody {
                     code: "unsupported_schema".to_owned(),
                     message: format!(
-                        "supported IPC schemas are {IPC_SCHEMA_VERSION}, {}, and {}",
+                        "supported IPC schemas are {IPC_SCHEMA_VERSION}, {}, {}, and {}",
+                        unlinger_protocol::LEGACY_SCHEMA_VERSION,
                         unlinger_protocol::PREVIOUS_SCHEMA_VERSION,
                         unlinger_protocol::SCHEMA_VERSION
                     ),

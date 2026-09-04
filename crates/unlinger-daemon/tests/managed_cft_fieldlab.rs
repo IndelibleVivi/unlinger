@@ -482,7 +482,9 @@ fn terminal_history_event(incident_id: &str, event_id: i64) -> HistoryEvent {
         event_token: format!("{event_id:032x}"),
         attempt_id: Some(event_id),
         incident_id: incident_id.to_owned(),
+        first_occurred_at_unix_millis: u64::try_from(event_id).expect("positive event ID"),
         occurred_at_unix_millis: u64::try_from(event_id).expect("positive event ID"),
+        observation_count: 1,
         kind: EventKind::Cleanup,
         state: IncidentState::Cleared,
         payload: EventPayload::Cleanup {

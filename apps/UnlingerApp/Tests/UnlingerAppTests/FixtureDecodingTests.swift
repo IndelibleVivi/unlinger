@@ -2,10 +2,65 @@ import Foundation
 import Testing
 @testable import UnlingerKit
 
-/// Canonical v3 compatibility and v4 browser-product fixtures must decode
+/// Canonical v5 product, v4 transition, and v3 compatibility fixtures must decode
 /// through the same explicit envelope validation the socket client uses.
 @Suite("Canonical fixture decoding")
 struct FixtureDecodingTests {
+    @Test("schema-v5 impact, residue, and observation spans decode exactly")
+    func v5ImpactAndResidueFixtures() throws {
+        let emptyData = try FixtureStore.data(
+            named: "browser-overview-impact-empty",
+            schemaVersion: 5
+        )
+        let empty = try ResponseDecoder.decode(
+            BrowserOverviewSnapshot.self,
+            expectedPayloadType: "browser_overview",
+            requestID: try #require(Self.requestID(in: emptyData)),
+            expectedSchemaVersion: 5,
+            line: emptyData
+        )
+        #expect(empty.impact?.historicalCompleteness == .complete)
+        #expect(empty.impact?.provedReclaimCount == 0)
+        #expect(empty.storageResidue?.status == .clear)
+        #expect(empty.storageResidue?.automaticCleanupEligible == false)
+
+        let detectedData = try FixtureStore.data(
+            named: "browser-overview-impact-residue",
+            schemaVersion: 5
+        )
+        let detected = try ResponseDecoder.decode(
+            BrowserOverviewSnapshot.self,
+            expectedPayloadType: "browser_overview",
+            requestID: try #require(Self.requestID(in: detectedData)),
+            expectedSchemaVersion: 5,
+            line: detectedData
+        )
+        #expect(detected.impact?.historicalCompleteness == .partialBackfill)
+        #expect(detected.impact?.provedReclaimCount == 2)
+        #expect(detected.impact?.reclaimedProcessCount == 12)
+        #expect(detected.storageResidue?.status == .detected)
+        #expect(detected.storageResidue?.candidateCount == 49)
+        #expect(detected.storageResidue?.referenceCheck == .incomplete)
+        #expect(detected.storageResidue?.automaticCleanupEligible == false)
+        #expect(detected.supportCatalog.families.allSatisfy {
+            $0.admittedVersions.contains("152.0.7977.42")
+        })
+
+        let spanData = try FixtureStore.data(
+            named: "history-observation-span",
+            schemaVersion: 5
+        )
+        let events = try ResponseDecoder.decode(
+            [HistoryEvent].self,
+            expectedPayloadType: "history",
+            requestID: try #require(Self.requestID(in: spanData)),
+            expectedSchemaVersion: 5,
+            line: spanData
+        )
+        #expect(events.first?.observationSpan?.observationCount == 60)
+        #expect(BrowserHistoryMapper.timelineEntries(events: events).first?.eventCount == 60)
+    }
+
     @Test("schema-v4 browser overview fixtures decode as one atomic DTO")
     func browserOverviewFixtures() throws {
         for name in [
@@ -37,6 +92,8 @@ struct FixtureDecodingTests {
             line: protected
         )
         #expect(overview.phase == .protected)
+        #expect(overview.impact == nil)
+        #expect(overview.storageResidue == nil)
         #expect(overview.sessions.first?.compatibility.decision == .protected)
         #expect(overview.coverageNotices.first?.reasonId == "protection.browser_version_unsupported")
     }

@@ -13,10 +13,11 @@ use unlinger_daemon::{
     ControlPlane, DaemonInstanceLock, DaemonMode, DaemonStatus, EngineConfig, HistoryStore,
     IpcServer, LocalPaths, ReconciliationEngine,
 };
-use unlinger_macos::MacosRuntime;
+use unlinger_macos::{MacosRuntime, observe_chrome_code_sign_clones};
 use unlinger_rules::RuleSet;
 
 static SHUTDOWN_REQUESTED: AtomicBool = AtomicBool::new(false);
+const STORAGE_RESIDUE_OBSERVATION_INTERVAL_MILLIS: u64 = 15 * 60 * 1_000;
 
 #[derive(Debug, Parser)]
 #[command(name = "unlingerd", version, about = "Unlinger reconciliation daemon")]
@@ -132,6 +133,7 @@ fn run(arguments: Arguments) -> Result<(), Box<dyn Error>> {
         Some(std::process::id()),
     );
     let mut last_cycle_error = None;
+    let mut last_storage_residue_error = None;
     let mut scheduler = (!arguments.once)
         .then(|| ReconciliationScheduler::start(Duration::from_secs(arguments.interval_seconds)));
     if let Some(scheduler) = scheduler.as_mut()
@@ -142,6 +144,32 @@ fn run(arguments: Arguments) -> Result<(), Box<dyn Error>> {
 
     'daemon: while !shutdown_requested() && !control.is_draining() {
         let now = now_unix_millis()?;
+        match control.store().latest_storage_residue_observation() {
+            Ok(previous)
+                if previous.as_ref().is_none_or(|observation| {
+                    now.saturating_sub(observation.observed_at_unix_millis)
+                        >= STORAGE_RESIDUE_OBSERVATION_INTERVAL_MILLIS
+                }) =>
+            {
+                let residue = observe_chrome_code_sign_clones(now);
+                match control.store().record_storage_residue_observation(&residue) {
+                    Ok(()) => last_storage_residue_error = None,
+                    Err(error) => {
+                        let message = error.to_string();
+                        if should_log_cycle_error(&mut last_storage_residue_error, &message) {
+                            eprintln!("unlingerd: storage residue observation failed: {message}");
+                        }
+                    }
+                }
+            }
+            Ok(_) => {}
+            Err(error) => {
+                let message = error.to_string();
+                if should_log_cycle_error(&mut last_storage_residue_error, &message) {
+                    eprintln!("unlingerd: storage residue readback failed: {message}");
+                }
+            }
+        }
         let stop_control = control.clone();
         match engine.run_cycle_at_until(now, || shutdown_requested() || stop_control.is_draining())
         {

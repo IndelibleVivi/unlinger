@@ -36,7 +36,7 @@ flowchart LR
         GRAPH[unlinger-core identity graph]
         PACKS[Schema-v2 TOML packs]
         SESSION[Shared deterministic Rust sessionizer]
-        GATES[Hard protections<br/>exact CfT point + age 60 s]
+        GATES[Hard protections<br/>exact CfT 151/152 points + age 60 s]
         COOL[SQLite cooling ledger<br/>durable 90 s abandonment grace]
     end
 
@@ -54,19 +54,21 @@ flowchart LR
     end
 
     subgraph LOCAL[Owner-private state and control]
-        STORE[SQLite v6 timeline + journals<br/>event tokens + mutation receipts]
+        STORE[SQLite v7 spans + impact + journals<br/>event tokens + mutation receipts]
+        RESIDUE[Typed Chrome clone observation<br/>logical bytes, never delete authority]
         IPC[0600 newline-delimited JSON socket<br/>bounded eight-worker server]
-        PUBLIC[Schema v4 public DTO<br/>atomic browser overview + ordinary commands]
-        V3[Schema v3 transition<br/>existing frontend commands]
+        PUBLIC[Schema v5 public DTO<br/>overview + impact/residue + ordinary commands]
+        V4[Schema v4 transition<br/>prior overview shape]
+        V3[Schema v3 compatibility<br/>existing frontend commands]
         V1[Schema v1 compatibility<br/>CLI + service transaction]
         V2[Schema v2 historical<br/>typed unsupported]
         INTERNAL[Service-only lifecycle controls<br/>exact generation + instance]
     end
 
     subgraph APP[Native menu-bar App]
-        CLIENT[Strict single-attempt v4 client]
+        CLIENT[Strict single-attempt v5 client]
         JOURNAL[0600 pre-send mutation journal]
-        STATE[Coalesced state + shared router]
+        STATE[Coalesced mapped state<br/>+ independent host routers]
         NOTICE[Bounded notification ledger<br/>local OS delivery]
         HOST[AppKit-owned status popover<br/>+ reusable ordinary window]
         JOURNAL --> CLIENT --> STATE --> NOTICE
@@ -80,6 +82,7 @@ flowchart LR
     SCHED --> SNAP --> GRAPH --> SESSION
     PACKS --> SESSION --> GATES --> COOL
     COOL --> REPORT --> STORE
+    RESIDUE --> STORE
     STORE --> LIFE --> DAEMON
     COOL -->|confirmed + effective enforce| PLAN --> RECHECK --> PREP
     PREP --> STORE
@@ -89,6 +92,7 @@ flowchart LR
     APREP --> STORE
     APREP -->|after durable commit| DAP --> STORE
     STORE --> IPC --> PUBLIC
+    IPC --> V4
     IPC --> V3
     STORE --> IPC --> V1
     IPC --> V2
@@ -106,17 +110,19 @@ The acceptance transaction uses `AcceptanceInProgress` as a pre-linearization st
 
 The scheduler uses native Dispatch process-exit sources, IOKit wake notifications, and Dispatch memory-pressure events as coalesced hints. Every hint causes a fresh full snapshot; it never authorizes cleanup or weakens a gate. A source failure is surfaced as degraded status and periodic reconciliation remains active. Pressure does not alter the 60-second candidate-age gate, exact browser version policy, durable abandonment grace, or cleanup threshold. The sustained-pressure notification threshold is deliberately unresolved, so aggregate ambiguous count is not a notification signal.
 
-The sessionizer is one deterministic Rust algorithm parameterized by schema-v2 pack data. Current packs automatically admit only browser roots whose exact app-bundle facts match `com.google.chrome.for.testing` version `151.0.7922.34`; any controller-bearing candidate is protected because controller version is not yet verified. Pack markers rank and reconstruct candidates but cannot introduce an alternate graph traversal or signal strategy.
+The sessionizer is one deterministic Rust algorithm parameterized by schema-v2 pack data. Current source packs automatically admit only browser roots whose exact app-bundle facts match `com.google.chrome.for.testing` version `151.0.7922.34` or `152.0.7977.42`; this is a two-point allowlist, not a range. Installed generation 15 remains on the earlier CfT-151-only policy. Any controller-bearing candidate is protected because controller version is not yet verified. Pack markers rank and reconstruct candidates but cannot introduce an alternate graph traversal or signal strategy.
 
-Runtime-artifact cleanup exists as a dormant DAP-only engine. Current policy-version `0.3.0` packs set `devtools_active_port = false`, so the analyzer emits no artifact candidate and the process-only enforcement path writes no artifact action. If a future owner-approved pack re-enables it, the engine freezes at most one `DevToolsActivePort` identity before signaling, waits for the exact tree and revival window to clear, completes the targeted pathname-reference and current-user argv proof, writes a PREPARED artifact action, and then uses exact parent/file identities plus an exclusive same-directory quarantine before unlink. It never deletes a profile or directory; sockets and PID files are not automatically eligible.
+Runtime-artifact cleanup exists as a dormant DAP-only engine. Current source policy-version `0.4.0` packs and installed `0.3.0` packs set `devtools_active_port = false`, so neither analyzer emits an artifact candidate and process-only enforcement writes no artifact action. If a future owner-approved pack re-enables it, the engine freezes at most one `DevToolsActivePort` identity before signaling, waits for the exact tree and revival window to clear, completes the targeted pathname-reference and current-user argv proof, writes a PREPARED artifact action, and then uses exact parent/file identities plus an exclusive same-directory quarantine before unlink. It never deletes a profile or directory; sockets and PID files are not automatically eligible.
+
+The source daemon separately observes the exact current-user Chrome `code_sign_clone` residue family at a bounded interval. The macOS adapter accepts only the expected clone directory shape, rejects symlinks, unexpected entries and incomplete traversal, and reports logical regular-file bytes with an explicitly incomplete physical-reclaim reference. This observation is persisted as a typed latest fact and projected in schema v5 with `automatic_cleanup_eligible: false`; it does not enter the artifact cleanup plan, expose a pathname, or create any deletion authority.
 
 The macOS adapter no longer walks every file descriptor of every same-UID process to prove DAP absence. That approach cannot be complete for an ordinary daemon because unrelated protected Apple agents may deny descriptor metadata and ordinary close/reuse churn can invalidate an enumerated FD. Instead it brackets Darwin's targeted `proc_listpidspath(PROC_ALL_PIDS, exact_path)` query with exact frozen parent/file validation, treats only a negative return as lookup failure, and performs a complete current-user `KERN_PROCARGS2` argv pass. It queries the canonical pathname before quarantine and the actual quarantine pathname after the atomic rename, so an already-open inode remains discoverable under its new name. Any incomplete metadata, arguments, targeted query, or path identity fails closed.
 
 This is not a claim that the final deletion race is fully closed. Two known P2 residuals remain: daemon death after the canonical-to-quarantine rename can strand the exact private quarantine entry, and a same-UID actor can still attempt a swap between the final `fstatat` pathname check and `unlinkat`. Controlled generation-9 and generation-13 field runs produced successful live DAP-removal receipts with the dormant path; those point results do not resolve either race or authorize re-enabling artifact eligibility.
 
-Ordinary IPC commands and service lifecycle controls share the owner-private socket but not the same typed authority surface. Schema v4 contains strict public status/history/incident/roster/diagnostics DTOs plus mutation status, ordinary pause/resume, retry and exact-incident protect/unprotect, and one atomic browser overview. That overview captures status+roster under one source boundary, owns phase precedence, typed compatibility/coverage, the embedded-rule support catalog and exact-event settlement. Schema v3 remains a transition endpoint for its existing commands but rejects the v4-only overview. Both strip process/service identities and derive capabilities from the same policy used for transaction authorization. Schema v2 is historical and rejected. `Arm`, `Disarm`, and `BeginDrain` exist only in schema v1 and remain bound to the exact activation generation and daemon instance.
+Ordinary IPC commands and service lifecycle controls share the owner-private socket but not the same typed authority surface. Source schema v5 contains strict public status/history/incident/roster/diagnostics DTOs plus mutation status, ordinary pause/resume, retry and exact-incident protect/unprotect, and one atomic browser overview. That overview captures status+roster under one source boundary, owns phase precedence, typed compatibility/coverage, the embedded-rule support catalog and exact-event settlement, then adds independently durable cleanup impact and typed observe-only storage residue. Schema v5 history/detail exposes server-owned observation spans. Schema v4 remains a transition endpoint with its prior overview/response shapes and no v5-only fields; schema v3 preserves its existing commands but rejects the overview. All frontend schemas strip process/service identities and derive capabilities from the same policy used for transaction authorization. Schema v2 is historical and rejected. `Arm`, `Disarm`, and `BeginDrain` exist only in schema v1 and remain bound to the exact activation generation and daemon instance.
 
-Every frontend mutation is written to an App-local crash-durable journal before connect/send, then the daemon commits state, durable revision and typed receipt in one immediate transaction. Exact replay precedes lifecycle denial; same ID plus different canonical arguments conflicts; pruning rotates receipt namespace atomically. Any post-send untrusted result remains unresolved and the App uses read-only mutation status rather than resending. The App fetches status, history and the canonical browser snapshot concurrently; it does not fetch roster for browser composition or perform a coherence retry. Its coalesced refresh generation prevents old results from overwriting new state. Stable public event tokens drive history identity and duplicate-avoiding local notifications; the first trusted refresh baselines retained history.
+Every frontend mutation is written to an App-local crash-durable journal before connect/send, then the daemon commits state, durable revision and typed receipt in one immediate transaction. Exact replay precedes lifecycle denial; same ID plus different canonical arguments conflicts; pruning rotates receipt namespace atomically. Any post-send untrusted result remains unresolved and the App uses read-only mutation status rather than resending. The App fetches status, history and the canonical browser snapshot concurrently; it does not fetch roster for browser composition or perform a coherence retry. Its coalesced refresh generation prevents old results from overwriting new state. The overview and history mappers run once per state transition and publish stored presentation values only when they change. History index rows now represent terminal cleanup outcomes; observation repetition is carried by daemon-owned spans inside detail. Stable public event tokens drive history identity and duplicate-avoiding local notifications; the first trusted refresh baselines retained history.
 
 Every socket request still uses one connection and one response. Default and service clients make one 15-second attempt; up to eight accepted connections are served concurrently, each with a 3-second read/write bound. Slow history or a partial peer therefore cannot head-of-line block all later control traffic. The managed field harness polls only read-only exact-incident `Explain` on a separate worker so native absence sampling is independent. Raw arguments, executable/profile paths, frozen target identities, and session fingerprints terminate inside transient observation/enforcement memory. SQLite, IPC, CLI, diagnostics, App journals and notification routes retain or project only typed redacted records.
 

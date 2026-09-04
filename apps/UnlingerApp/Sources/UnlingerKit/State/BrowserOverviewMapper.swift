@@ -1,6 +1,6 @@
 import Foundation
 
-/// Presentation-only translation of the daemon-owned schema-v4 browser
+/// Presentation-only translation of the daemon-owned schema-v5 browser
 /// snapshot. Phase, coverage, compatibility, and settlement authority stay in
 /// the daemon; this mapper selects localized copy keys and display shapes.
 public enum BrowserOverviewMapper {
@@ -41,6 +41,27 @@ public enum BrowserOverviewMapper {
             observedAt: snapshot?.observedAtUnixMillis.map(Date.init(unixMillis:)),
             pausedUntil: snapshot?.pausedUntilUnixMillis.map(Date.init(unixMillis:)),
             sessions: sessions,
+            impact: snapshot?.impact.map { impact in
+                BrowserImpactPresentation(
+                    trackingStartedAt: Date(unixMillis: impact.trackingStartedAtUnixMillis),
+                    historicalCompleteness: impact.historicalCompleteness,
+                    terminalCleanupCount: impact.terminalCleanupCount,
+                    provedReclaimCount: impact.provedReclaimCount,
+                    reclaimedProcessCount: impact.reclaimedProcessCount,
+                    estimatedReclaimedMemoryBytes: impact.estimatedReclaimedMemoryBytes
+                )
+            },
+            storageResidue: snapshot?.storageResidue.map { residue in
+                StorageResiduePresentation(
+                    status: residue.status,
+                    observedAt: Date(unixMillis: residue.observedAtUnixMillis),
+                    candidateCount: residue.candidateCount,
+                    logicalBytes: residue.logicalBytes,
+                    shapeComplete: residue.shapeComplete,
+                    referenceCheck: residue.referenceCheck,
+                    automaticCleanupEligible: residue.automaticCleanupEligible
+                )
+            },
             coverageNotices: notices,
             attention: attention,
             attentionOverflow: attentionOverflow,

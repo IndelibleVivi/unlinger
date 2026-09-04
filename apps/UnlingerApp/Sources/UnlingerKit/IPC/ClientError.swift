@@ -9,7 +9,7 @@ import Foundation
 ///   already have committed the mutation. Never auto-resend; read back first.
 /// - `serverError`: a structured `error.code` response from the daemon.
 /// - `incompatibleDaemon`: a trusted schema-v1 unsupported-schema response;
-///   the installed daemon is real but does not speak the App's schema v4.
+///   the installed daemon is real but does not speak the App's schema v5.
 /// - `protocolError`: framing/envelope violation or a response that fails
 ///   schema/request-id/mutual-exclusion validation.
 public enum ClientError: Error, Equatable, Sendable {

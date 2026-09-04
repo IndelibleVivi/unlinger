@@ -14,6 +14,7 @@ struct BrowserFixtureScenarioTests {
             ("browser-reclaiming", BrowserOverviewPhase.reclaiming),
             ("browser-protected-unsupported", BrowserOverviewPhase.protected),
             ("browser-attention", BrowserOverviewPhase.attention),
+            ("browser-impact-residue", BrowserOverviewPhase.clear),
             ("browser-history-stress", BrowserOverviewPhase.clear)
         ]
     )
@@ -26,6 +27,23 @@ struct BrowserFixtureScenarioTests {
         await state.refresh()
 
         #expect(state.browserOverview.phase == expected)
+    }
+
+    @Test("impact-residue scenario exposes the complete user-visible source tranche")
+    func impactResidueScenario() async throws {
+        let state = AppState(
+            client: FixtureClient.scenario("browser-impact-residue"),
+            mutationLedger: TestMutationJournal()
+        )
+
+        await state.refresh()
+
+        #expect(state.browserOverview.impact?.provedReclaimCount == 2)
+        #expect(state.browserOverview.impact?.estimatedReclaimedMemoryBytes == 1_073_741_824)
+        #expect(state.browserOverview.storageResidue?.candidateCount == 49)
+        #expect(state.browserOverview.storageResidue?.automaticCleanupEligible == false)
+        #expect(state.browserOverview.visibleSections(connection: .live).contains(.impact))
+        #expect(state.browserOverview.visibleSections(connection: .live).contains(.storageResidue))
     }
 
     @Test("history stress fixture publishes fifty stable incident rows")

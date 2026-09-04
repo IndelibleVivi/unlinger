@@ -8,7 +8,7 @@ protocol SocketExchanging: Sendable {
     ) async throws(ClientError) -> Data
 }
 
-/// Schema-v4 Unix-domain socket client. Every command gets one connection and
+/// Schema-v5 Unix-domain socket client. Every command gets one connection and
 /// one write attempt. A mutation is never automatically resent.
 public actor SocketClient: UnlingerClient {
     public static let maxRequestBytes = 64 * 1024
@@ -124,7 +124,7 @@ public actor SocketClient: UnlingerClient {
             DiagnosticsBundle.self,
             expectedPayloadType: "diagnostics",
             requestID: requestID,
-            expectedSchemaVersion: 4,
+            expectedSchemaVersion: 5,
             line: responseLine
         )
         return DiagnosticsExport(bundle: decoded.value, rawJSON: decoded.rawData)

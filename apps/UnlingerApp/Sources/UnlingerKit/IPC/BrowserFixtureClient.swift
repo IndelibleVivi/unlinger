@@ -9,6 +9,7 @@ public enum BrowserFixtureScenario: Equatable, Sendable {
     case protectedUnsupported
     case attention
     case recentSettlement
+    case impactResidue
     case historyStress
 }
 
@@ -25,7 +26,7 @@ public struct BrowserFixtureClient: UnlingerClient {
         var status = try await base.status()
         status.latestObservationAtUnixMillis = Self.observedAt
         switch scenario {
-        case .clear, .active, .verifying, .protectedUnsupported, .historyStress:
+        case .clear, .active, .verifying, .protectedUnsupported, .impactResidue, .historyStress:
             status.effectiveMode = .reportOnly
             status.confirmedIncidentCount = 0
             status.ambiguousIncidentCount = 0
@@ -51,7 +52,7 @@ public struct BrowserFixtureClient: UnlingerClient {
         let status = try await status()
         let roster = try await incidents()
         let phase: BrowserOverviewPhase = switch scenario {
-        case .clear, .recentSettlement, .historyStress: .clear
+        case .clear, .recentSettlement, .impactResidue, .historyStress: .clear
         case .active: .active
         case .verifying: .verifying
         case .confirmedReportOnly: .confirmed
@@ -93,7 +94,7 @@ public struct BrowserFixtureClient: UnlingerClient {
                 reasonId: reasonId
             )
         }
-        let settlement = scenario == .recentSettlement
+        let settlement = [.recentSettlement, .impactResidue].contains(scenario)
             ? BrowserSettlementSummary(
                 eventToken: "history-cleared-event-1",
                 incidentId: "redacted-incident-1",
@@ -106,7 +107,7 @@ public struct BrowserFixtureClient: UnlingerClient {
                 overallOutcome: .cleared
             )
             : nil
-        return BrowserOverviewSnapshot(
+        var snapshot = BrowserOverviewSnapshot(
             generatedAtUnixMillis: Self.observedAt,
             cycleToken: roster.cycleToken,
             observedAtUnixMillis: roster.observedAtUnixMillis,
@@ -121,17 +122,43 @@ public struct BrowserFixtureClient: UnlingerClient {
             attention: status.attention,
             protection: status.protection,
             supportCatalog: BrowserSupportCatalog(
-                supportRevision: "fixture:rules-v1",
+                supportRevision: "fixture:rules-0.4.0",
                 families: ["agent-browser", "playwright", "puppeteer"].map {
                     BrowserFamilySupport(
                         family: $0,
                         product: .chromeForTesting,
-                        admittedVersions: ["151.0.7922.34"],
+                        admittedVersions: ["151.0.7922.34", "152.0.7977.42"],
                         automaticActionLevel: .automatic
                     )
                 }
             )
         )
+        if scenario == .impactResidue {
+            snapshot.impact = BrowserImpactSummary(
+                trackingStartedAtUnixMillis: Self.observedAt - 86_400_000,
+                historicalCompleteness: .partialBackfill,
+                terminalCleanupCount: 3,
+                provedReclaimCount: 2,
+                reclaimedProcessCount: 12,
+                estimatedReclaimedMemoryBytes: 1_073_741_824
+            )
+            snapshot.storageResidue = StorageResidueSummary(
+                kind: .chromeCodeSignClone,
+                status: .detected,
+                observedAtUnixMillis: Self.observedAt - 5_000,
+                candidateCount: 49,
+                logicalBytes: 72_230_658_048,
+                shapeComplete: true,
+                referenceCheck: .incomplete,
+                automaticCleanupEligible: false,
+                reasonIds: [
+                    "storage_residue.code_sign_clone_detected",
+                    "storage_residue.logical_size_not_physical_reclaim",
+                    "storage_residue.reference_check_incomplete",
+                ]
+            )
+        }
+        return snapshot
     }
 
     public func history(limit: Int) async throws(ClientError) -> [HistoryEvent] {
@@ -147,7 +174,7 @@ public struct BrowserFixtureClient: UnlingerClient {
                 )
             }
         }
-        guard scenario == .recentSettlement,
+        guard [.recentSettlement, .impactResidue].contains(scenario),
               let cleanup = history.first,
               let sourceRoster = try? await FixtureClient(
                   statusFixture: "status-all-clear",
@@ -177,7 +204,7 @@ public struct BrowserFixtureClient: UnlingerClient {
         guard var first = roster.items.first else { return roster }
 
         switch scenario {
-        case .clear, .recentSettlement, .historyStress:
+        case .clear, .recentSettlement, .impactResidue, .historyStress:
             roster.items = []
         case .active:
             first.observation.state = .active
@@ -279,7 +306,7 @@ public struct BrowserFixtureClient: UnlingerClient {
                 historyFixture: "history-cleared-with-residue",
                 incidentFixture: "incident-failed"
             )
-        case .recentSettlement:
+        case .recentSettlement, .impactResidue:
             FixtureClient(
                 statusFixture: "status-recently-reclaimed",
                 historyFixture: "history-cleared",

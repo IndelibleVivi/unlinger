@@ -3,17 +3,17 @@ import Testing
 
 @Suite("Browser history presentation")
 struct BrowserHistoryPresentationTests {
-    @Test("repeated events collapse into one current browser session with product context")
-    func groupsRepeatedEventsByIncident() async throws {
+    @Test("cleanup outcomes collapse into one browser entry with current product context")
+    func groupsCleanupOutcomesByIncident() async throws {
         let client = BrowserFixtureClient(scenario: .protectedUnsupported)
         let snapshot = try await client.browserOverview()
         let overview = BrowserOverviewMapper.make(connection: .live, snapshot: snapshot)
         let current = try #require(overview.sessions.first)
-        let detail = try await FixtureClient(
-            statusFixture: "status-report-only",
-            incidentFixture: "incident-protected"
-        ).explain(incidentID: "redacted-incident-1")
-        let source = try #require(detail.events.first)
+        let history = try await FixtureClient(
+            statusFixture: "status-recently-reclaimed",
+            historyFixture: "history-cleared"
+        ).history(limit: 10)
+        let source = try #require(history.first)
         let earlier = HistoryEvent(
             eventToken: "history-protected-earlier",
             incidentId: current.incidentID,

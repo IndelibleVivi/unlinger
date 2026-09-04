@@ -25,7 +25,9 @@ pub(crate) fn handle_at(
             control.handle_at(IpcCommand::Status, now_unix_millis)?,
             schema_version,
         ),
-        public::Command::BrowserOverview => project_browser_overview(control, now_unix_millis),
+        public::Command::BrowserOverview => {
+            project_browser_overview(control, now_unix_millis, schema_version)
+        }
         public::Command::History { limit } => project_payload(
             control,
             control.handle_at(IpcCommand::History { limit }, now_unix_millis)?,
@@ -57,7 +59,10 @@ pub(crate) fn handle_at(
                     .reports
                     .into_iter()
                     .map(|report| {
-                        project_current_incident(report, schema_version == public::SCHEMA_VERSION)
+                        project_current_incident(
+                            report,
+                            schema_version >= public::PREVIOUS_SCHEMA_VERSION,
+                        )
                     })
                     .collect(),
             }))
@@ -189,11 +194,31 @@ fn validate_incident_id(incident_id: &str) -> Result<(), ControlError> {
 fn project_browser_overview(
     control: &ControlPlane,
     now_unix_millis: u64,
+    schema_version: u32,
 ) -> Result<public::Payload, ControlError> {
     let source = control.browser_source_snapshot_at(now_unix_millis)?;
     let phase = browser_overview_phase(&source.status, &source.roster);
-    let recent_settlement =
-        project_recent_browser_settlement(control, source.status.most_recent_reclaim.as_ref())?;
+    let impact = control.store().impact_summary(0)?;
+    let storage_residue = if schema_version == public::SCHEMA_VERSION {
+        control
+            .store()
+            .latest_storage_residue_observation()?
+            .map(project_storage_residue)
+    } else {
+        None
+    };
+    let settlement_impact = source
+        .status
+        .most_recent_reclaim
+        .as_ref()
+        .and_then(|reclaim| reclaim.event_token.as_deref())
+        .map(|event_token| control.store().cleanup_impact_for_event_token(event_token))
+        .transpose()?
+        .flatten();
+    let recent_settlement = project_recent_browser_settlement(
+        settlement_impact.as_ref(),
+        source.status.most_recent_reclaim.as_ref(),
+    );
     let projected_status = project_status(control, source.status)?;
     let sessions = source
         .roster
@@ -264,11 +289,65 @@ fn project_browser_overview(
             sessions,
             coverage_notices,
             recent_settlement,
+            impact: (schema_version == public::SCHEMA_VERSION).then_some({
+                public::BrowserImpactSummary {
+                    tracking_started_at_unix_millis: impact.tracking_started_at_unix_millis,
+                    historical_completeness: match impact.historical_completeness {
+                        crate::ImpactHistoryCompleteness::Complete => {
+                            public::ImpactHistoryCompleteness::Complete
+                        }
+                        crate::ImpactHistoryCompleteness::PartialBackfill => {
+                            public::ImpactHistoryCompleteness::PartialBackfill
+                        }
+                    },
+                    terminal_cleanup_count: impact.terminal_cleanup_count,
+                    proved_reclaim_count: impact.proved_reclaim_count,
+                    reclaimed_process_count: impact.reclaimed_process_count,
+                    estimated_reclaimed_memory_bytes: impact.estimated_reclaimed_memory_bytes,
+                }
+            }),
+            storage_residue,
             attention: projected_status.attention,
             protection: projected_status.protection,
             support_catalog,
         },
     ))
+}
+
+fn project_storage_residue(
+    observation: unlinger_core::StorageResidueObservation,
+) -> public::StorageResidueSummary {
+    public::StorageResidueSummary {
+        kind: match observation.kind {
+            unlinger_core::StorageResidueKind::ChromeCodeSignClone => {
+                public::StorageResidueKind::ChromeCodeSignClone
+            }
+        },
+        status: match observation.status {
+            unlinger_core::StorageResidueStatus::Clear => public::StorageResidueStatus::Clear,
+            unlinger_core::StorageResidueStatus::Detected => public::StorageResidueStatus::Detected,
+            unlinger_core::StorageResidueStatus::Unavailable => {
+                public::StorageResidueStatus::Unavailable
+            }
+        },
+        observed_at_unix_millis: observation.observed_at_unix_millis,
+        candidate_count: observation.candidate_count,
+        logical_bytes: observation.logical_bytes,
+        shape_complete: observation.shape_complete,
+        reference_check: match observation.reference_check {
+            unlinger_core::StorageResidueReferenceCheck::Incomplete => {
+                public::StorageResidueReferenceCheck::Incomplete
+            }
+            unlinger_core::StorageResidueReferenceCheck::CompleteNoReferences => {
+                public::StorageResidueReferenceCheck::CompleteNoReferences
+            }
+            unlinger_core::StorageResidueReferenceCheck::Referenced => {
+                public::StorageResidueReferenceCheck::Referenced
+            }
+        },
+        automatic_cleanup_eligible: observation.automatic_cleanup_eligible,
+        reason_ids: observation.reason_ids,
+    }
 }
 
 fn browser_overview_phase(
@@ -354,63 +433,34 @@ fn project_roster_freshness(
 }
 
 fn project_recent_browser_settlement(
-    control: &ControlPlane,
+    impact: Option<&crate::CleanupImpact>,
     reclaim: Option<&crate::RecentReclaim>,
-) -> Result<Option<public::BrowserSettlementSummary>, ControlError> {
-    let Some(reclaim) = reclaim else {
-        return Ok(None);
-    };
+) -> Option<public::BrowserSettlementSummary> {
+    let reclaim = reclaim?;
     let (Some(event_token), Some(expected_outcome)) =
         (reclaim.event_token.as_ref(), reclaim.outcome.as_ref())
     else {
-        return Ok(None);
+        return None;
     };
-    let Some(detail) = control.store().explain(&reclaim.incident_id)? else {
-        return Ok(None);
-    };
-    let Some(cleanup_event) = detail.events.iter().find(|event| {
-        event.event_token == *event_token
-            && event.occurred_at_unix_millis == reclaim.occurred_at_unix_millis
-    }) else {
-        return Ok(None);
-    };
-    let EventPayload::Cleanup { receipt } = &cleanup_event.payload else {
-        return Ok(None);
-    };
-    if receipt.outcome() != *expected_outcome {
-        return Ok(None);
+    let impact = impact.filter(|impact| {
+        impact.event_token == *event_token
+            && impact.incident_id == reclaim.incident_id
+            && impact.occurred_at_unix_millis == reclaim.occurred_at_unix_millis
+    })?;
+    if impact.outcome != *expected_outcome {
+        return None;
     }
-    let Some(family) = detail
-        .events
-        .iter()
-        .filter(|event| event.event_id < cleanup_event.event_id)
-        .filter_map(|event| match &event.payload {
-            EventPayload::Observation { report } => {
-                Some((event.event_id, report.signature_pack.as_str()))
-            }
-            EventPayload::Cleanup { .. } => None,
-        })
-        .max_by_key(|(event_id, _)| *event_id)
-        .map(|(_, family)| family.to_owned())
-    else {
-        return Ok(None);
-    };
-    let outcome = receipt.outcome();
-    Ok(Some(public::BrowserSettlementSummary {
+    Some(public::BrowserSettlementSummary {
         event_token: event_token.clone(),
         incident_id: reclaim.incident_id.clone(),
-        family,
-        occurred_at_unix_millis: cleanup_event.occurred_at_unix_millis,
-        process_count: receipt
-            .resources
-            .before
-            .as_ref()
-            .map(|resources| resources.process_count),
-        estimated_reclaimed_memory_bytes: receipt.resources.estimated_reclaimed_memory_bytes,
-        revival_checks_completed: receipt.revival_checks_completed,
-        artifact_outcome: project_artifact_outcome(outcome.artifact),
-        overall_outcome: project_overall_outcome(outcome.overall),
-    }))
+        family: impact.family.clone(),
+        occurred_at_unix_millis: impact.occurred_at_unix_millis,
+        process_count: impact.process_count,
+        estimated_reclaimed_memory_bytes: impact.estimated_reclaimed_memory_bytes,
+        revival_checks_completed: impact.revival_checks_completed,
+        artifact_outcome: project_artifact_outcome(impact.outcome.artifact),
+        overall_outcome: project_overall_outcome(impact.outcome.overall),
+    })
 }
 
 fn project_payload(
@@ -420,11 +470,14 @@ fn project_payload(
 ) -> Result<public::Payload, ControlError> {
     Ok(match payload {
         IpcPayload::Status(status) => public::Payload::Status(project_status(control, status)?),
-        IpcPayload::History(events) => {
-            public::Payload::History(events.into_iter().map(project_history_event).collect())
-        }
+        IpcPayload::History(events) => public::Payload::History(
+            events
+                .into_iter()
+                .map(|event| project_history_event(event, schema_version))
+                .collect(),
+        ),
         IpcPayload::Incident(detail) => {
-            public::Payload::Incident(project_incident(control, detail)?)
+            public::Payload::Incident(project_incident(control, detail, schema_version)?)
         }
         IpcPayload::Pause { .. }
         | IpcPayload::Resumed
@@ -436,7 +489,7 @@ fn project_payload(
             ));
         }
         IpcPayload::Diagnostics(bundle) => {
-            let incident = project_incident(control, bundle.incident)?;
+            let incident = project_incident(control, bundle.incident, schema_version)?;
             public::Payload::Diagnostics(public::DiagnosticsBundle {
                 document_schema_version: schema_version,
                 generated_at_unix_millis: bundle.generated_at_unix_millis,
@@ -595,6 +648,7 @@ fn project_mutation_capability(
 fn project_incident(
     control: &ControlPlane,
     detail: crate::IncidentDetail,
+    schema_version: u32,
 ) -> Result<public::IncidentDetail, ControlError> {
     let incident_id = detail.incident_id;
     let retry_failed_cleanup = project_mutation_capability(
@@ -620,7 +674,7 @@ fn project_incident(
         events: detail
             .events
             .into_iter()
-            .map(project_history_event)
+            .map(|event| project_history_event(event, schema_version))
             .collect(),
         capabilities: public::IncidentCapabilities {
             retry_failed_cleanup,
@@ -631,12 +685,18 @@ fn project_incident(
     })
 }
 
-fn project_history_event(event: HistoryEvent) -> public::HistoryEvent {
+fn project_history_event(event: HistoryEvent, schema_version: u32) -> public::HistoryEvent {
     let event_token = event.event_token;
     public::HistoryEvent {
         event_token: event_token.clone(),
         incident_id: event.incident_id,
         occurred_at_unix_millis: event.occurred_at_unix_millis,
+        observation_span: (schema_version == public::SCHEMA_VERSION
+            && event.kind == crate::EventKind::Observation)
+            .then_some(public::ObservationSpan {
+                first_observed_at_unix_millis: event.first_occurred_at_unix_millis,
+                observation_count: event.observation_count,
+            }),
         state: project_incident_state(event.state),
         payload: match event.payload {
             EventPayload::Observation { report } => public::EventPayload::Observation {

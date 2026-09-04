@@ -70,6 +70,19 @@
 "browser.coverage.observation_only" = "This session can currently be observed but not cleaned automatically.";
 "browser.coverage.control_path_incomplete" = "Debugging-control visibility was incomplete, so the session was left untouched.";
 
+/* Impact and storage residue */
+"browser.impact.title" = "Unlinger impact";
+"browser.impact.none_since_tracking" = "No successful automatic cleanup has been recorded since impact tracking began.";
+"browser.impact.reclaims" = "%d leftover browser sessions cleaned";
+"browser.impact.processes" = "%d browser processes settled";
+"browser.impact.memory" = "%@ estimated memory reclaimed";
+"browser.impact.partial_history" = "Older history was partially backfilled; totals before impact tracking may be incomplete.";
+"browser.storage_residue.title" = "Storage residue found";
+"browser.storage_residue.detected" = "%d Chrome code-signing clone leftovers detected";
+"browser.storage_residue.logical_size" = "%@ logical size; APFS physical reclaim may be smaller.";
+"browser.storage_residue.observe_only" = "Observe-only: reference checks are incomplete, so Unlinger will not delete these files.";
+"browser.storage_residue.unavailable" = "The Chrome code-signing clone location could not be verified safely.";
+
 /* Recent browser settlement */
 "browser.settlement.title" = "Recent browser settlement";
 "browser.settlement.cleared" = "Recently cleaned up a leftover browser session.";
@@ -94,7 +107,7 @@
 
 /* Browser history */
 "browser.history.title" = "Browser history";
-"browser.history.hint" = "See what Unlinger observed and how each browser session settled.";
+"browser.history.hint" = "See completed cleanup outcomes and their exact actions.";
 
 /* Browser detail */
 "browser.detail.title" = "Browser session";
@@ -124,8 +137,8 @@
 
 /* History */
 "history.title" = "Browser history";
-"history.empty" = "No recorded events yet.";
-"history.description" = "Grouped by browser session. Open one to see why it was left alone or what cleanup occurred.";
+"history.empty" = "No cleanup outcomes recorded yet.";
+"history.description" = "Automatic cleanup outcomes, grouped by browser session. Open one for the evidence and exact actions.";
 "history.session.current" = "Current";
 "history.session.recorded" = "Recorded";
 "history.event_count" = "%lld updates";

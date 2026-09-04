@@ -9,11 +9,13 @@ use unlinger_core::{
     CleanupActionJournal, CleanupReceipt, CleanupResources, CleanupSignal, CleanupStage,
     GateLedger, IncidentReport, IncidentState, ProcessIdentity, ProcessRole, ProcessRoleCount,
     ProcessTarget, ResourceSnapshot, RootSummary, RuntimeArtifactKind, SignalDisposition,
+    StorageResidueKind, StorageResidueObservation, StorageResidueReferenceCheck,
+    StorageResidueStatus,
 };
 use unlinger_daemon::{
-    CoolingClock, EventKind, EventPayload, HistoryStore, ManagedStartupPhase, MutationLookup,
-    ObservationRecord, ObservedIncidentIdentity, OrdinaryMutation, RetentionPolicy,
-    StorageRecoveryReason, StoreError,
+    CoolingClock, EventKind, EventPayload, HistoryStore, ImpactHistoryCompleteness,
+    ManagedStartupPhase, MutationLookup, ObservationRecord, ObservedIncidentIdentity,
+    OrdinaryMutation, RetentionPolicy, StorageRecoveryReason, StoreError,
 };
 use unlinger_protocol::{MutationContext, MutationKind, MutationOutcome, MutationResult};
 
@@ -287,7 +289,10 @@ fn downgrade_current_database_to_v4(path: &PathBuf) {
     let connection = Connection::open(path).expect("open current database for v4 fixture");
     connection
         .execute_batch(
-            "DROP TABLE ordinary_mutation_receipts;
+            "DROP TABLE storage_residue_latest;
+             DROP TABLE cleanup_impacts;
+             DROP TABLE impact_authority;
+             DROP TABLE ordinary_mutation_receipts;
              DROP TABLE control_metadata;
              DROP TABLE mutation_authority;
              DROP TABLE public_event_tokens;
@@ -341,7 +346,10 @@ fn downgrade_current_database_to_v5(path: &PathBuf) {
     let connection = Connection::open(path).expect("open current database for v5 fixture");
     connection
         .execute_batch(
-            "DROP TABLE ordinary_mutation_receipts;
+            "DROP TABLE storage_residue_latest;
+             DROP TABLE cleanup_impacts;
+             DROP TABLE impact_authority;
+             DROP TABLE ordinary_mutation_receipts;
              DROP TABLE control_metadata;
              DROP TABLE mutation_authority;
              DROP TABLE public_event_tokens;
@@ -434,6 +442,149 @@ fn retention_keeps_the_tighter_age_and_count_boundary() {
 }
 
 #[test]
+fn repeated_semantically_identical_observations_extend_one_durable_span() {
+    let database = TempDatabase::new();
+    let store = HistoryStore::open(&database.0).expect("open store");
+    let mut report = confirmed_report("inc-span");
+
+    store
+        .record_observation_batch(1_000, &[report.clone()])
+        .expect("record first observation");
+    report.resident_memory_bytes = 8_192;
+    store
+        .record_observation_batch(2_000, &[report.clone()])
+        .expect("extend observation span");
+    report.resident_memory_bytes = 12_288;
+    store
+        .record_observation_batch(3_000, &[report.clone()])
+        .expect("extend observation span again");
+
+    let history = store.history(10).expect("read compact history");
+    assert_eq!(history.len(), 1);
+    assert_eq!(history[0].first_occurred_at_unix_millis, 1_000);
+    assert_eq!(history[0].occurred_at_unix_millis, 3_000);
+    assert_eq!(history[0].observation_count, 3);
+    let EventPayload::Observation {
+        report: stored_report,
+    } = &history[0].payload
+    else {
+        panic!("span must retain an observation payload");
+    };
+    assert_eq!(stored_report.resident_memory_bytes, 12_288);
+
+    let mut changed = report.clone();
+    changed.state = IncidentState::Protected;
+    changed.gates.no_protection_rule = false;
+    store
+        .record_observation_batch(4_000, &[changed])
+        .expect("record semantic state change");
+    let history = store.history(10).expect("read changed history");
+    assert_eq!(history.len(), 2);
+    assert_eq!(history[0].observation_count, 1);
+    assert_eq!(history[1].observation_count, 3);
+}
+
+#[test]
+fn observation_retention_cannot_evict_cleanup_impact_or_terminal_receipt() {
+    let database = TempDatabase::new();
+    let store = HistoryStore::open(&database.0).expect("open store");
+    let report = confirmed_report("inc-impact");
+    store
+        .record_observation(900, &report)
+        .expect("record cleanup family authority");
+    let attempt = store
+        .begin_cleanup_attempt(1_000, &report, "epoch-a")
+        .expect("begin cleanup");
+    let prepared = store
+        .prepare_cleanup_action(&attempt, 0, 1_010, &primary_term_intent())
+        .expect("prepare action");
+    store
+        .complete_cleanup_action(&prepared, 1_020, SignalDisposition::Delivered)
+        .expect("complete action");
+    let mut receipt = cleared_receipt("inc-impact");
+    receipt.resources = CleanupResources {
+        before: Some(ResourceSnapshot {
+            process_count: 2,
+            resident_memory_bytes: 8_192,
+        }),
+        after: Some(ResourceSnapshot {
+            process_count: 0,
+            resident_memory_bytes: 0,
+        }),
+        estimated_reclaimed_memory_bytes: Some(8_192),
+    };
+    store
+        .complete_cleanup_attempt(&attempt, 1_100, &receipt)
+        .expect("complete cleanup");
+
+    for index in 0..25_u64 {
+        store
+            .record_observation(2_000 + index, &confirmed_report(&format!("noise-{index}")))
+            .expect("record unrelated observation");
+    }
+    store
+        .prune(
+            3_000,
+            RetentionPolicy {
+                max_age_millis: 10_000,
+                max_events: 1,
+            },
+        )
+        .expect("prune observation presentation");
+
+    let history = store.history(100).expect("read retained cleanup history");
+    assert!(history.iter().any(|event| {
+        event.incident_id == "inc-impact"
+            && event.kind == EventKind::Cleanup
+            && event.state == IncidentState::Cleared
+    }));
+    let recent = store
+        .most_recent_reclaim()
+        .expect("read recent reclaim")
+        .expect("terminal impact remains authoritative");
+    assert_eq!(recent.incident_id, "inc-impact");
+
+    let impact = store.impact_summary(10).expect("read impact summary");
+    assert_eq!(
+        impact.historical_completeness,
+        ImpactHistoryCompleteness::Complete
+    );
+    assert_eq!(impact.terminal_cleanup_count, 1);
+    assert_eq!(impact.proved_reclaim_count, 1);
+    assert_eq!(impact.reclaimed_process_count, Some(2));
+    assert_eq!(impact.estimated_reclaimed_memory_bytes, Some(8_192));
+    assert_eq!(impact.recent.len(), 1);
+    assert_eq!(impact.recent[0].family, "agent-browser");
+}
+
+#[test]
+fn aggregate_impact_survives_expired_cleanup_detail_without_claiming_full_history() {
+    let database = TempDatabase::new();
+    let store = HistoryStore::open(&database.0).expect("open store");
+    let report = confirmed_report("inc-expired-impact");
+    let attempt = store
+        .begin_cleanup_attempt(1_000, &report, "epoch-a")
+        .expect("begin cleanup");
+    store
+        .complete_cleanup_attempt(&attempt, 1_100, &cleared_receipt("inc-expired-impact"))
+        .expect("complete cleanup");
+    store
+        .prune(
+            15 * 24 * 60 * 60 * 1_000,
+            RetentionPolicy {
+                max_age_millis: 1,
+                max_events: 0,
+            },
+        )
+        .expect("expire presentation detail");
+
+    let impact = store.impact_summary(10).expect("read durable aggregate");
+    assert_eq!(impact.terminal_cleanup_count, 1);
+    assert_eq!(impact.proved_reclaim_count, 1);
+    assert!(impact.recent.is_empty());
+}
+
+#[test]
 fn pause_deadline_survives_store_reopen_and_can_be_cleared() {
     let database = TempDatabase::new();
     let store = HistoryStore::open(&database.0).expect("open store");
@@ -444,6 +595,41 @@ fn pause_deadline_survives_store_reopen_and_can_be_cleared() {
     assert_eq!(reopened.pause_until().expect("read pause"), Some(88_000));
     reopened.set_pause_until(None).expect("clear pause");
     assert_eq!(reopened.pause_until().expect("read cleared pause"), None);
+}
+
+#[test]
+fn storage_residue_observation_is_durable_redacted_and_cannot_encode_cleanup_authority() {
+    let database = TempDatabase::new();
+    let store = HistoryStore::open(&database.0).expect("open store");
+    let observation = StorageResidueObservation {
+        kind: StorageResidueKind::ChromeCodeSignClone,
+        status: StorageResidueStatus::Detected,
+        observed_at_unix_millis: 4_200,
+        candidate_count: 49,
+        logical_bytes: 67_000,
+        shape_complete: true,
+        reference_check: StorageResidueReferenceCheck::Incomplete,
+        automatic_cleanup_eligible: false,
+        reason_ids: vec!["storage_residue.code_sign_clone_detected".to_owned()],
+    };
+    store
+        .record_storage_residue_observation(&observation)
+        .expect("record residue observation");
+    drop(store);
+
+    let reopened = HistoryStore::open(&database.0).expect("reopen store");
+    assert_eq!(
+        reopened
+            .latest_storage_residue_observation()
+            .expect("read residue observation"),
+        Some(observation.clone())
+    );
+    let mut forbidden = observation;
+    forbidden.automatic_cleanup_eligible = true;
+    assert!(matches!(
+        reopened.record_storage_residue_observation(&forbidden),
+        Err(StoreError::Invalid(_))
+    ));
 }
 
 #[test]
@@ -518,7 +704,7 @@ fn migrates_v2_history_and_pause_but_resets_legacy_wall_clock_cooling() {
     let synchronous: i64 = connection
         .pragma_query_value(None, "synchronous", |row| row.get(0))
         .expect("read synchronous mode");
-    assert_eq!(version, 6);
+    assert_eq!(version, 7);
     assert_eq!(journal_mode, "wal");
     assert_eq!(synchronous, 2);
     drop(connection);
@@ -537,7 +723,7 @@ fn migrates_v2_history_and_pause_but_resets_legacy_wall_clock_cooling() {
 }
 
 #[test]
-fn v3_to_v6_adds_lifecycle_public_identity_and_resets_signature_unknown_cooling() {
+fn v3_to_v7_adds_lifecycle_public_identity_and_resets_signature_unknown_cooling() {
     let database = TempDatabase::new();
     let store = HistoryStore::open(&database.0).expect("create current store");
     let report = cooling_report("inc-v3");
@@ -562,7 +748,7 @@ fn v3_to_v6_adds_lifecycle_public_identity_and_resets_signature_unknown_cooling(
         .expect("simulate a schema-v3 candidate");
     drop(connection);
 
-    let migrated = HistoryStore::open(&database.0).expect("migrate v3 to v5");
+    let migrated = HistoryStore::open(&database.0).expect("migrate v3 to v7");
     assert!(
         !migrated
             .track_cooling(
@@ -583,7 +769,7 @@ fn v3_to_v6_adds_lifecycle_public_identity_and_resets_signature_unknown_cooling(
 }
 
 #[test]
-fn v4_to_v6_preserves_history_and_retry_block_but_resets_incompatible_cooling() {
+fn v4_to_v7_preserves_history_and_retry_block_but_resets_incompatible_cooling() {
     let database = TempDatabase::new();
     let store = HistoryStore::open(&database.0).expect("create current store");
     let cooling = cooling_report("inc-v4-cooling");
@@ -616,8 +802,8 @@ fn v4_to_v6_preserves_history_and_retry_block_but_resets_incompatible_cooling() 
     drop(store);
     downgrade_current_database_to_v4(&database.0);
 
-    let migrated = HistoryStore::open(&database.0).expect("migrate v4 to v5");
-    assert_eq!(HistoryStore::schema_version(), 6);
+    let migrated = HistoryStore::open(&database.0).expect("migrate v4 to v7");
+    assert_eq!(HistoryStore::schema_version(), 7);
     let connection = Connection::open(&database.0).expect("inspect migrated artifact journal");
     let artifact_columns = connection
         .prepare("PRAGMA table_info(cleanup_artifact_actions)")
@@ -659,19 +845,35 @@ fn v4_to_v6_preserves_history_and_retry_block_but_resets_incompatible_cooling() 
 }
 
 #[test]
-fn v5_to_v6_backfills_event_tokens_and_creates_mutation_authority() {
+fn v5_to_v7_backfills_event_tokens_and_impact_authority() {
     let database = TempDatabase::new();
     let store = HistoryStore::open(&database.0).expect("create current store");
     store
         .record_observation(1_010, &confirmed_report("history-v5"))
         .expect("record history before v5 fixture");
+    let cleanup_report = confirmed_report("cleanup-v5");
+    let attempt = store
+        .begin_cleanup_attempt(1_020, &cleanup_report, "epoch-v5")
+        .expect("begin cleanup before v5 fixture");
+    store
+        .complete_cleanup_attempt(&attempt, 1_030, &cleared_receipt("cleanup-v5"))
+        .expect("complete cleanup before v5 fixture");
     drop(store);
     downgrade_current_database_to_v5(&database.0);
 
-    let migrated = HistoryStore::open(&database.0).expect("migrate v5 to v6");
+    let migrated = HistoryStore::open(&database.0).expect("migrate v5 to v7");
     let history = migrated.history(10).expect("preserved history");
-    assert_eq!(history.len(), 1);
-    assert_eq!(history[0].event_token.len(), 32);
+    assert_eq!(history.len(), 3);
+    assert!(history.iter().all(|event| event.event_token.len() == 32));
+    let impact = migrated.impact_summary(10).expect("backfilled impact");
+    assert_eq!(
+        impact.historical_completeness,
+        ImpactHistoryCompleteness::PartialBackfill
+    );
+    assert_eq!(impact.terminal_cleanup_count, 1);
+    assert_eq!(impact.proved_reclaim_count, 1);
+    assert_eq!(impact.recent.len(), 1);
+    assert_eq!(impact.recent[0].incident_id, "cleanup-v5");
     assert_eq!(
         migrated
             .mutation_namespace_token()
@@ -686,11 +888,11 @@ fn v5_to_v6_backfills_event_tokens_and_creates_mutation_authority() {
     let version: i64 = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .expect("read migrated version");
-    assert_eq!(version, 6);
+    assert_eq!(version, 7);
 }
 
 #[test]
-fn v5_to_v6_failure_rolls_back_the_entire_migration_transaction() {
+fn v5_to_v7_failure_rolls_back_the_entire_migration_transaction() {
     let database = TempDatabase::new();
     let store = HistoryStore::open(&database.0).expect("create current store");
     drop(store);
@@ -1981,7 +2183,12 @@ fn retention_never_discards_active_retry_blocks() {
             },
         )
         .expect("prune presentation history");
-    assert!(store.history(10).expect("empty history").is_empty());
+    let retained = store.history(10).expect("cleanup history retained");
+    assert!(
+        retained
+            .iter()
+            .all(|event| event.kind == EventKind::Cleanup)
+    );
     assert!(
         store
             .cleanup_blocked("inc-blocked")
@@ -2276,8 +2483,9 @@ fn most_recent_reclaim_uses_a_dedicated_query_not_history_presentation_limit() {
         transaction
             .execute(
                 "INSERT INTO events (
-                     incident_id, occurred_at_ms, kind, state, payload_json, attempt_id
-                 ) VALUES ('inc-new', ?1, 'observation', 'CONFIRMED', ?2, NULL)",
+                     incident_id, first_occurred_at_ms, occurred_at_ms,
+                     observation_count, kind, state, payload_json, attempt_id
+                 ) VALUES ('inc-new', ?1, ?1, 1, 'observation', 'CONFIRMED', ?2, NULL)",
                 params![
                     i64::try_from(2_000 + index).expect("fixture timestamp"),
                     payload

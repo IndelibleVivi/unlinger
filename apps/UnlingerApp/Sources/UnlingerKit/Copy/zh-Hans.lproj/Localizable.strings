@@ -70,6 +70,19 @@
 "browser.coverage.observation_only" = "当前只能观察这个会话，不会自动清理。";
 "browser.coverage.control_path_incomplete" = "无法完整确认调试控制关系，因此保留这个会话不动。";
 
+/* 成果与存储残留 */
+"browser.impact.title" = "Unlinger 的成果";
+"browser.impact.none_since_tracking" = "自成果记录开始，尚未记录成功的自动清理。";
+"browser.impact.reclaims" = "已清理 %d 个遗留浏览器会话";
+"browser.impact.processes" = "已处理 %d 个浏览器进程";
+"browser.impact.memory" = "预计回收内存 %@";
+"browser.impact.partial_history" = "旧历史仅完成部分回填；成果记录开始前的总数可能不完整。";
+"browser.storage_residue.title" = "发现存储残留";
+"browser.storage_residue.detected" = "发现 %d 份 Chrome 代码签名 clone 残留";
+"browser.storage_residue.logical_size" = "账面大小 %@；APFS 实际可释放空间可能更少。";
+"browser.storage_residue.observe_only" = "当前只观察：引用检查尚不完整，因此 Unlinger 不会删除这些文件。";
+"browser.storage_residue.unavailable" = "无法安全验证 Chrome 代码签名 clone 目录。";
+
 /* Recent browser settlement */
 "browser.settlement.title" = "最近一次浏览器处理";
 "browser.settlement.cleared" = "最近清理了一个遗留浏览器会话。";
@@ -94,7 +107,7 @@
 
 /* Browser history */
 "browser.history.title" = "浏览器历史";
-"browser.history.hint" = "查看 Unlinger 观察到了什么，以及每个浏览器会话最终如何处理。";
+"browser.history.hint" = "查看已完成的清理结果与实际动作。";
 
 /* Browser detail */
 "browser.detail.title" = "浏览器会话";
@@ -124,8 +137,8 @@
 
 /* History */
 "history.title" = "浏览器历史";
-"history.empty" = "还没有任何记录。";
-"history.description" = "按浏览器会话汇总。点开一项即可查看为什么保留不动，或实际执行了什么清理。";
+"history.empty" = "还没有自动清理结果。";
+"history.description" = "这里按浏览器会话汇总自动清理结果；点开可查看证据与实际动作。";
 "history.session.current" = "当前";
 "history.session.recorded" = "历史";
 "history.event_count" = "%lld 条更新";

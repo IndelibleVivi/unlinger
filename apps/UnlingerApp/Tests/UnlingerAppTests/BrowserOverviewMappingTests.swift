@@ -1,7 +1,7 @@
 import Testing
 @testable import UnlingerKit
 
-@Suite("Schema-v4 browser overview presentation")
+@Suite("Schema-v5 browser overview presentation")
 struct BrowserOverviewMappingTests {
     @Test("Swift preserves the daemon phase instead of recomputing it")
     func preservesDaemonPhase() async throws {
@@ -77,5 +77,30 @@ struct BrowserOverviewMappingTests {
         #expect(settlement.processCount == 8)
         #expect(settlement.revivalChecksCompleted == 2)
         #expect(!settlement.isFallback)
+    }
+
+    @Test("impact and storage residue remain typed presentation facts")
+    func impactAndStorageResidue() throws {
+        let data = try FixtureStore.data(
+            named: "browser-overview-impact-residue",
+            schemaVersion: 5
+        )
+        let snapshot = try ResponseDecoder.decode(
+            BrowserOverviewSnapshot.self,
+            expectedPayloadType: "browser_overview",
+            requestID: 502,
+            expectedSchemaVersion: 5,
+            line: data
+        )
+
+        let overview = BrowserOverviewMapper.make(connection: .live, snapshot: snapshot)
+
+        #expect(overview.impact?.provedReclaimCount == 2)
+        #expect(overview.impact?.historicalCompleteness == .partialBackfill)
+        #expect(overview.storageResidue?.status == .detected)
+        #expect(overview.storageResidue?.candidateCount == 49)
+        #expect(overview.storageResidue?.automaticCleanupEligible == false)
+        #expect(overview.visibleSections(connection: .live).contains(.impact))
+        #expect(overview.visibleSections(connection: .live).contains(.storageResidue))
     }
 }

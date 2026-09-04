@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// Fixture-driven previews: every documented state renders from typed
-/// schema-v4 browser truth, never hand-built presentation data.
+/// schema-v5 browser truth, never hand-built presentation data.
 
 @MainActor
 private func previewState(
@@ -60,6 +60,10 @@ private func previewMutationState() -> AppState {
 
 #Preview("Browser: recent settlement") {
     previewRoot(previewState("browser-recent-settlement"))
+}
+
+#Preview("Browser: impact and residue") {
+    previewRoot(previewState("browser-impact-residue"))
 }
 
 #Preview("History") {

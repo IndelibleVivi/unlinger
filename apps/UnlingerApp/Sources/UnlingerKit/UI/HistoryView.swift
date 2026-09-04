@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// Incident-centric history index. Repeated observation events are summarized
-/// once here and remain available on the incident timeline.
+/// Cleanup-outcome history index. Current observations live on the browser
+/// home screen; repeated observations remain available as spans in detail.
 public struct HistoryView: View {
     @Environment(AppState.self) private var state
 

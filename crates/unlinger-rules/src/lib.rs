@@ -1635,6 +1635,7 @@ mod tests {
         platform: SupportPlatform,
         recognized_families: Vec<SupportedFamily>,
         artifacts: Vec<SupportedArtifact>,
+        storage_residue: Vec<SupportedStorageResidue>,
         protocol: ProtocolSupport,
         acceptance: AcceptanceSupport,
     }
@@ -1700,9 +1701,20 @@ mod tests {
     struct ProtocolSupport {
         source_app_schema: u32,
         transitional_app_schema: u32,
+        legacy_app_schema: u32,
         source_operator_schema: u32,
         historical_app_schema: u32,
         server_accepts: Vec<u32>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct SupportedStorageResidue {
+        kind: String,
+        observation: String,
+        automatic_eligibility: String,
+        size_semantics: String,
+        reference_check: String,
     }
 
     #[derive(Debug, Deserialize)]
@@ -1875,7 +1887,7 @@ mod tests {
         );
         assert!(rules.packs().iter().all(|pack| {
             pack.schema_version == 2
-                && pack.version == "0.3.0"
+                && pack.version == "0.4.0"
                 && pack.graceful_strategy == GracefulStrategy::OsTermOnly
                 && pack.recorder_executable_basenames == ["ffmpeg"]
                 && matches!(pack.version_policy, VersionPolicy::ExactAllowlist { .. })
@@ -1969,11 +1981,20 @@ mod tests {
         assert!(!artifact.ambient_field_verified);
         assert_eq!(artifact.known_residuals.len(), 2);
 
-        assert_eq!(matrix.protocol.source_app_schema, 4);
-        assert_eq!(matrix.protocol.transitional_app_schema, 3);
+        assert_eq!(matrix.storage_residue.len(), 1);
+        let residue = &matrix.storage_residue[0];
+        assert_eq!(residue.kind, "chrome_code_sign_clone");
+        assert_eq!(residue.observation, "exact_current_user_clone_root");
+        assert_eq!(residue.automatic_eligibility, "observe_only");
+        assert_eq!(residue.size_semantics, "logical_bytes_not_physical_reclaim");
+        assert_eq!(residue.reference_check, "incomplete");
+
+        assert_eq!(matrix.protocol.source_app_schema, 5);
+        assert_eq!(matrix.protocol.transitional_app_schema, 4);
+        assert_eq!(matrix.protocol.legacy_app_schema, 3);
         assert_eq!(matrix.protocol.source_operator_schema, 1);
         assert_eq!(matrix.protocol.historical_app_schema, 2);
-        assert_eq!(matrix.protocol.server_accepts, [1, 3, 4]);
+        assert_eq!(matrix.protocol.server_accepts, [1, 3, 4, 5]);
         assert!(matrix.acceptance.private_enforcement_candidate_verified);
         assert!(!matrix.acceptance.ambient_enforcement_accepted);
         assert!(!matrix.acceptance.multi_day_dogfood_accepted);
@@ -2042,7 +2063,7 @@ mod tests {
     }
 
     #[test]
-    fn exact_browser_version_is_the_only_embedded_supported_point() {
+    fn only_the_two_exact_field_observed_browser_versions_are_supported() {
         let case = corpus_case("abandoned Playwright browser without controller");
         let analyzer = analyzer();
         let exact = snapshot(&case.processes, 120_000);
@@ -2057,6 +2078,29 @@ mod tests {
             item.id == "version.browser_exact_allowlist"
                 && item.family == EvidenceFamily::AutomationProvenance
         }));
+
+        let mut current_exact = exact.clone();
+        current_exact
+            .processes
+            .iter_mut()
+            .find(|process| process.pid() == 300)
+            .expect("current exact browser root")
+            .runtime
+            .app_bundle
+            .as_mut()
+            .expect("current exact bundle fact")
+            .short_version = "152.0.7977.42".to_owned();
+        let current_report = analyzer
+            .observe(&current_exact)
+            .expect("observe current exact version")
+            .into_iter()
+            .find(|report| report.signature_pack == "playwright")
+            .expect("current Playwright report");
+        assert_eq!(current_report.state, IncidentState::Cooling);
+        assert_eq!(
+            current_report.browser_compatibility.decision,
+            BrowserCompatibilityDecision::Automatic
+        );
 
         for (label, mutation, expected_evidence) in [
             ("missing", None, "protection.browser_version_missing"),
@@ -2073,6 +2117,14 @@ mod tests {
                 Some(AppBundleVersion {
                     bundle_id: "com.google.chrome.for.testing".to_owned(),
                     short_version: "151.0.7922.35".to_owned(),
+                }),
+                "protection.browser_version_unsupported",
+            ),
+            (
+                "nearest-current-version",
+                Some(AppBundleVersion {
+                    bundle_id: "com.google.chrome.for.testing".to_owned(),
+                    short_version: "152.0.7977.43".to_owned(),
                 }),
                 "protection.browser_version_unsupported",
             ),
@@ -2137,7 +2189,7 @@ mod tests {
         assert_eq!(playwright.product, BrowserProduct::ChromeForTesting);
         assert_eq!(
             playwright.admitted_versions,
-            vec!["151.0.7922.34".to_owned()]
+            vec!["151.0.7922.34".to_owned(), "152.0.7977.42".to_owned(),]
         );
         assert_eq!(
             playwright.automatic_action_level,

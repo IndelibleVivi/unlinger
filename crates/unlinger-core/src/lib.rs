@@ -5,6 +5,7 @@ mod fingerprint;
 mod graph;
 mod model;
 mod state;
+mod storage_residue;
 
 pub use artifact::{
     ArtifactAction, ArtifactActionIntent, ArtifactCandidateError, ArtifactDisposition,
@@ -30,3 +31,7 @@ pub use model::{
     ProcessStatus, Snapshot, SnapshotCoverage,
 };
 pub use state::{IncidentState, TransitionError};
+pub use storage_residue::{
+    StorageResidueKind, StorageResidueObservation, StorageResidueReferenceCheck,
+    StorageResidueStatus,
+};

@@ -31,10 +31,18 @@ public struct BrowserHomeView: View {
             BrowserOverviewSection(overview: overview)
         case .connection:
             BrowserConnectionSection(connection: state.connection)
-        case .sessions:
-            BrowserSessionsSection(sessions: overview.sessions)
+        case .impact:
+            if let impact = overview.impact {
+                BrowserImpactSection(impact: impact)
+            }
         case .coverage:
             BrowserCoverageSection(notices: overview.coverageNotices)
+        case .storageResidue:
+            if let residue = overview.storageResidue {
+                StorageResidueSection(residue: residue)
+            }
+        case .sessions:
+            BrowserSessionsSection(sessions: overview.sessions)
         case .savedProtections:
             SavedProtectionsSection(protections: overview.savedProtections)
         case .attention:
