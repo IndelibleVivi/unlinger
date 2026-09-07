@@ -469,7 +469,7 @@ Each supported runtime has a versioned signature pack that parameterizes one sha
 
 Version 0.1 ships rules inside the signed binary. Remote executable rule updates are out of scope. Later data-only updates must be signed and auditable.
 
-Automatic-cleanup admission remains intentionally narrower than the recognized family list: a controllerless Chrome-for-Testing browser root with bundle identifier `com.google.chrome.for.testing` at exact source/installed-allowlisted version `151.0.7922.34` or `152.0.7977.42`, plus every ordinary hard gate. This is an exact two-version allowlist, not a range. Controller anchors remain protected until their own product/version identity is verified. Every other version or family shape requires a positive fixture and the nearest normal/manual counterexample before its pack policy may expand. Installed generation 17 runs this same `0.4.0` two-point policy.
+Automatic-cleanup admission remains intentionally narrower than the recognized family list: a controllerless Chrome-for-Testing browser root with bundle identifier `com.google.chrome.for.testing` at exact source/installed-allowlisted version `151.0.7922.34` or `152.0.7977.42`, plus every ordinary hard gate. This is an exact two-version allowlist, not a range. Controller anchors remain protected until their own product/version identity is verified. Every other version or family shape requires a positive fixture and the nearest normal/manual counterexample before its pack policy may expand. The installed generation runs this same `0.4.0` two-point policy; [`current-state.md`](current-state.md) owns the exact generation and activation state.
 
 ---
 
