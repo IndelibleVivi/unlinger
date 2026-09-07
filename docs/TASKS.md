@@ -8,7 +8,7 @@ unlinger task status <task-id> --json
 unlinger explain <incident-id>
 ```
 
-Use the CLI from the accepted installed generation (or its explicit full path). A source build alone does not replace the active service.
+Use the CLI from the accepted installed generation (or its explicit full path). A source build alone does not replace the active service. A local PATH symlink may point to that exact CLI; it must be updated when a different generation is accepted. The service installer does not create or automatically update that shell entry.
 
 The command can make several Playwright CLI calls and can use several workspaces. All calls must inherit `PLAYWRIGHT_CLI_SESSION`; do not override it with `-s`, `--session`, or a different environment value. Each `task run` creates a fresh session. Existing sessions and unrelated agents are not adopted retroactively. The native App continues to show the resulting browser state and actual terminal cleanup impact through schema v5.
 

@@ -1,6 +1,6 @@
 # Installed report-only dogfood runbook
 
-This runbook advances only acceptance level 3. It installs the exact source candidate and packaged App for private report-only observation and proves that candidate's own rollback lease. It never arms enforcement, runs a signal harness, or accepts the candidate on the owner's behalf. The 2026-09-04 generation-16→15→17 execution completed this level-3 lane for schema v5/SQLite v7. The 2026-09-08 observer repair repeated it as generation 18→17→19 while retaining the unchanged schema-v5 App. Acceptance and arm were separately authorized actions.
+This runbook advances only acceptance level 3. It installs the exact source candidate and packaged App for private report-only observation and proves that candidate's own rollback lease. It never arms enforcement, runs a signal harness, or accepts the candidate on the owner's behalf. The 2026-09-04 generation-16→15→17 execution completed this level-3 lane for schema v5/SQLite v7. The 2026-09-08 observer repair repeated it as generation 18→17→19 while retaining the unchanged schema-v5 App. The corrected task-lifetime backend repeated the rollback/reinstall path as generation 22→19/v7→23/v8 with the same schema-v5 App. Acceptance and arm were separately authorized actions.
 
 ## Preconditions
 
