@@ -1,118 +1,83 @@
 # Unlinger
 
-> **The work ended. Its processes should too.**
-> 任务结束，它启动的进程也该结束。
+**The work ended. Its processes should too.**
 
-Unlinger is a local, zero-touch runtime-hygiene utility for abandoned browser-automation process trees. Its target product surface is absence: stale automation should disappear before CPU, memory, swap, sockets, and old headless browser clusters become the user's problem.
+[简体中文](README.zh-CN.md) · [Getting started](docs/GETTING_STARTED.md) · [How it works](docs/ARCHITECTURE.md)
 
-## Current state
+Unlinger observes abandoned browser-automation sessions on macOS and can reclaim a narrowly verified set of leftover processes. A native menu-bar App shows what is running, why a session is protected, and what cleanup actually achieved.
 
-The repository contains a macOS pre-v0.1 source candidate spanning observation, deterministic cleanup, persistence, IPC, daemon, CLI, managed-service, and a native SwiftUI menu-bar App:
+**Experimental developer preview, built from source.** The daemon defaults to **report-only**. Automatic cleanup requires a separately enabled service and every safety gate. There is no signed/notarized download, multi-day reliability claim, or general integration with every AI-agent task.
 
-- native current-user process snapshots through `libproc` and `sysctl`;
-- PID plus process-birth and executable-file identity;
-- one shared deterministic sessionizer parameterized by embedded schema-v2, source `0.4.0` agent-browser/Puppeteer packs and a `0.5.0` Playwright pack;
-- an exact source automatic-eligibility allowlist for Chrome for Testing `151.0.7922.34` and `152.0.7977.42`, while every other, unknown, or mixed version and every unregistered or unverified controller-bearing session fails closed as `PROTECTED`;
-- [`task run` and `task status`](docs/TASKS.md) for command-owned Playwright CLI sessions: durable registration before execution, exact command-owner lifetime, live-client protection, multiple workspaces and existing cleanup/impact authority;
-- hard protection gates, a non-evidentiary 60-second minimum age, two-observation stability, and a durable 90-second abandonment grace;
-- frozen cleanup plans with durable PREPARED actions and fresh whole-incident revalidation before each exact signal stage;
-- controller/root TERM, member TERM, exact-survivor KILL, post-action scans, bounded 15/60-second revival checks, and restart-safe delivery-unknown retry lockout;
-- an implemented but currently dormant DAP-only runtime-artifact path with targeted Darwin pathname-reference proof, complete current-user argv proof, exact file/parent identity, exclusive quarantine, and a durable action journal; all source packs disable artifact admission, so the process-only candidate cannot schedule or journal an artifact action;
-- independent process/artifact/overall cleanup outcomes, so a proved-gone tree remains visible as reclaimed when an explicitly refused artifact is safely retained; delivery uncertainty and unproved post-side-effect failures still fail closed;
-- redacted SQLite v8 storage with coalesced observation spans, independent cleanup-impact rows and lifetime aggregates, stable public event tokens, namespace-aware ordinary-mutation receipts, cooling/protection/retry/lifecycle state, terminal receipts stamped at completion, observation-bounded retention, and at least 14 days of cleanup detail;
-- a 0600 local newline-delimited JSON socket with current frontend schema v5, transitional schema v4, legacy-compatible schema v3, and a schema-v1 CLI/service lane; v5 extends the atomic daemon-owned browser overview with durable impact and typed storage-residue observation, while v4 retains the earlier overview shape, v3 retains its existing commands, and no frontend schema can encode lifecycle commands; historical v2 is rejected rather than silently downgraded;
-- an observe-only scanner for the exact current-user Chrome `code_sign_clone` temporary-residue family: it recognizes upstream `.app.bundle` and feature-disabled `.app` clone directories, traverses by directory descriptor without following framework symlinks, and records only count, regular-file logical size, shape/reference status, and reason IDs, never paths or file contents; reference proof remains incomplete and deletion is unavailable;
-- native process-exit, wake, and memory-pressure scheduling hints with a periodic fallback; every trigger still begins with a fresh snapshot and pressure never lowers a gate;
-- a report-only daemon default and generation/instance/epoch-bound signal authorization;
-- a transactional per-user LaunchAgent lifecycle with sealed immutable generations, exact launchd/IPC/binary checks, an acceptance-scoped SQLite rollback lease, crash-replayable candidate rollback, schema-preserving cross-generation containment, explicit candidate accept/rollback, and same-generation fresh-epoch re-arm only after a signal-free first scan; machine-readable service output uses a public projection rather than exposing PIDs, instance IDs, local paths or raw errors;
-- graceful SIGTERM handling that terminates the current cycle safely, preserves same-generation desired intent for launchd restart, and removes the exact owned socket; explicit service drain clears that intent.
-- a SwiftPM native menu-bar and Dock client under `apps/UnlingerApp`, with a strict schema-v5 browser-first overview that consumes one atomic daemon-owned phase/session/compatibility/coverage/settlement/impact/residue snapshot; its history index now shows completed cleanup outcomes rather than periodic observation noise, while detail renders server-owned observation spans. The Swift presentation layer publishes stable mapped values once per state transition, and a direct AppKit `@main` gives the popover and reusable ordinary window independent navigation storage with one-way route handoff. Its square status item uses the system `circle.dashed` symbol and a stable AppKit autosave identity so macOS and compatible menu organizers address the same item across restarts. The client also retains reliable Dock/window fallback, crash-durable no-resend mutation handling, capability-gated ordinary actions, bounded local notifications, menu-client-only launch at login, bilingual VoiceOver copy, a fixture-only Accessibility/RSS regression gate, and a private ad-hoc-signed `.app` bundler that rejects removable-volume resource and loader paths.
+## What you can do
 
-The installed private deployment is accepted generation 23 from source head `b70bc94`, serving frontend schemas v5/v4/v3 over SQLite v8. It is healthy `ReadyEnforce` with the task-owned Playwright `0.5.0` policy and process-only agent-browser/Puppeteer `0.4.0` packs. The candidate passed exact-head CI, real rollback to the old SQLite-v7 generation, fresh reinstallation and App protocol checks before and after restart. The existing schema-v5 App remains unchanged. See [`docs/current-state.md`](docs/current-state.md) for exact runtime and controlled-cleanup evidence.
+- **See browser leftovers and their explanation.** Native snapshots, explicit compatibility, protection reasons and redacted local history.
+- **Track a command's browser lifetime.** `unlinger task run -- COMMAND` registers an exact command owner. Its compatible Playwright CLI sessions become candidates after the task ends; release alone never authorizes cleanup.
+- **See actual process cleanup.** Completed receipts drive reclaimed-session/process counts and estimated memory impact. Repeated observations are compressed; they are not counted as cleanup.
+- **Inspect disk residue.** Chrome code-sign clone count and logical size are visible. Disk cleanup is unavailable: the active policy deletes no profile, directory or runtime artifact.
 
-The installed App makes completed cleanup visible through independent impact authority, compresses repeated observations into spans, shows cleanup-only history, and reports the exact Chrome code-sign clone residue family as observe-only. A live UI check read the v5 home and cleanup-only empty-history routes without the prior repeated `PROTECTED` rows or 404 behavior. During the bounded deployment observation, the App remained alive for more than five minutes with sampled RSS no higher than 29,408 KiB. This supplements rather than replaces the earlier ten-minute/1,398-read memory acceptance of the repaired navigation architecture; neither result is multi-day App dogfood, packaged-notification proof, or universal external-menu-host/display evidence.
+| Surface | Current boundary |
+| --- | --- |
+| Platform | macOS 14+; Apple silicon verified; Intel/universal unverified |
+| Browser | Chrome for Testing exactly `151.0.7922.34` or `152.0.7977.42` |
+| Command-owned integration | Playwright CLI from `playwright-core` `1.63.0-alpha-2026-08-31`, with the issued session inherited unchanged |
+| Other recognized families | agent-browser and Puppeteer; automatic eligibility requires a controllerless tree and every hard gate; no controlled field evidence for these families |
+| Always protected | Ordinary Chrome, headed/manual or attached sessions, standard/shared/persistent profiles, unverified controllers and incomplete identity |
 
-Controlled evidence remains narrower than general product support. Isolated task-lifetime tests cover the two exact CfT versions, including active-owner/client protection, terminal cleanup, real impact and an unrelated session still usable. Current installed evidence is recorded separately in [`docs/current-state.md`](docs/current-state.md). Unregistered or unverified controllers remain protected. Historical DAP removals do not authorize current artifact deletion; all artifact flags remain disabled. Multi-day dogfood, an ordinary ambient eligible incident, broader version evidence, Intel/universal, signing/notarization/distribution and public alpha remain open.
+[Support truth](docs/SUPPORT.md) distinguishes recognition, automatic eligibility and field evidence.
 
-## Run a browser task
+## Try it without installing a service
+
+You need Rust **1.98.0**, macOS command-line developer tools and Git. The App additionally needs **Swift 6.0+**; its bundle script uses `rg` (ripgrep).
 
 ```bash
-unlinger task run -- ./browser-task.sh
-unlinger task status <task-id> --json
+git clone https://github.com/IndelibleVivi/unlinger.git
+cd unlinger
+cargo build --locked --release --workspace
+./target/release/unlinger doctor --source-only
+./target/release/unlinger scan --dry-run
+./scripts/preview.sh
 ```
 
-The script must use the verified Playwright CLI and inherit its issued `PLAYWRIGHT_CLI_SESSION`. A released task still needs all cleanup gates; report-only mode only observes. See the [task guide](docs/TASKS.md) for exact versions, configuration, semantics and current host-integration limits. The accepted private deployment includes this capability; other machines need their own installed compatible service. A command wrapper does not automatically integrate every Codex App task.
+`preview.sh` runs one report-only reconciliation with its own temporary database, socket and lock, prints a redacted receipt, then removes only that temporary state. It does not install a LaunchAgent or send cleanup signals. Only protected sessions is an expected result when no verified abandoned session exists.
 
-## Build and inspect
+The [getting-started guide](docs/GETTING_STARTED.md) continues with an interactive isolated daemon, an executable command-lifetime example, optional service installation and uninstall. The [task guide](docs/TASKS.md) gives the exact browser configuration and integration contract.
 
-Requirements: macOS 14 or later and Rust 1.98.
+## How cleanup earns permission
+
+![Unlinger process-cleanup architecture](docs/architecture.svg)
+
+The daemon owns classification, durable task lifetime and cleanup authority. It checks exact process identity, browser version, ownership, active clients and profile protections, then requires the ordinary age/stability/abandonment gates. Enforcement also needs explicit mode authorization. Each signal is journalled and revalidated; a terminal receipt follows absence and revival checks. The App displays that result through one daemon-owned snapshot.
+
+The [architecture guide](docs/ARCHITECTURE.md) explains these boundaries in English and Chinese and links the editable diagram source.
+
+## Native App
 
 ```bash
-cargo fmt --all -- --check
-cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace
-
-cargo run -p unlinger-cli -- doctor --source-only
-cargo run -p unlinger-cli -- scan --dry-run
-cargo run -p unlinger-cli -- scan --dry-run --json
+swift test --package-path apps/UnlingerApp
+apps/UnlingerApp/scripts/bundle.sh
+open apps/UnlingerApp/build/Unlinger.app
 ```
 
-The default `doctor` also requires a reachable, healthy, ready daemon. Use `--source-only` before installation or when intentionally validating source without claiming runtime readiness.
+The App connects to the separately installed daemon. Without one, it reports unavailable. The generated bundle is locally ad-hoc signed; it is not a distributable notarized release. It supports English and Simplified Chinese, a menu-bar popover and an ordinary Dock window. Quitting the App leaves an installed daemon running. See the [App guide](apps/UnlingerApp/README.md) for development previews and notification limits.
 
-Build and test the fixture-first native frontend without touching the installed service:
+## Evidence and limits
 
-```bash
-cd apps/UnlingerApp
-swift test
-scripts/bundle.sh
-scripts/pre-v0.1-smoke.sh
-scripts/accessibility-memory-smoke.sh
-```
+The maintainer's reference installation has controlled task-owned CfT-152 cleanup receipts: two deliberately created sessions, 16 processes reclaimed, and matching App impact. Isolated full-timing task tests cover both exact CfT versions. These prove those cases; they do not establish unattended multi-day safety or broad browser support. [Current state](docs/current-state.md) separates source, CI, installed runtime and field evidence, including unresolved issues in the disabled artifact engine.
 
-The report-only smoke creates and owns one temporary database/socket/lock, verifies the v5 App and durable receipts across restart, and never touches the installed service. The Accessibility memory smoke separately launches an owned fixture-only App on a synthetic stress-history route, repeatedly requests its real macOS Accessibility tree, and enforces external RSS and retained-growth cutoffs. See [`apps/UnlingerApp/README.md`](apps/UnlingerApp/README.md).
-
-Do not improvise an installed migration or bypass the service CLI. [`docs/INSTALLED_DOGFOOD.md`](docs/INSTALLED_DOGFOOD.md) records the completed report-only candidate/rollback lane; [`docs/current-state.md`](docs/current-state.md) owns current runtime truth. The current accepted generation and mode are recorded in the current-state document. Use the exact active-generation CLI for status and the transactional service CLI for authorized changes.
-
-For source-only development, run the daemon in its safe default mode and use the local CLI from another terminal:
-
-```bash
-cargo run -p unlinger-daemon -- --report-only
-
-cargo run -p unlinger-cli -- status
-cargo run -p unlinger-cli -- browser status
-cargo run -p unlinger-cli -- browser status --json
-cargo run -p unlinger-cli -- history
-cargo run -p unlinger-cli -- explain <incident-id>
-cargo run -p unlinger-cli -- pause 2h
-cargo run -p unlinger-cli -- resume
-cargo run -p unlinger-cli -- retry <incident-id>
-cargo run -p unlinger-cli -- protect <incident-id>
-cargo run -p unlinger-cli -- unprotect <incident-id>
-cargo run -p unlinger-cli -- export-diagnostics <incident-id>
-```
-
-`scan` always requires `--dry-run` and never sends signals. Direct `unlingerd` invocation defaults to report-only. Managed LaunchAgents receive only `--managed --activation-generation`; the desired/effective mode and signal authority live in exact durable lifecycle state, not in a plist `--enforce` flag.
-
-IPC requests are single-shot. The v5 App durably journals a namespace token and mutation UUID before any request byte, then reconciles uncertain delivery with read-only `mutation_status`; it never automatically resends. A named cleanup retry clears only that incident's durable block and cooling candidate; it never signals immediately and must pass a fresh cooling window and every ordinary gate.
-
-Full command lines, executable paths, and profile paths exist only in transient classification memory. SQLite, IPC, CLI output, and diagnostic exports use redacted typed records that omit signal targets and private browser/profile identifiers. Task status exposes only its newly issued opaque selector and phase.
+Normal runtime is local-only: no account, telemetry, cloud sync or normal-operation network calls. Raw process arguments and browser/profile paths remain transient; persisted history and diagnostic exports use typed redacted records. Building downloads dependencies. See [privacy](docs/PRIVACY.md) and [safety](docs/SAFETY.md).
 
 ## Documentation
 
-- [Product & Technical Specification 0.1](docs/SPEC.md)
-- [Architecture](docs/ARCHITECTURE.md)
-- [Safety model](docs/SAFETY.md)
-- [Signature packs](docs/SIGNATURES.md)
-- [Privacy](docs/PRIVACY.md)
-- [Local IPC contract](docs/IPC.md)
-- [Pre-v0.1 acceptance levels](docs/PRE_V0_1_ACCEPTANCE.md)
-- [Installed report-only dogfood runbook (completed historical lane)](docs/INSTALLED_DOGFOOD.md)
-- [Support truth](docs/SUPPORT.md)
-- [Machine-readable support matrix](docs/support-matrix.v1.json)
-- [Native frontend](apps/UnlingerApp/README.md)
-- [Frontend contract and canonical fixtures](apps/UnlingerApp/Contract/README.md)
-- [Field Lab](docs/FIELDLAB.md)
-- [Implementation plan](docs/IMPLEMENTATION_PLAN.md)
-- [Current state](docs/current-state.md)
+| Reader's question | Guide |
+| --- | --- |
+| How do I try, install or remove it? | [Getting started](docs/GETTING_STARTED.md) |
+| How does my script participate? | [Task-owned sessions](docs/TASKS.md) |
+| Why is a session protected? | [Support](docs/SUPPORT.md), [signature packs](docs/SIGNATURES.md), [safety](docs/SAFETY.md) |
+| Which component owns the result? | [Architecture](docs/ARCHITECTURE.md), [IPC](docs/IPC.md), [App contract](apps/UnlingerApp/Contract/README.md) |
+| What was actually verified? | [Current state](docs/current-state.md), [acceptance levels](docs/PRE_V0_1_ACCEPTANCE.md), [Field Lab](docs/FIELDLAB.md) |
+| How do managed upgrades and rollback work? | [Installed-service runbook](docs/INSTALLED_DOGFOOD.md) |
+| What is the longer product contract? | [Working specification](docs/SPEC.md), [implementation coverage](docs/IMPLEMENTATION_PLAN.md) |
 
-The repository is private and no public license has been selected. Before any visibility change, the project still requires an owner-approved license/rights decision, confirmation that the remaining tracked app-icon source and compiled icon may be redistributed, bilingual reader documentation, and a publication-grade architecture diagram. Current field evidence and the all-scope public-candidate scan are necessary inputs, not authority to publish.
+## Licensing and provenance
+
+Software, scripts, rules and functional fixtures use [SUL-1.0](LICENSE). Documentation, architecture diagrams and project image assets use [CC BY-NC-SA 4.0](LICENSE-DOCUMENTATION.md). This is **source-available**, not OSI open source: SUL allows personal/noncommercial and internal business use, while distribution or provision to others must be free of charge and noncommercial. See [the scope map](LICENSING.md) and [material provenance](docs/PROVENANCE.md).

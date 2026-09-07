@@ -26,6 +26,8 @@ jobs:
         run: cargo test --workspace
       - name: Build release workspace
         run: cargo build --release --workspace
+      - name: Test isolated demo ownership
+        run: python3 apps/UnlingerApp/scripts/test_demo_window.py
       - name: Test native frontend
         run: swift test --package-path apps/UnlingerApp
       - name: Bundle native frontend

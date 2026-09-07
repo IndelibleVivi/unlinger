@@ -31,7 +31,7 @@ const MAX_PRINT_ATTENTION_ITEMS: usize = 16;
 #[command(
     name = "unlinger",
     version,
-    about = "Zero-touch runtime hygiene for abandoned local automation"
+    about = "Inspect and reclaim verified abandoned browser automation"
 )]
 struct Cli {
     /// Override the daemon Unix-domain socket for IPC commands.

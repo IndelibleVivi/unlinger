@@ -17,3 +17,7 @@
 /private/
 /docs/private/
 /.codex/
+
+# Python demo tooling
+__pycache__/
+*.pyc
