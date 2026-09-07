@@ -1,6 +1,6 @@
 # Task-owned browser sessions
 
-`unlinger task run -- COMMAND...` gives one command an exclusive Playwright CLI session and records its actual process lifetime. The command inherits normal stdin, stdout and stderr. Unlinger returns its exit code and prints the opaque task ID to stderr.
+`unlinger task run -- COMMAND...` gives one command an exclusive Playwright CLI session and records its actual process lifetime. The command inherits normal stdin, stdout, stderr and caller-owned inheritable descriptors. The activation pipe uses its own allocated descriptor and closes before the command executes. Unlinger returns its exit code and prints the opaque task ID to stderr.
 
 ```bash
 unlinger task run -- ./browser-task.sh
@@ -12,7 +12,7 @@ Use the CLI from the accepted installed generation (or its explicit full path). 
 
 The command can make several Playwright CLI calls and can use several workspaces. All calls must inherit `PLAYWRIGHT_CLI_SESSION`; do not override it with `-s`, `--session`, or a different environment value. Each `task run` creates a fresh session. Existing sessions and unrelated agents are not adopted retroactively. The native App continues to show the resulting browser state and actual terminal cleanup impact through schema v5.
 
-The source Playwright pack `0.5.0` verifies `playwright-core` **`1.63.0-alpha-2026-08-31`**, its actual `cliDaemon.js` process, matching owner-private session metadata and the controller's exact listening Unix socket. Browser admission remains Chrome for Testing **`151.0.7922.34` or `152.0.7977.42`**, isolated, ephemeral and headless. Persistent, attached, headed/manual, standard-profile, unknown-version and unregistered sessions remain protected. The controlled task-lifetime field point currently covers CfT 151; it is not evidence for CfT 152 or multi-day dogfood. See [current installed truth](current-state.md) before assuming a built CLI has been activated.
+The source Playwright pack `0.5.0` verifies `playwright-core` **`1.63.0-alpha-2026-08-31`**, its actual `cliDaemon.js` process, matching owner-private session metadata and the controller's exact listening Unix socket. Browser admission remains Chrome for Testing **`151.0.7922.34` or `152.0.7977.42`**, isolated, ephemeral and headless. Persistent, attached, headed/manual, standard-profile, unknown-version and unregistered sessions remain protected. Isolated full-timing task tests cover both exact CfT versions; these controlled points do not establish multi-day dogfood. See [current installed truth](current-state.md) before assuming a built CLI has been activated.
 
 A task script can use an existing compatible Playwright CLI with an explicit local configuration:
 
@@ -45,7 +45,7 @@ Task records stay for at least 14 days after release and are pruned only after a
 
 ## Verification
 
-Ordinary workspace tests cover durable migration/ownership, no reassignment or reactivation, late discovery and multiple controllers, preserved exit/output, unavailable-daemon launch refusal, wrapper crash with a live `exec` owner, owner-loss recovery, and protection counterexamples.
+Ordinary workspace tests cover durable migration/ownership, no reassignment or reactivation, late discovery and multiple controllers, preserved exit/output and inherited descriptors, activation-pipe closure, unavailable-daemon launch refusal, wrapper crash with a live `exec` owner, owner-loss recovery, and protection counterexamples.
 
 The ignored field test creates two dedicated sessions, verifies live task/client protection, releases one task, runs production timing, checks canonical cleanup impact, and proves the unrelated session remains usable. It uses an isolated database/socket and an extra runtime signal boundary admitting only exact descendants of its own issued controller. It retains its private workspace and receipt and never touches the installed daemon. Set the explicit acknowledgement and local paths:
 

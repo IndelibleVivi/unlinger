@@ -146,6 +146,78 @@ fn unavailable_daemon_cannot_run_the_command() {
 }
 
 #[test]
+fn task_descriptor_probe() {
+    use std::os::fd::FromRawFd;
+    let Ok(mode) = std::env::var("UNLINGER_TEST_DESCRIPTOR_MODE") else {
+        return;
+    };
+    if mode == "inherited" {
+        assert_ne!(unsafe { libc::fcntl(3, libc::F_GETFD) }, -1);
+        let mut channel = unsafe { std::fs::File::from_raw_fd(3) };
+        std::io::Write::write_all(&mut channel, b"inherited-channel").unwrap();
+    } else {
+        assert_eq!(unsafe { libc::fcntl(3, libc::F_GETFD) }, -1);
+    }
+    // The launcher must consume and close its private activation pipe before exec.
+    for fd in 4..64 {
+        assert_eq!(
+            unsafe { libc::fcntl(fd, libc::F_GETFD) },
+            -1,
+            "leaked fd {fd}"
+        );
+    }
+}
+
+#[test]
+fn task_run_preserves_inherited_descriptors_and_closes_its_gate() {
+    use std::io::Read;
+    use std::os::fd::AsRawFd;
+    use std::os::unix::net::UnixStream;
+    use std::os::unix::process::CommandExt;
+    for mode in ["inherited", "unused"] {
+        let fixture = Fixture::new(true);
+        let (mut reader, writer) = UnixStream::pair().unwrap();
+        let write_fd = writer.as_raw_fd();
+        let mut command = fixture.command();
+        command
+            .args(["task", "run", "--"])
+            .arg(std::env::current_exe().unwrap())
+            .args(["--exact", "task_descriptor_probe", "--nocapture"])
+            .env("UNLINGER_TEST_DESCRIPTOR_MODE", mode);
+        unsafe {
+            command.pre_exec(move || {
+                if mode == "inherited" {
+                    if libc::dup2(write_fd, 3) == -1 || libc::fcntl(3, libc::F_SETFD, 0) == -1 {
+                        return Err(std::io::Error::last_os_error());
+                    }
+                } else {
+                    libc::close(3);
+                }
+                Ok(())
+            });
+        }
+        let output = command.output().unwrap();
+        drop(writer);
+        assert!(
+            output.status.success(),
+            "{mode}: {} {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let mut marker = String::new();
+        reader.read_to_string(&mut marker).unwrap();
+        assert_eq!(
+            marker,
+            if mode == "inherited" {
+                "inherited-channel"
+            } else {
+                ""
+            }
+        );
+    }
+}
+
+#[test]
 fn killed_wrapper_does_not_end_a_live_exec_command_and_restart_keeps_authority() {
     let fixture = Fixture::new(true);
     let mut wrapper = fixture

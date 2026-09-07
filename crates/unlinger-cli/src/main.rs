@@ -46,7 +46,7 @@ enum Commands {
     /// Run a command with an exclusive, lifetime-tracked Playwright CLI session.
     Task(task::TaskArgs),
     #[command(name = "__task-exec", hide = true)]
-    TaskExec(task::ExecArgs),
+    TaskExec(task::GatedExecArgs),
     /// Show daemon lifecycle, health, activity, recovery, and bounded attention state.
     Status(OutputArgs),
     /// Show the atomic browser-leftover product projection.

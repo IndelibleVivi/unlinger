@@ -35,6 +35,14 @@ pub struct ExecArgs {
     command: Vec<OsString>,
 }
 
+#[derive(Debug, Args)]
+pub struct GatedExecArgs {
+    #[arg(long, value_parser = clap::value_parser!(i32).range(0..))]
+    gate_fd: i32,
+    #[command(flatten)]
+    exec: ExecArgs,
+}
+
 #[derive(Debug)]
 pub struct CommandExit(pub u8);
 
@@ -148,22 +156,18 @@ fn spawn_gated(arguments: &ExecArgs, session: &str) -> Result<(Child, File), Box
     let mut command = Command::new(std::env::current_exe()?);
     command
         .arg("__task-exec")
+        .arg("--gate-fd")
+        .arg(read_fd.to_string())
         .arg("--")
         .args(&arguments.command)
         .env("PLAYWRIGHT_CLI_SESSION", session);
     unsafe {
         command.pre_exec(move || {
-            if read_fd != 3 {
-                if libc::dup2(read_fd, 3) == -1 {
-                    return Err(std::io::Error::last_os_error());
-                }
-                libc::close(read_fd);
-            } else if libc::fcntl(3, libc::F_SETFD, 0) == -1 {
+            // Keep the newly allocated descriptor: a caller may already own FD 3.
+            if libc::fcntl(read_fd, libc::F_SETFD, 0) == -1 {
                 return Err(std::io::Error::last_os_error());
             }
-            if write_fd != 3 {
-                libc::close(write_fd);
-            }
+            libc::close(write_fd);
             Ok(())
         });
     }
@@ -172,16 +176,19 @@ fn spawn_gated(arguments: &ExecArgs, session: &str) -> Result<(Child, File), Box
     Ok((child, write))
 }
 
-pub fn exec(arguments: ExecArgs) -> Result<(), Box<dyn Error>> {
-    let mut gate = unsafe { File::from_raw_fd(3) };
+pub fn exec(arguments: GatedExecArgs) -> Result<(), Box<dyn Error>> {
+    if unsafe { libc::fcntl(arguments.gate_fd, libc::F_GETFD) } == -1 {
+        return Err(std::io::Error::last_os_error().into());
+    }
+    let mut gate = unsafe { File::from_raw_fd(arguments.gate_fd) };
     let mut permission = [0];
     gate.read_exact(&mut permission)?;
     drop(gate);
     if permission != [1] {
         return Err("task launch was not activated".into());
     }
-    Err(Command::new(&arguments.command[0])
-        .args(&arguments.command[1..])
+    Err(Command::new(&arguments.exec.command[0])
+        .args(&arguments.exec.command[1..])
         .exec()
         .into())
 }
