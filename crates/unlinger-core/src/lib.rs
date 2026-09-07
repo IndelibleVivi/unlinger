@@ -6,6 +6,7 @@ mod graph;
 mod model;
 mod state;
 mod storage_residue;
+mod task;
 
 pub use artifact::{
     ArtifactAction, ArtifactActionIntent, ArtifactCandidateError, ArtifactDisposition,
@@ -27,11 +28,12 @@ pub use evidence::{
 pub use fingerprint::{fingerprint_parts, fingerprint_process_identity, fingerprint_process_set};
 pub use graph::{GraphError, ProcessGraph};
 pub use model::{
-    AppBundleVersion, ExecutableIdentity, ProcessIdentity, ProcessRecord, ProcessRuntimeFacts,
-    ProcessStatus, Snapshot, SnapshotCoverage,
+    AppBundleVersion, ExecutableIdentity, PlaywrightCliRuntime, ProcessIdentity, ProcessRecord,
+    ProcessRuntimeFacts, ProcessStatus, Snapshot, SnapshotCoverage,
 };
 pub use state::{IncidentState, TransitionError};
 pub use storage_residue::{
     StorageResidueKind, StorageResidueObservation, StorageResidueReferenceCheck,
     StorageResidueStatus,
 };
+pub use task::{TaskControllerBinding, TaskOwnerIdentity, task_id_from_session, valid_task_id};

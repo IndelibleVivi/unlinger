@@ -2,7 +2,7 @@
 
 Unlinger source接受四条exact local wire：
 
-- `schema_version = 1`：Rust CLI、diagnosis 与 service lifecycle/operator compatibility；
+- `schema_version = 1`：Rust CLI、task ownership、diagnosis 与 service lifecycle/operator compatibility；
 - `schema_version = 3`：legacy-compatible frontend endpoint；
 - `schema_version = 4`：transitional atomic browser-product endpoint；
 - `schema_version = 5`：current native App contract，增加impact、storage residue与observation span facts。
@@ -245,7 +245,7 @@ The service retains the prior snapshot and exact generation identity after candi
 ## Verification anchors
 
 - [`crates/unlinger-protocol/src/lib.rs`](../crates/unlinger-protocol/src/lib.rs): v5 DTOs/commands, v4/v3 compatibility responses, receipts, envelopes and fixture decoders;
-- [`crates/unlinger-daemon/src/store.rs`](../crates/unlinger-daemon/src/store.rs): SQLite v7 migration, observation spans, independent impact authority, storage residue, event tokens, namespace/receipt/revision transactions;
+- [`crates/unlinger-daemon/src/store.rs`](../crates/unlinger-daemon/src/store.rs): SQLite v8 migration/task ownership, observation spans, independent impact authority, storage residue, event tokens, namespace/receipt/revision transactions;
 - [`crates/unlinger-daemon/src/public_action_policy.rs`](../crates/unlinger-daemon/src/public_action_policy.rs): shared policy matrix;
 - [`crates/unlinger-daemon/tests/history_store.rs`](../crates/unlinger-daemon/tests/history_store.rs): migration, atomicity, namespace, replay and recovery tests;
 - [`crates/unlinger-daemon/tests/ipc_roundtrip.rs`](../crates/unlinger-daemon/tests/ipc_roundtrip.rs): v1/v2/v3/v4/v5 routing, atomic browser projection, impact/residue/span compatibility, exact settlement identity, lifecycle serialization and raw-socket behavior;
@@ -255,3 +255,9 @@ The service retains the prior snapshot and exact generation identity after candi
 - [`apps/UnlingerApp/Tests/UnlingerAppTests`](../apps/UnlingerApp/Tests/UnlingerAppTests): strict decode, phase-aware transport, journal/reconciliation, concurrency/detail/notification/routing behavior.
 
 Changing wire shape, requiredness, limits, error discriminators, readiness/freshness, mutation authority, redaction, socket boundary or installed compatibility requires source tests and this document in the same change.
+
+## Task ownership operator commands
+
+Source schema v1 adds `task_reserve {task_id}`, `task_activate {task_id, capability, owner_pid}`, `task_finish {task_id, capability}` and read-only `task_status {task_id}`. These commands do not exist in frontend schemas v3/v4/v5 and never arm or change service mode. Reserve/activate require a healthy ready daemon and authenticated local socket peer PID (`LOCAL_PEERPID`) in addition to the existing same-UID check. Activation requires the registrar's exact current child; finish checks native owner absence. Registry transitions are durable and conditional, released tasks cannot reactivate, and one timed-out mutation is never resent.
+
+`task_lease` contains the fresh opaque task/session selector and a private capability; only the registering CLI receives it. `task_status` returns task/session selector, phase, optional release reason and bound incident IDs. It does not return capability, command, workspace, native owner identity or a synthetic cleaned state. Existing incident receipt/impact routes remain the cleanup result authority. SQLite v8 adds the two task tables transactionally without changing existing v7 impact/history authority. See [TASKS.md](TASKS.md).

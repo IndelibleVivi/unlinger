@@ -1,4 +1,5 @@
 mod service;
+mod task;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use serde::Serialize;
@@ -42,6 +43,10 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Commands {
+    /// Run a command with an exclusive, lifetime-tracked Playwright CLI session.
+    Task(task::TaskArgs),
+    #[command(name = "__task-exec", hide = true)]
+    TaskExec(task::ExecArgs),
     /// Show daemon lifecycle, health, activity, recovery, and bounded attention state.
     Status(OutputArgs),
     /// Show the atomic browser-leftover product projection.
@@ -376,6 +381,9 @@ fn main() -> ExitCode {
     match run(Cli::parse()) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
+            if let Some(exit) = error.downcast_ref::<task::CommandExit>() {
+                return ExitCode::from(exit.0);
+            }
             eprintln!("unlinger: {error}");
             ExitCode::FAILURE
         }
@@ -389,6 +397,8 @@ fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
     }
     let socket = cli.socket.unwrap_or_else(|| paths.socket.clone());
     match cli.command {
+        Commands::Task(arguments) => task::run(&socket, arguments),
+        Commands::TaskExec(arguments) => task::exec(arguments),
         Commands::Status(output) => status(&socket, output.json),
         Commands::Browser(arguments) => browser_command(&socket, arguments),
         Commands::History(arguments) => history(&socket, arguments),
@@ -1152,6 +1162,7 @@ fn analyzer_for_snapshot(snapshot: &unlinger_core::Snapshot) -> Result<Analyzer,
         AnalyzerContext {
             self_pid: Some(self_pid),
             ancestor_pids,
+            task_controllers: Vec::new(),
         },
     ))
 }

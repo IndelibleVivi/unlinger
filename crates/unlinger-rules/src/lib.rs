@@ -28,6 +28,8 @@ pub struct SignaturePack {
     pub id: String,
     pub version: String,
     pub supported_versions: String,
+    #[serde(default)]
+    pub task_controller_version: Option<String>,
     pub controller_markers: Vec<String>,
     pub framework_markers: Vec<String>,
     pub ephemeral_profile_markers: Vec<String>,
@@ -540,6 +542,7 @@ impl Error for RuleError {}
 pub struct AnalyzerContext {
     pub self_pid: Option<u32>,
     pub ancestor_pids: BTreeSet<u32>,
+    pub task_controllers: Vec<unlinger_core::TaskControllerBinding>,
 }
 
 #[derive(Clone, Debug)]
@@ -883,7 +886,46 @@ impl Analyzer {
         if control_path_incomplete {
             protection.insert("protection.debug_peer_visibility_incomplete".to_owned());
         }
-        if has_controller {
+        let owned_task = (candidate.pack.id == "playwright")
+            .then(|| self.owned_task_controller(root, candidate.pack))
+            .flatten();
+        let task_released = owned_task.is_some_and(|binding| binding.released);
+        if let Some(binding) = owned_task {
+            evidence.push(item(
+                "provenance.task_registered",
+                EvidenceFamily::AutomationProvenance,
+                Some(root.pid()),
+            ));
+            if !binding.released {
+                protection.insert("protection.task_owner_active".to_owned());
+            }
+            let cli = root
+                .runtime
+                .playwright_cli
+                .as_ref()
+                .expect("verified task controller");
+            if cli.persistent {
+                protection.insert("protection.persistent_or_unknown_profile".to_owned());
+            }
+            if cli.attached {
+                protection.insert("protection.attached_debug_peer".to_owned());
+            }
+            if !root.runtime.descriptor_facts_complete
+                || graph
+                    .processes()
+                    .any(|process| !process.runtime.task_session_facts_complete)
+            {
+                protection.insert("protection.task_client_visibility_incomplete".to_owned());
+            }
+            if !root
+                .runtime
+                .connected_named_unix_socket_fingerprints
+                .is_empty()
+                || self.task_has_live_work(graph, &binding.task_id)
+            {
+                protection.insert("protection.task_client_active".to_owned());
+            }
+        } else if has_controller {
             protection.insert("protection.controller_version_unverified".to_owned());
         }
         match version_gate {
@@ -999,23 +1041,34 @@ impl Analyzer {
         let framework_anchor = has_controller || framework_argument || ephemeral_profile;
         let strong_provenance = framework_anchor && provenance_categories >= 3;
 
-        let controller_parent_live = candidate.controller_pid.is_some_and(|pid| {
-            graph.get(pid).is_some_and(|controller| {
-                controller.parent_pid > 1 && graph.get(controller.parent_pid).is_some()
-            })
-        });
+        let controller_parent_live = !task_released
+            && candidate.controller_pid.is_some_and(|pid| {
+                graph.get(pid).is_some_and(|controller| {
+                    controller.parent_pid > 1 && graph.get(controller.parent_pid).is_some()
+                })
+            });
         let controller_reparented = candidate.controller_pid.is_some_and(|pid| {
             graph
                 .get(pid)
                 .is_some_and(|controller| controller.parent_pid == 1)
         });
-        let owner_missing = controller_reparented
-            || (candidate.controller_pid.is_none()
-                && has_browser_roots
-                && browser_roots.iter().all(|browser| {
-                    browser.parent_pid == 1 || graph.get(browser.parent_pid).is_none()
-                }));
-        if controller_parent_live {
+        let owner_missing = if owned_task.is_some() {
+            task_released
+        } else {
+            controller_reparented
+                || (candidate.controller_pid.is_none()
+                    && has_browser_roots
+                    && browser_roots.iter().all(|browser| {
+                        browser.parent_pid == 1 || graph.get(browser.parent_pid).is_none()
+                    }))
+        };
+        if task_released {
+            evidence.push(item(
+                "abandonment.task_released",
+                EvidenceFamily::Abandonment,
+                Some(root.pid()),
+            ));
+        } else if controller_parent_live {
             evidence.push(item(
                 "abandonment.live_controller_owner",
                 EvidenceFamily::Abandonment,
@@ -1126,7 +1179,7 @@ impl Analyzer {
         let browser_compatibility = browser_compatibility(
             &browser_roots,
             version_gate,
-            has_controller,
+            has_controller && owned_task.is_none(),
             control_path_incomplete,
         );
 
@@ -1158,6 +1211,71 @@ impl Analyzer {
             browser_compatibility,
             targets,
             runtime_artifacts,
+        })
+    }
+
+    fn owned_task_controller(
+        &self,
+        process: &ProcessRecord,
+        pack: &SignaturePack,
+    ) -> Option<&unlinger_core::TaskControllerBinding> {
+        let cli = process.runtime.playwright_cli.as_ref()?;
+        if pack.task_controller_version.as_deref() != Some(cli.version.as_str()) {
+            return None;
+        }
+        let task_id = unlinger_core::task_id_from_session(&cli.session_name)?;
+        self.context.task_controllers.iter().find(|binding| {
+            binding.task_id == task_id && binding.controller.exact_match(&process.identity)
+        })
+    }
+
+    fn task_has_live_work(&self, graph: &ProcessGraph, task_id: &str) -> bool {
+        let mut browser_members = BTreeSet::new();
+        for binding in &self.context.task_controllers {
+            if binding.task_id == task_id
+                && graph
+                    .get(binding.controller.pid)
+                    .is_some_and(|process| binding.controller.exact_match(&process.identity))
+            {
+                browser_members.extend(graph.descendant_pids(binding.controller.pid));
+                browser_members.insert(binding.controller.pid);
+            }
+        }
+        graph.processes().any(|process| {
+            if browser_members.contains(&process.pid()) {
+                return false;
+            }
+            if process.executable_basename() == "chrome_crashpad_handler"
+                && args_contain(process, "--monitor-self-annotation=ptype=crashpad-handler")
+                && process
+                    .runtime
+                    .crashpad_bundle
+                    .as_ref()
+                    .is_some_and(|bundle| {
+                        bundle.bundle_id == "com.google.chrome.for.testing"
+                            && graph.processes().any(|browser| {
+                                browser_members.contains(&browser.pid())
+                                    && browser.runtime.app_bundle.as_ref() == Some(bundle)
+                            })
+                    })
+            {
+                // These helpers detach by design and exit with their browser.
+                // This exception only avoids counting them as active task work;
+                // it never adds them to a cleanup plan or signal target set.
+                return false;
+            }
+            process
+                .runtime
+                .task_session_name
+                .as_deref()
+                .and_then(unlinger_core::task_id_from_session)
+                == Some(task_id)
+                || ["--session", "-s"].into_iter().any(|flag| {
+                    flag_value(process, flag)
+                        .as_deref()
+                        .and_then(unlinger_core::task_id_from_session)
+                        == Some(task_id)
+                })
         })
     }
 }
@@ -1682,6 +1800,8 @@ mod tests {
         bundle_id: String,
         exact_versions: Vec<String>,
         controller_present: bool,
+        #[serde(default)]
+        task_controller_version: Option<String>,
     }
 
     #[derive(Debug, Deserialize)]
@@ -1887,7 +2007,12 @@ mod tests {
         );
         assert!(rules.packs().iter().all(|pack| {
             pack.schema_version == 2
-                && pack.version == "0.4.0"
+                && pack.version
+                    == if pack.id == "playwright" {
+                        "0.5.0"
+                    } else {
+                        "0.4.0"
+                    }
                 && pack.graceful_strategy == GracefulStrategy::OsTermOnly
                 && pack.recorder_executable_basenames == ["ffmpeg"]
                 && matches!(pack.version_policy, VersionPolicy::ExactAllowlist { .. })
@@ -1946,13 +2071,20 @@ mod tests {
             assert!(family.deterministic_classification);
             assert!(family.synthetic_verified);
             assert!(!family.ambient_field_verified);
-            assert!(!family.automatic_process_eligibility.controller_present);
-            assert!(
-                family
-                    .always_protected
-                    .iter()
-                    .any(|shape| shape == "controller_bearing")
+            assert_eq!(
+                family.automatic_process_eligibility.controller_present,
+                pack.task_controller_version.is_some()
             );
+            assert_eq!(
+                family.automatic_process_eligibility.task_controller_version,
+                pack.task_controller_version
+            );
+            assert!(family.always_protected.iter().any(|shape| shape
+                == if pack.task_controller_version.is_some() {
+                    "unregistered_or_unverified_controller"
+                } else {
+                    "controller_bearing"
+                }));
             let VersionPolicy::ExactAllowlist {
                 bundle_id,
                 versions,
@@ -2551,6 +2683,135 @@ mod tests {
                 .iter()
                 .all(|report| report.state != IncidentState::Confirmed)
         );
+    }
+
+    #[test]
+    fn a_released_owned_cli_session_can_cool_without_weakening_other_protections() {
+        let id = "0123456789abcdef0123456789abcdef";
+        let controller = playwright_controller(900, 1, 900);
+        let browser = cft_browser(
+            901,
+            900,
+            900,
+            "--user-data-dir=/private/tmp/playwright_chromiumdev_profile-owned",
+        );
+        let mut snap = snapshot(&[controller, browser], 120_000);
+        for process in &mut snap.processes {
+            process.runtime.task_session_facts_complete = true;
+        }
+        snap.processes[0].runtime.playwright_cli = Some(unlinger_core::PlaywrightCliRuntime {
+            session_name: format!("unlinger-{id}"),
+            version: "1.63.0-alpha-2026-08-31".to_owned(),
+            persistent: false,
+            attached: false,
+        });
+        let binding = unlinger_core::TaskControllerBinding {
+            task_id: id.to_owned(),
+            controller: snap.processes[0].identity.clone(),
+            released: true,
+        };
+        let owned = Analyzer::new(
+            RuleSet::embedded().unwrap(),
+            AnalyzerContext {
+                task_controllers: vec![binding.clone()],
+                ..AnalyzerContext::default()
+            },
+        );
+        let report = owned.observe(&snap).unwrap().remove(0);
+        assert_eq!(report.state, IncidentState::Cooling);
+        assert!(
+            report
+                .evidence
+                .iter()
+                .any(|e| e.id == "abandonment.task_released")
+        );
+        assert_eq!(
+            analyzer().observe(&snap).unwrap()[0].state,
+            IncidentState::Protected
+        );
+
+        // Crashpad normally detaches from the browser tree. Its exact CfT helper
+        // is browser infrastructure, while arbitrary detached task work remains protected.
+        let mut helper = snap.processes[1].clone();
+        helper.identity.pid = 999;
+        helper.parent_pid = 1;
+        helper.executable_path = Some("/synthetic/Google Chrome for Testing.app/Contents/Frameworks/Helpers/chrome_crashpad_handler".to_owned());
+        helper.arguments = Some(vec![
+            "chrome_crashpad_handler".to_owned(),
+            "--monitor-self-annotation=ptype=crashpad-handler".to_owned(),
+        ]);
+        helper.runtime.task_session_name = Some(format!("unlinger-{id}"));
+        helper.runtime.crashpad_bundle = helper.runtime.app_bundle.take();
+        let mut with_helper = snap.clone();
+        with_helper.processes.push(helper);
+        with_helper.coverage.listed_processes += 1;
+        with_helper.coverage.inspected_processes += 1;
+        assert_eq!(
+            owned.observe(&with_helper).unwrap()[0].state,
+            IncidentState::Cooling
+        );
+        with_helper.processes[2].runtime.crashpad_bundle = None;
+        assert_eq!(
+            owned.observe(&with_helper).unwrap()[0].state,
+            IncidentState::Protected
+        );
+
+        let mut active = owned.clone();
+        active.context.task_controllers[0].released = false;
+        assert_eq!(
+            active.observe(&snap).unwrap()[0].state,
+            IncidentState::Protected
+        );
+
+        for blocked in [
+            "persistent",
+            "attached",
+            "client",
+            "version",
+            "identity",
+            "visibility",
+        ] {
+            let mut altered = snap.clone();
+            match blocked {
+                "persistent" => {
+                    altered.processes[0]
+                        .runtime
+                        .playwright_cli
+                        .as_mut()
+                        .unwrap()
+                        .persistent = true
+                }
+                "attached" => {
+                    altered.processes[0]
+                        .runtime
+                        .playwright_cli
+                        .as_mut()
+                        .unwrap()
+                        .attached = true
+                }
+                "client" => {
+                    altered.processes[0]
+                        .runtime
+                        .connected_named_unix_socket_fingerprints = vec!["owned-server".to_owned()]
+                }
+                "version" => {
+                    altered.processes[0]
+                        .runtime
+                        .playwright_cli
+                        .as_mut()
+                        .unwrap()
+                        .version = "1.64.0".to_owned()
+                }
+                "identity" => altered.processes[0].identity.started_at_unix_micros += 1,
+                "visibility" => altered.processes[1].runtime.task_session_facts_complete = false,
+                _ => unreachable!(),
+            }
+            assert_eq!(
+                owned.observe(&altered).unwrap()[0].state,
+                IncidentState::Protected,
+                "{blocked}"
+            );
+        }
     }
 
     #[test]

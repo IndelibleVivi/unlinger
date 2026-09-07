@@ -272,6 +272,7 @@ impl<R: CleanupRuntime> ReconciliationEngine<R> {
             .clone()
             .unwrap_or_else(|| "disarmed".to_owned());
         let first_snapshot = self.runtime.snapshot()?;
+        self.refresh_task_ownership(&first_snapshot)?;
         let first_clock = cooling_clock(self.runtime.clock_sample()?, &enforcement_epoch);
         let analyzer = self.analyzer_for(&first_snapshot)?;
         let first_reports = analyzer.observe(&first_snapshot)?;
@@ -533,8 +534,37 @@ impl<R: CleanupRuntime> ReconciliationEngine<R> {
             AnalyzerContext {
                 self_pid: self.self_pid,
                 ancestor_pids,
+                task_controllers: self.control.store().task_controller_bindings()?,
             },
         ))
+    }
+
+    fn refresh_task_ownership(&mut self, snapshot: &Snapshot) -> Result<(), EngineError> {
+        for scope in self.control.store().task_scopes()? {
+            if scope.released_at_us.is_some() {
+                continue;
+            }
+            let owner = scope.owner.as_ref().unwrap_or(&scope.registrar);
+            let absent = match self.runtime.lookup_process(owner.pid) {
+                Ok(None) => true,
+                Ok(Some(process)) => !owner.matches(&process),
+                Err(_) => false,
+            };
+            if absent {
+                self.control.store().release_task(
+                    &scope.task_id,
+                    self.runtime.clock_sample()?.wall_unix_millis,
+                    if scope.owner.is_some() {
+                        "owner_disappeared"
+                    } else {
+                        "never_started"
+                    },
+                    scope.owner.as_ref(),
+                )?;
+            }
+        }
+        self.control.store().bind_task_controllers(snapshot)?;
+        Ok(())
     }
 }
 

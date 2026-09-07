@@ -681,6 +681,7 @@ version = "0.1.0"
 dependencies = [
  "libc",
  "libproc",
+ "serde_json",
  "unlinger-core",
 ]
 

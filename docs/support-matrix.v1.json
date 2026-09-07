@@ -27,7 +27,10 @@
       "deterministic_classification": true,
       "automatic_process_eligibility": {
         "bundle_id": "com.google.chrome.for.testing",
-        "exact_versions": ["151.0.7922.34", "152.0.7977.42"],
+        "exact_versions": [
+          "151.0.7922.34",
+          "152.0.7977.42"
+        ],
         "controller_present": false
       },
       "always_protected": [
@@ -45,11 +48,15 @@
       "deterministic_classification": true,
       "automatic_process_eligibility": {
         "bundle_id": "com.google.chrome.for.testing",
-        "exact_versions": ["151.0.7922.34", "152.0.7977.42"],
-        "controller_present": false
+        "exact_versions": [
+          "151.0.7922.34",
+          "152.0.7977.42"
+        ],
+        "controller_present": true,
+        "task_controller_version": "1.63.0-alpha-2026-08-31"
       },
       "always_protected": [
-        "controller_bearing",
+        "unregistered_or_unverified_controller",
         "headed_or_attached",
         "standard_or_persistent_profile",
         "unknown_mixed_or_wrong_version"
@@ -63,7 +70,10 @@
       "deterministic_classification": true,
       "automatic_process_eligibility": {
         "bundle_id": "com.google.chrome.for.testing",
-        "exact_versions": ["151.0.7922.34", "152.0.7977.42"],
+        "exact_versions": [
+          "151.0.7922.34",
+          "152.0.7977.42"
+        ],
         "controller_present": false
       },
       "always_protected": [
@@ -106,7 +116,12 @@
     "legacy_app_schema": 3,
     "source_operator_schema": 1,
     "historical_app_schema": 2,
-    "server_accepts": [1, 3, 4, 5]
+    "server_accepts": [
+      1,
+      3,
+      4,
+      5
+    ]
   },
   "acceptance": {
     "private_enforcement_candidate_verified": true,

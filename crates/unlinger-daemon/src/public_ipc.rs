@@ -497,9 +497,9 @@ fn project_payload(
                 incident,
             })
         }
-        IpcPayload::Lifecycle(_) => {
+        IpcPayload::Lifecycle(_) | IpcPayload::TaskLease(_) | IpcPayload::TaskStatus(_) => {
             return Err(ControlError::Unavailable(
-                "service lifecycle responses are not part of frontend IPC".to_owned(),
+                "operator task/lifecycle responses are not part of frontend IPC".to_owned(),
             ));
         }
     })

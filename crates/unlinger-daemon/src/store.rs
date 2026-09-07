@@ -25,7 +25,10 @@ use crate::public_action_policy::{
     PolicyDecision, RuntimePolicyFacts, StorePolicyFacts, evaluate_action,
 };
 
-const SCHEMA_VERSION: i64 = 7;
+mod tasks;
+pub use tasks::{TaskLease, TaskPhase, TaskStatus};
+
+const SCHEMA_VERSION: i64 = 8;
 const CLEANUP_DETAIL_RETENTION_MILLIS: u64 = 14 * 24 * 60 * 60 * 1_000;
 const MAX_ATTENTION_SUMMARIES: usize = 50;
 const MAX_MUTATION_RECEIPTS: usize = 10_000;
@@ -3474,6 +3477,23 @@ fn validate_required_schema(connection: &Connection) -> Result<(), StoreError> {
         ),
         ("mutation_authority", &["singleton", "namespace_token"]),
         (
+            "task_scopes",
+            &[
+                "task_id",
+                "capability",
+                "registrar_json",
+                "owner_json",
+                "created_at_ms",
+                "activated_at_us",
+                "released_at_us",
+                "release_reason",
+            ],
+        ),
+        (
+            "task_controllers",
+            &["identity_key", "task_id", "identity_json", "incident_id"],
+        ),
+        (
             "control_metadata",
             &["singleton", "cleanup_policy_revision"],
         ),
@@ -3710,6 +3730,9 @@ fn initialize_schema(connection: &mut Connection) -> Result<(), StoreError> {
             transaction.execute_batch(MIGRATION_V7_SQL)?;
             migrate_v7_history_and_impacts(&transaction)?;
         }
+    }
+    if user_version < 8 {
+        transaction.execute_batch(tasks::TASK_SCHEMA_SQL)?;
     }
     transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     transaction.commit()?;

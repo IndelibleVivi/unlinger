@@ -11,7 +11,15 @@ mod version;
 mod storage_residue;
 
 #[cfg(target_os = "macos")]
+mod task_sessions;
+
+#[cfg(target_os = "macos")]
 fn parse_procargs2(buffer: &[u8]) -> Option<Vec<String>> {
+    parse_procargs2_task(buffer).map(|(arguments, _)| arguments)
+}
+
+#[cfg(target_os = "macos")]
+fn parse_procargs2_task(buffer: &[u8]) -> Option<(Vec<String>, Option<String>)> {
     let argc_bytes: [u8; std::mem::size_of::<libc::c_int>()] = buffer
         .get(..std::mem::size_of::<libc::c_int>())?
         .try_into()
@@ -39,12 +47,25 @@ fn parse_procargs2(buffer: &[u8]) -> Option<Vec<String>> {
         arguments.push(String::from_utf8_lossy(&tail[..end]).into_owned());
         cursor += end + 1;
     }
-    (arguments.len() == argc).then_some(arguments)
+    if arguments.len() != argc {
+        return None;
+    }
+    // Retain only the issued task selector. No other environment values leave
+    // this native buffer or enter snapshots, history, IPC, or diagnostics.
+    let session = buffer
+        .get(cursor..)?
+        .split(|byte| *byte == 0)
+        .find_map(|entry| {
+            let value = entry.strip_prefix(b"PLAYWRIGHT_CLI_SESSION=")?;
+            let value = std::str::from_utf8(value).ok()?;
+            unlinger_core::task_id_from_session(value).map(|_| value.to_owned())
+        });
+    Some((arguments, session))
 }
 
 #[cfg(target_os = "macos")]
 mod platform {
-    use crate::parse_procargs2;
+    use crate::parse_procargs2_task;
     use libproc::libproc::file_info::{ListFDs, ProcFDType, pidfdinfo};
     use libproc::libproc::net_info::{SocketFDInfo, SocketInfoKind, TcpSIState};
     use libproc::libproc::proc_pid::{listpidinfo, pidinfo, pidpath};
@@ -513,11 +534,25 @@ mod platform {
             .or_else(|| decode_c_chars(&info.pbsd.pbi_comm))
             .unwrap_or_else(|| format!("pid-{pid}"));
         let tty_device = (!matches!(info.pbsd.e_tdev, 0 | u32::MAX)).then_some(info.pbsd.e_tdev);
-        let arguments = process_arguments(pid_i32, argmax).ok();
+        let parsed_arguments = process_arguments(pid_i32, argmax).ok();
+        let task_session_facts_complete = parsed_arguments.is_some();
+        let (arguments, task_session_name) = parsed_arguments
+            .map_or((None, None), |(arguments, session)| {
+                (Some(arguments), session)
+            });
         let mut runtime = process_runtime_facts(pid_i32, info.pbsd.pbi_nfiles, &arguments);
+        runtime.task_session_facts_complete = task_session_facts_complete;
+        runtime.task_session_name = task_session_name;
+        runtime.playwright_cli = arguments.as_deref().and_then(|arguments| {
+            crate::task_sessions::collect(arguments, &runtime.unix_socket_fingerprints)
+        });
         runtime.app_bundle = path
             .as_deref()
             .and_then(|path| crate::version::collect_app_bundle_version(Path::new(path)));
+        runtime.crashpad_bundle = path
+            .as_deref()
+            .filter(|path| path.ends_with("/chrome_crashpad_handler"))
+            .and_then(|path| crate::version::collect_crashpad_bundle_version(Path::new(path)));
 
         Ok(ProcessRecord {
             identity: ProcessIdentity {
@@ -595,6 +630,18 @@ mod platform {
                     let unix = unsafe { socket.psi.soi_proto.pri_un };
                     if unix.unsi_conn_so != 0 {
                         facts.connected_unix_sockets += 1;
+                    }
+                    let address = unsafe { unix.unsi_addr.ua_sun };
+                    if let Some(path) =
+                        decode_c_chars(&address.sun_path).filter(|path| !path.is_empty())
+                    {
+                        let fingerprint = fingerprint_parts([path.as_bytes()]);
+                        if unix.unsi_conn_so != 0 {
+                            facts
+                                .connected_named_unix_socket_fingerprints
+                                .push(fingerprint.clone());
+                        }
+                        facts.unix_socket_fingerprints.push(fingerprint);
                     }
                 }
                 _ => {}
@@ -726,7 +773,10 @@ mod platform {
             .map_err(|_| SnapshotError::Sysctl("kern.argmax does not fit usize".to_owned()))
     }
 
-    fn process_arguments(pid: libc::c_int, argmax: usize) -> Result<Vec<String>, SnapshotError> {
+    fn process_arguments(
+        pid: libc::c_int,
+        argmax: usize,
+    ) -> Result<(Vec<String>, Option<String>), SnapshotError> {
         let mut mib = [CTL_KERN, KERN_PROCARGS2, pid];
         let mut buffer = vec![0_u8; argmax];
         let mut size = buffer.len();
@@ -746,7 +796,7 @@ mod platform {
             ));
         }
         buffer.truncate(size);
-        parse_procargs2(&buffer)
+        parse_procargs2_task(&buffer)
             .ok_or_else(|| SnapshotError::Sysctl(format!("malformed KERN_PROCARGS2 for pid {pid}")))
     }
 
@@ -762,6 +812,7 @@ mod platform {
     #[cfg(test)]
     mod tests {
         use super::*;
+        use crate::parse_procargs2;
         use std::time::Instant;
 
         struct OwnedZombie {
@@ -876,6 +927,21 @@ mod platform {
                     "value".to_owned()
                 ])
             );
+        }
+
+        #[test]
+        fn procargs_retains_only_a_valid_task_selector() {
+            let mut bytes = 1_i32.to_ne_bytes().to_vec();
+            bytes.extend_from_slice(b"/bin/tool\0\0tool\0TOKEN=synthetic-secret\0PLAYWRIGHT_CLI_SESSION=unlinger-0123456789abcdef0123456789abcdef\0HOME=/synthetic/private\0");
+            let (arguments, session) = crate::parse_procargs2_task(&bytes).unwrap();
+            assert_eq!(arguments, ["tool"]);
+            assert_eq!(
+                session.as_deref(),
+                Some("unlinger-0123456789abcdef0123456789abcdef")
+            );
+            let mut bytes = 1_i32.to_ne_bytes().to_vec();
+            bytes.extend_from_slice(b"/bin/tool\0\0tool\0PLAYWRIGHT_CLI_SESSION=default\0");
+            assert_eq!(crate::parse_procargs2_task(&bytes).unwrap().1, None);
         }
 
         #[test]

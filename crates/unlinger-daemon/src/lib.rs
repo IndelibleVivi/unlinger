@@ -21,4 +21,5 @@ pub use store::{
     PreparedArtifactActionHandle, ProtectedIncidentSummary, ProtectionProjection,
     ProtectionReconciliation, PruneResult, RetentionPolicy, RetryBlockReconciliation,
     StorageRecoveryOccurrence, StorageRecoveryReason, StoreAttentionProjection, StoreError,
+    TaskLease, TaskPhase, TaskStatus,
 };

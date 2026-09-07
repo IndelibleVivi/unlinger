@@ -344,14 +344,14 @@ Memory pressure may shorten the delay before the second scan, but does not chang
 11. Send `SIGKILL` only to exact identity-matching survivors or a verified dedicated process group.
 12. Confirm the complete tree is gone.
 13. Re-check for immediate supervisor-driven revival.
-14. If the active pack explicitly admits an artifact, clean only artifacts whose live references are gone; current source and installed `0.4.0` packs admit none.
+14. If the active pack explicitly admits an artifact, clean only artifacts whose live references are gone; current source and installed packs admit none.
 15. Commit a redacted local receipt with independent process/artifact/overall outcomes.
 
 Unlinger never uses broad `killall`, process-name-only `pkill`, or an unrestricted PID list captured minutes earlier.
 
 ### 7.4 Runtime artifact cleanup
 
-The engine contains a narrowly scoped `DevToolsActivePort` cleanup capability, but the current owner-approved process-only policy does not activate it. Every current source and installed `0.4.0` signature pack sets `devtools_active_port = false`, so the analyzer produces no runtime-artifact candidate and enforcement cannot schedule or journal an artifact action. Re-enabling this path requires a separate owner decision after the crash-after-quarantine and final same-UID swap residuals are resolved or explicitly accepted.
+The engine contains a narrowly scoped `DevToolsActivePort` cleanup capability, but the current owner-approved process-only policy does not activate it. Every current source and installed signature pack sets `devtools_active_port = false`, so the analyzer produces no runtime-artifact candidate and enforcement cannot schedule or journal an artifact action. Re-enabling this path requires a separate owner decision after the crash-after-quarantine and final same-UID swap residuals are resolved or explicitly accepted.
 
 If a later pack explicitly admits the capability, it may remove only one exact `DevToolsActivePort` regular file after proving its frozen file identity, safe parent, exclusive ownership, complete absence of live references, complete process-tree exit, and no revival. Socket, PID-file, lock-file, and other runtime-metadata cleanup remains part of the incident model but is not automatically admitted until a framework-specific canonical convention and the same ownership, reference, and race guarantees have field evidence.
 
@@ -469,7 +469,7 @@ Each supported runtime has a versioned signature pack that parameterizes one sha
 
 Version 0.1 ships rules inside the signed binary. Remote executable rule updates are out of scope. Later data-only updates must be signed and auditable.
 
-Automatic-cleanup admission remains intentionally narrower than the recognized family list: a controllerless Chrome-for-Testing browser root with bundle identifier `com.google.chrome.for.testing` at exact source/installed-allowlisted version `151.0.7922.34` or `152.0.7977.42`, plus every ordinary hard gate. This is an exact two-version allowlist, not a range. Controller anchors remain protected until their own product/version identity is verified. Every other version or family shape requires a positive fixture and the nearest normal/manual counterexample before its pack policy may expand. The installed generation runs this same `0.4.0` two-point policy; [`current-state.md`](current-state.md) owns the exact generation and activation state.
+Automatic-cleanup admission remains narrower than recognized families: Chrome for Testing with bundle identifier `com.google.chrome.for.testing` at exact version `151.0.7922.34` or `152.0.7977.42`, plus every ordinary hard gate. Source adds an owner-authorized command-lifetime lane in Playwright pack `0.5.0`: exact `playwright-core` `1.63.0-alpha-2026-08-31`, daemon-issued task/session binding, native package/registry/socket verification and a durably released actual command owner. Other controllers remain protected. This is an exact allowlist, not a range. [TASKS.md](TASKS.md) defines command launch, release, background-work/client protection, multiple workspaces, report-only behavior, privacy and retention. Release supplies ownership evidence, never signal or cleanup-success authority. The App's existing terminal receipt/impact projection remains the result authority. Installed activation remains separately recorded in [current-state.md](current-state.md).
 
 ---
 

@@ -289,7 +289,9 @@ fn downgrade_current_database_to_v4(path: &PathBuf) {
     let connection = Connection::open(path).expect("open current database for v4 fixture");
     connection
         .execute_batch(
-            "DROP TABLE storage_residue_latest;
+            "DROP TABLE task_controllers;
+             DROP TABLE task_scopes;
+             DROP TABLE storage_residue_latest;
              DROP TABLE cleanup_impacts;
              DROP TABLE impact_authority;
              DROP TABLE ordinary_mutation_receipts;
@@ -346,7 +348,9 @@ fn downgrade_current_database_to_v5(path: &PathBuf) {
     let connection = Connection::open(path).expect("open current database for v5 fixture");
     connection
         .execute_batch(
-            "DROP TABLE storage_residue_latest;
+            "DROP TABLE task_controllers;
+             DROP TABLE task_scopes;
+             DROP TABLE storage_residue_latest;
              DROP TABLE cleanup_impacts;
              DROP TABLE impact_authority;
              DROP TABLE ordinary_mutation_receipts;
@@ -704,7 +708,7 @@ fn migrates_v2_history_and_pause_but_resets_legacy_wall_clock_cooling() {
     let synchronous: i64 = connection
         .pragma_query_value(None, "synchronous", |row| row.get(0))
         .expect("read synchronous mode");
-    assert_eq!(version, 7);
+    assert_eq!(version, 8);
     assert_eq!(journal_mode, "wal");
     assert_eq!(synchronous, 2);
     drop(connection);
@@ -723,7 +727,7 @@ fn migrates_v2_history_and_pause_but_resets_legacy_wall_clock_cooling() {
 }
 
 #[test]
-fn v3_to_v7_adds_lifecycle_public_identity_and_resets_signature_unknown_cooling() {
+fn v3_to_current_adds_lifecycle_public_identity_and_resets_signature_unknown_cooling() {
     let database = TempDatabase::new();
     let store = HistoryStore::open(&database.0).expect("create current store");
     let report = cooling_report("inc-v3");
@@ -748,7 +752,7 @@ fn v3_to_v7_adds_lifecycle_public_identity_and_resets_signature_unknown_cooling(
         .expect("simulate a schema-v3 candidate");
     drop(connection);
 
-    let migrated = HistoryStore::open(&database.0).expect("migrate v3 to v7");
+    let migrated = HistoryStore::open(&database.0).expect("migrate v3 to current");
     assert!(
         !migrated
             .track_cooling(
@@ -769,7 +773,7 @@ fn v3_to_v7_adds_lifecycle_public_identity_and_resets_signature_unknown_cooling(
 }
 
 #[test]
-fn v4_to_v7_preserves_history_and_retry_block_but_resets_incompatible_cooling() {
+fn v4_to_current_preserves_history_and_retry_block_but_resets_incompatible_cooling() {
     let database = TempDatabase::new();
     let store = HistoryStore::open(&database.0).expect("create current store");
     let cooling = cooling_report("inc-v4-cooling");
@@ -802,8 +806,8 @@ fn v4_to_v7_preserves_history_and_retry_block_but_resets_incompatible_cooling() 
     drop(store);
     downgrade_current_database_to_v4(&database.0);
 
-    let migrated = HistoryStore::open(&database.0).expect("migrate v4 to v7");
-    assert_eq!(HistoryStore::schema_version(), 7);
+    let migrated = HistoryStore::open(&database.0).expect("migrate v4 to current");
+    assert_eq!(HistoryStore::schema_version(), 8);
     let connection = Connection::open(&database.0).expect("inspect migrated artifact journal");
     let artifact_columns = connection
         .prepare("PRAGMA table_info(cleanup_artifact_actions)")
@@ -845,7 +849,7 @@ fn v4_to_v7_preserves_history_and_retry_block_but_resets_incompatible_cooling() 
 }
 
 #[test]
-fn v5_to_v7_backfills_event_tokens_and_impact_authority() {
+fn v5_to_current_backfills_event_tokens_and_impact_authority() {
     let database = TempDatabase::new();
     let store = HistoryStore::open(&database.0).expect("create current store");
     store
@@ -861,7 +865,7 @@ fn v5_to_v7_backfills_event_tokens_and_impact_authority() {
     drop(store);
     downgrade_current_database_to_v5(&database.0);
 
-    let migrated = HistoryStore::open(&database.0).expect("migrate v5 to v7");
+    let migrated = HistoryStore::open(&database.0).expect("migrate v5 to current");
     let history = migrated.history(10).expect("preserved history");
     assert_eq!(history.len(), 3);
     assert!(history.iter().all(|event| event.event_token.len() == 32));
@@ -888,7 +892,7 @@ fn v5_to_v7_backfills_event_tokens_and_impact_authority() {
     let version: i64 = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .expect("read migrated version");
-    assert_eq!(version, 7);
+    assert_eq!(version, 8);
 }
 
 #[test]

@@ -270,6 +270,21 @@ impl DaemonStatus {
 #[serde(tag = "command", rename_all = "snake_case")]
 pub enum IpcCommand {
     Status,
+    TaskReserve {
+        task_id: String,
+    },
+    TaskActivate {
+        task_id: String,
+        capability: String,
+        owner_pid: u32,
+    },
+    TaskFinish {
+        task_id: String,
+        capability: String,
+    },
+    TaskStatus {
+        task_id: String,
+    },
     History {
         limit: usize,
     },
@@ -318,6 +333,8 @@ pub struct DiagnosticsBundle {
 #[serde(tag = "type", content = "data", rename_all = "snake_case")]
 pub enum IpcPayload {
     Status(DaemonStatus),
+    TaskLease(crate::TaskLease),
+    TaskStatus(crate::TaskStatus),
     History(Vec<HistoryEvent>),
     Incident(IncidentDetail),
     Pause {
@@ -1050,6 +1067,134 @@ impl ControlPlane {
             .map_err(|_| ControlError::Unavailable("daemon status lock is poisoned".to_owned()))
     }
 
+    fn handle_task_peer_at(
+        &self,
+        command: IpcCommand,
+        peer_pid: u32,
+        now: u64,
+    ) -> Result<IpcPayload, ControlError> {
+        use unlinger_core::TaskOwnerIdentity;
+        let native = unlinger_macos::MacosSnapshotter::new();
+        let peer = native
+            .lookup(peer_pid)
+            .map_err(|_| {
+                ControlError::Unavailable("task registrar identity unavailable".to_owned())
+            })?
+            .ok_or_else(|| ControlError::Unavailable("task registrar has exited".to_owned()))?;
+        let registrar = TaskOwnerIdentity::from_process(&peer).ok_or_else(|| {
+            ControlError::InvalidArgument("invalid task registrar identity".to_owned())
+        })?;
+        match command {
+            IpcCommand::TaskReserve { task_id } => {
+                let status = self.lock_status()?;
+                if !status.healthy
+                    || !status.ready
+                    || status.draining
+                    || status.startup_state == StartupState::Failed
+                {
+                    return Err(ControlError::Unavailable(
+                        "task registration requires a healthy ready daemon".to_owned(),
+                    ));
+                }
+                self.store
+                    .reserve_task(&task_id, &registrar, now)
+                    .map(IpcPayload::TaskLease)
+                    .map_err(map_store_error)
+            }
+            IpcCommand::TaskActivate {
+                task_id,
+                capability,
+                owner_pid,
+            } => {
+                let status = self.lock_status()?;
+                if !status.healthy
+                    || !status.ready
+                    || status.draining
+                    || status.startup_state == StartupState::Failed
+                {
+                    return Err(ControlError::Unavailable(
+                        "task activation requires a healthy ready daemon".to_owned(),
+                    ));
+                }
+                let scope = self
+                    .store
+                    .authorize_task(&task_id, &capability)
+                    .map_err(map_store_error)?;
+                if scope.registrar != registrar {
+                    return Err(ControlError::Conflict(
+                        "task activation belongs to its original registrar".to_owned(),
+                    ));
+                }
+                let owner = native
+                    .lookup(owner_pid)
+                    .map_err(|_| {
+                        ControlError::Unavailable("command owner identity unavailable".to_owned())
+                    })?
+                    .ok_or_else(|| ControlError::Conflict("command owner has exited".to_owned()))?;
+                if owner.parent_pid != peer_pid || owner.uid != registrar.uid {
+                    return Err(ControlError::Conflict(
+                        "command owner must be the registrar's exact child".to_owned(),
+                    ));
+                }
+                let identity = TaskOwnerIdentity::from_process(&owner).ok_or_else(|| {
+                    ControlError::InvalidArgument("invalid command owner identity".to_owned())
+                })?;
+                self.store
+                    .activate_task(&task_id, &identity, now)
+                    .map_err(map_store_error)?;
+                self.store
+                    .task_status(&task_id)
+                    .map_err(map_store_error)?
+                    .map(IpcPayload::TaskStatus)
+                    .ok_or_else(|| ControlError::NotFound("task not found".to_owned()))
+            }
+            IpcCommand::TaskFinish {
+                task_id,
+                capability,
+            } => {
+                let scope = self
+                    .store
+                    .authorize_task(&task_id, &capability)
+                    .map_err(map_store_error)?;
+                if scope.released_at_us.is_none() {
+                    if let Some(owner) = &scope.owner {
+                        match native.lookup(owner.pid) {
+                            Ok(Some(process)) if owner.matches(&process) => {
+                                return Err(ControlError::Conflict(
+                                    "command owner is still running".to_owned(),
+                                ));
+                            }
+                            Err(_) => {
+                                return Err(ControlError::Unavailable(
+                                    "command owner absence is unproved".to_owned(),
+                                ));
+                            }
+                            _ => {}
+                        }
+                    }
+                    self.store
+                        .release_task(
+                            &task_id,
+                            now,
+                            if scope.owner.is_some() {
+                                "reported_exit"
+                            } else {
+                                "never_started"
+                            },
+                            scope.owner.as_ref(),
+                        )
+                        .map_err(map_store_error)?;
+                }
+                self.store
+                    .task_status(&task_id)
+                    .map_err(map_store_error)?
+                    .map(IpcPayload::TaskStatus)
+                    .ok_or_else(|| ControlError::NotFound("task not found".to_owned()))
+            }
+            _ => self.handle_at(command, now),
+        }
+    }
+
     pub fn handle_at(
         &self,
         command: IpcCommand,
@@ -1057,6 +1202,17 @@ impl ControlPlane {
     ) -> Result<IpcPayload, ControlError> {
         match command {
             IpcCommand::Status => Ok(IpcPayload::Status(self.status_at(now_unix_millis)?)),
+            IpcCommand::TaskStatus { task_id } => self
+                .store
+                .task_status(&task_id)
+                .map_err(map_store_error)?
+                .map(IpcPayload::TaskStatus)
+                .ok_or_else(|| ControlError::NotFound("task not found".to_owned())),
+            IpcCommand::TaskReserve { .. }
+            | IpcCommand::TaskActivate { .. }
+            | IpcCommand::TaskFinish { .. } => Err(ControlError::Unavailable(
+                "task registration requires an authenticated local socket".to_owned(),
+            )),
             IpcCommand::History { limit } => {
                 if limit > MAX_HISTORY_LIMIT {
                     return Err(ControlError::InvalidArgument(format!(
@@ -1977,6 +2133,27 @@ fn peer_is_current_user(stream: &UnixStream) -> bool {
 }
 
 #[cfg(unix)]
+fn peer_pid(stream: &UnixStream) -> Result<u32, ControlError> {
+    let mut pid: libc::pid_t = 0;
+    let mut size = std::mem::size_of_val(&pid) as libc::socklen_t;
+    let result = unsafe {
+        libc::getsockopt(
+            stream.as_raw_fd(),
+            libc::SOL_LOCAL,
+            libc::LOCAL_PEERPID,
+            (&raw mut pid).cast(),
+            &raw mut size,
+        )
+    };
+    if result != 0 || pid <= 1 || size as usize != std::mem::size_of_val(&pid) {
+        return Err(ControlError::Unavailable(
+            "local task peer identity unavailable".to_owned(),
+        ));
+    }
+    Ok(pid as u32)
+}
+
+#[cfg(unix)]
 fn serve_connection(stream: &mut UnixStream, control: &ControlPlane) -> Result<(), IpcError> {
     let request_bytes = match read_bounded_line(stream, MAX_REQUEST_BYTES) {
         Ok(bytes) => bytes,
@@ -2037,7 +2214,16 @@ fn serve_connection(stream: &mut UnixStream, control: &ControlPlane) -> Result<(
                     return Ok(());
                 }
             };
-            let response = match control.handle_at(request.command, now_unix_millis()?) {
+            let now = now_unix_millis()?;
+            let result = match request.command {
+                command @ (IpcCommand::TaskReserve { .. }
+                | IpcCommand::TaskActivate { .. }
+                | IpcCommand::TaskFinish { .. }) => {
+                    peer_pid(stream).and_then(|pid| control.handle_task_peer_at(command, pid, now))
+                }
+                command => control.handle_at(command, now),
+            };
+            let response = match result {
                 Ok(payload) => ResponseEnvelope {
                     schema_version: IPC_SCHEMA_VERSION,
                     request_id: request.request_id,

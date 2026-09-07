@@ -70,6 +70,38 @@ pub(super) fn collect_app_bundle_version(executable: &Path) -> Option<AppBundleV
     if !executable.is_absolute() || !is_exact_bundle_executable(executable) {
         return None;
     }
+    read_bundle_version(executable)
+}
+
+pub(super) fn collect_crashpad_bundle_version(executable: &Path) -> Option<AppBundleVersion> {
+    if !executable.is_absolute() {
+        return None;
+    }
+    let bundle = executable.ancestors().nth(7)?;
+    let relative = executable
+        .strip_prefix(bundle)
+        .ok()?
+        .components()
+        .map(|component| component.as_os_str().to_str())
+        .collect::<Option<Vec<_>>>()?;
+    if relative.len() != 7
+        || relative[..4]
+            != [
+                "Contents",
+                "Frameworks",
+                "Google Chrome for Testing Framework.framework",
+                "Versions",
+            ]
+        || relative[5..] != ["Helpers", "chrome_crashpad_handler"]
+    {
+        return None;
+    }
+    let facts = read_bundle_version(executable)?;
+    (facts.bundle_id == "com.google.chrome.for.testing" && facts.short_version == relative[4])
+        .then_some(facts)
+}
+
+fn read_bundle_version(executable: &Path) -> Option<AppBundleVersion> {
     let executable_file = OpenOptions::new()
         .read(true)
         .custom_flags(libc::O_NOFOLLOW_ANY | libc::O_CLOEXEC)
@@ -254,6 +286,34 @@ mod tests {
                 bundle_id: "com.google.chrome.for.testing".to_owned(),
                 short_version: "151.0.7922.34".to_owned(),
             })
+        );
+    }
+
+    #[test]
+    fn crashpad_requires_the_exact_cft_framework_version_and_is_not_a_browser_root() {
+        let bundle = TempBundle::new("crashpad");
+        bundle.write_plist();
+        let framework = bundle.root.join("Synthetic Browser.app/Contents/Frameworks/Google Chrome for Testing Framework.framework/Versions");
+        let helper = framework.join("151.0.7922.34/Helpers/chrome_crashpad_handler");
+        fs::create_dir_all(helper.parent().unwrap()).unwrap();
+        fs::write(&helper, b"synthetic helper").unwrap();
+        assert_eq!(
+            collect_crashpad_bundle_version(&helper)
+                .unwrap()
+                .short_version,
+            "151.0.7922.34"
+        );
+        assert_eq!(collect_app_bundle_version(&helper), None);
+        let wrong = framework.join("151.0.7922.35/Helpers/chrome_crashpad_handler");
+        fs::create_dir_all(wrong.parent().unwrap()).unwrap();
+        fs::write(&wrong, b"wrong version").unwrap();
+        assert_eq!(collect_crashpad_bundle_version(&wrong), None);
+        symlink(framework.join("151.0.7922.34"), framework.join("Current")).unwrap();
+        assert_eq!(
+            collect_crashpad_bundle_version(
+                &framework.join("Current/Helpers/chrome_crashpad_handler")
+            ),
+            None
         );
     }
 

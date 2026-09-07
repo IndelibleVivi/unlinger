@@ -66,6 +66,14 @@ pub struct AppBundleVersion {
     pub short_version: String,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PlaywrightCliRuntime {
+    pub session_name: String,
+    pub version: String,
+    pub persistent: bool,
+    pub attached: bool,
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ProcessRuntimeFacts {
     pub cpu_total_nanos: u64,
@@ -77,6 +85,12 @@ pub struct ProcessRuntimeFacts {
     pub connected_unix_sockets: usize,
     pub attached_debug_transport: bool,
     pub app_bundle: Option<AppBundleVersion>,
+    pub crashpad_bundle: Option<AppBundleVersion>,
+    pub task_session_name: Option<String>,
+    pub task_session_facts_complete: bool,
+    pub unix_socket_fingerprints: Vec<String>,
+    pub connected_named_unix_socket_fingerprints: Vec<String>,
+    pub playwright_cli: Option<PlaywrightCliRuntime>,
 }
 
 impl ProcessRecord {
