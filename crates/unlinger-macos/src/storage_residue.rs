@@ -1,5 +1,9 @@
-use std::fs;
+use std::ffi::{CStr, CString};
+use std::fs::{self, File, OpenOptions};
+use std::io;
+use std::os::fd::{AsRawFd, FromRawFd, IntoRawFd};
 use std::os::unix::fs::MetadataExt;
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
 use unlinger_core::{
     StorageResidueKind, StorageResidueObservation, StorageResidueReferenceCheck,
@@ -54,7 +58,20 @@ pub fn inspect_code_sign_clone_root(
     if !metadata.file_type().is_dir() || metadata.uid() != unsafe { libc::geteuid() } {
         return unavailable(observed_at_unix_millis, "storage_residue.clone_root_unsafe");
     }
-    let entries = match fs::read_dir(root) {
+    let directory = match OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .open(root)
+    {
+        Ok(directory) => directory,
+        Err(_) => {
+            return unavailable(
+                observed_at_unix_millis,
+                "storage_residue.clone_root_unreadable",
+            );
+        }
+    };
+    let entries = match directory_names(&directory) {
         Ok(entries) => entries,
         Err(_) => {
             return unavailable(
@@ -65,43 +82,36 @@ pub fn inspect_code_sign_clone_root(
     };
     let mut candidate_count = 0_usize;
     let mut logical_bytes = 0_u64;
-    for entry in entries {
-        let Ok(entry) = entry else {
-            return unavailable(
-                observed_at_unix_millis,
-                "storage_residue.clone_root_unreadable",
-            );
-        };
-        let name = entry.file_name();
-        let Some(name) = name.to_str() else {
+    for name in entries {
+        let Ok(text_name) = name.to_str() else {
             return unavailable(
                 observed_at_unix_millis,
                 "storage_residue.clone_shape_unexpected",
             );
         };
-        if !valid_clone_name(name) {
+        if !valid_clone_name(text_name) {
             return unavailable(
                 observed_at_unix_millis,
                 "storage_residue.clone_shape_unexpected",
             );
         }
-        let path = entry.path();
-        let Ok(metadata) = fs::symlink_metadata(&path) else {
+        let Ok(clone) = open_child_directory(&directory, &name) else {
             return unavailable(
                 observed_at_unix_millis,
-                "storage_residue.clone_root_unreadable",
+                "storage_residue.clone_shape_unexpected",
             );
         };
-        if !metadata.file_type().is_dir()
-            || metadata.uid() != unsafe { libc::geteuid() }
-            || !path.join("Google Chrome.app").is_dir()
+        if clone.metadata().map(|metadata| metadata.uid()).ok() != Some(unsafe { libc::geteuid() })
+            || ![c"Google Chrome.app.bundle", c"Google Chrome.app"]
+                .iter()
+                .any(|name| open_child_directory(&clone, name).is_ok())
         {
             return unavailable(
                 observed_at_unix_millis,
                 "storage_residue.clone_shape_unexpected",
             );
         }
-        let Ok(bytes) = logical_tree_bytes(&path) else {
+        let Ok(bytes) = logical_tree_bytes(&clone) else {
             return unavailable(
                 observed_at_unix_millis,
                 "storage_residue.clone_tree_unreadable",
@@ -149,27 +159,84 @@ fn valid_clone_name(name: &str) -> bool {
     })
 }
 
-fn logical_tree_bytes(path: &Path) -> Result<u64, std::io::Error> {
-    let metadata = fs::symlink_metadata(path)?;
-    if metadata.file_type().is_symlink() {
-        return Err(std::io::Error::other("clone tree contains a symlink"));
-    }
-    if metadata.is_file() {
-        return Ok(metadata.len());
-    }
-    if !metadata.is_dir() {
-        return Err(std::io::Error::other(
-            "clone tree contains an unsupported node",
-        ));
-    }
+fn logical_tree_bytes(directory: &File) -> io::Result<u64> {
     let mut total = 0_u64;
-    for entry in fs::read_dir(path)? {
-        let bytes = logical_tree_bytes(&entry?.path())?;
+    for name in directory_names(directory)? {
+        let mut metadata = std::mem::MaybeUninit::<libc::stat>::uninit();
+        if unsafe {
+            libc::fstatat(
+                directory.as_raw_fd(),
+                name.as_ptr(),
+                metadata.as_mut_ptr(),
+                libc::AT_SYMLINK_NOFOLLOW,
+            )
+        } != 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        let metadata = unsafe { metadata.assume_init() };
+        let bytes = match metadata.st_mode & libc::S_IFMT {
+            // Framework links are leaves. Count their regular targets only through
+            // real directory entries; never follow links, including outside/dangling links.
+            libc::S_IFLNK => 0,
+            libc::S_IFREG => u64::try_from(metadata.st_size)
+                .map_err(|_| io::Error::other("negative clone file size"))?,
+            libc::S_IFDIR => logical_tree_bytes(&open_child_directory(directory, &name)?)?,
+            _ => return Err(io::Error::other("clone tree contains an unsupported node")),
+        };
         total = total
             .checked_add(bytes)
-            .ok_or_else(|| std::io::Error::other("logical size overflow"))?;
+            .ok_or_else(|| io::Error::other("logical size overflow"))?;
     }
     Ok(total)
+}
+
+fn open_child_directory(parent: &File, name: &CStr) -> io::Result<File> {
+    let descriptor = unsafe {
+        libc::openat(
+            parent.as_raw_fd(),
+            name.as_ptr(),
+            libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+        )
+    };
+    if descriptor < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(unsafe { File::from_raw_fd(descriptor) })
+}
+
+fn directory_names(directory: &File) -> io::Result<Vec<CString>> {
+    struct DirectoryStream(*mut libc::DIR);
+    impl Drop for DirectoryStream {
+        fn drop(&mut self) {
+            unsafe { libc::closedir(self.0) };
+        }
+    }
+
+    let descriptor = directory.try_clone()?.into_raw_fd();
+    let pointer = unsafe { libc::fdopendir(descriptor) };
+    if pointer.is_null() {
+        let error = io::Error::last_os_error();
+        drop(unsafe { File::from_raw_fd(descriptor) });
+        return Err(error);
+    }
+    let stream = DirectoryStream(pointer);
+    let mut names = Vec::new();
+    loop {
+        unsafe { *libc::__error() = 0 };
+        let entry = unsafe { libc::readdir(stream.0) };
+        if entry.is_null() {
+            let error = io::Error::last_os_error();
+            if error.raw_os_error() == Some(0) {
+                return Ok(names);
+            }
+            return Err(error);
+        }
+        let name = unsafe { CStr::from_ptr((*entry).d_name.as_ptr()) };
+        if name != c"." && name != c".." {
+            names.push(name.to_owned());
+        }
+    }
 }
 
 fn unavailable(observed_at_unix_millis: u64, reason_id: &str) -> StorageResidueObservation {

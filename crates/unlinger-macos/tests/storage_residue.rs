@@ -89,6 +89,60 @@ fn missing_clone_root_is_a_clear_observation() {
 }
 
 #[test]
+fn renamed_chrome_bundle_counts_regular_files_without_following_framework_links() {
+    let temp = TempDirectory::new();
+    let root = temp.0.join("com.google.Chrome.code_sign_clone");
+    let bundle = root.join("code_sign_clone.A1b2C3/Google Chrome.app.bundle");
+    let versions = bundle.join("Contents/Frameworks/Chrome.framework/Versions");
+    fs::create_dir_all(versions.join("152/Resources")).expect("create framework");
+    fs::write(versions.join("152/Resources/payload"), [b'x'; 17]).expect("payload");
+    symlink("152", versions.join("Current")).expect("version link");
+    symlink(
+        "Versions/Current/Resources",
+        versions.parent().unwrap().join("Resources"),
+    )
+    .expect("resource link");
+    let outside = temp.0.join("outside");
+    fs::create_dir(&outside).expect("outside directory");
+    fs::write(outside.join("private-payload"), [b'y'; 101]).expect("outside payload");
+    symlink(&outside, bundle.join("outside-link")).expect("outside link");
+    symlink("missing", bundle.join("dangling-link")).expect("dangling link");
+
+    let observation = inspect_code_sign_clone_root(&root, 74);
+
+    assert_eq!(observation.status, StorageResidueStatus::Detected);
+    assert_eq!(observation.candidate_count, 1);
+    assert_eq!(observation.logical_bytes, 17);
+    assert!(observation.shape_complete);
+    assert!(!observation.automatic_cleanup_eligible);
+    assert_eq!(
+        observation.reference_check,
+        StorageResidueReferenceCheck::Incomplete
+    );
+    assert_eq!(
+        fs::read(outside.join("private-payload")).unwrap(),
+        [b'y'; 101]
+    );
+    assert!(bundle.join("outside-link").is_symlink());
+}
+
+#[test]
+fn clone_bundle_root_cannot_be_a_symlink() {
+    let temp = TempDirectory::new();
+    let root = temp.0.join("com.google.Chrome.code_sign_clone");
+    let clone = root.join("code_sign_clone.A1b2C3");
+    fs::create_dir_all(&clone).expect("clone directory");
+    let outside = temp.0.join("outside");
+    fs::create_dir(&outside).expect("outside directory");
+    symlink(outside, clone.join("Google Chrome.app.bundle")).expect("bundle link");
+
+    let observation = inspect_code_sign_clone_root(&root, 75);
+    assert_eq!(observation.status, StorageResidueStatus::Unavailable);
+    assert!(!observation.shape_complete);
+    assert!(!observation.automatic_cleanup_eligible);
+}
+
+#[test]
 fn symlinked_or_unexpected_clone_shapes_are_never_cleanup_ready() {
     let temp = TempDirectory::new();
     let target = temp.0.join("target");
