@@ -9,12 +9,12 @@
 | Runtime implementation | `b70bc94b3d0aba4cac2db1bbe924c2666ac725b8`: task lifetime plus inherited-descriptor launch fix |
 | Subsequent test correction | `f22e08eb3410050b380eaee7b84c4ccda2a3ad1a`: bounded post-release offline-lock tests; production locking/timeouts unchanged |
 | Baseline remote verification | [CI 34163955192](https://github.com/IndelibleVivi/unlinger/actions/runs/34163955192) passed for `b70bc94`; [CI 34165331792](https://github.com/IndelibleVivi/unlinger/actions/runs/34165331792) passed for `f22e08e`, including default-parallel Rust tests, release build, Swift tests and App bundling |
-| Current reader preparation | Bilingual READMEs, first-use/install/uninstall guide, current architecture, material provenance and safe demo teardown; local validation complete; hosted CI/public switch pending |
+| Current reader preparation | Published source-preview candidate `de1a9c3`: bilingual reader guides, licensed material scopes, current architecture and safe demo teardown; [exact CI 34170593229](https://github.com/IndelibleVivi/unlinger/actions/runs/34170593229) passed all steps |
 | Maintainer's reference service | Accepted generation 23 from `b70bc94`, healthy `ReadyEnforce`, no pending candidate lease; this is one reference installation, not a generation number users should copy |
 | Reference protocols/persistence | Operator v1, frontend v5/v4/v3, SQLite v8; historical v2 rejected |
 | Reference App | Unchanged ad-hoc-signed schema-v5 App assembled from `016ca58`; neither Developer ID signed nor notarized |
 | Policy | Playwright `0.5.0`, agent-browser/Puppeteer `0.4.0`; process-only; every artifact flag false |
-| Publication | Repository private pending candidate checks; SUL-1.0 + CC BY-NC-SA 4.0 selected; no GitHub Release |
+| Publication | [Repository public](https://github.com/IndelibleVivi/unlinger); source-available under SUL-1.0 + CC BY-NC-SA 4.0; anonymous API and reader/license/diagram access verified; no GitHub Release |
 
 The source daemon defaults to report-only. The reference service's explicit activation is separate from that default and from building the source. Public reader preparation does not replace or restart that service/App.
 
@@ -52,8 +52,8 @@ The publication candidate passed fresh local formatting, strict workspace clippy
 
 ## Publication preparation
 
-The preparation baseline `f22e08e` scan covered 205 current text files in each working/index/ref view and 756 reachable historical text blobs. Its 25 scope-repeated findings were reviewed as synthetic test/fixture paths and notification event-token code. The automated scan skipped two current and six historical binary assets; they were separately inspected as generated source images and derived icons, including metadata and historical provenance. This is a bounded review, not a secrets-free certificate.
+The published candidate `de1a9c3` scan covered 216 text files in both working/index views and its exact committed tree, plus 786 reachable historical text blobs. Its scope-repeated findings were reviewed as synthetic test/fixture paths and notification event-token code. The automated scan skipped two current and six historical binary assets; they were separately inspected as generated source images and derived icons, including metadata and historical provenance. This is a bounded review, not a secrets-free certificate.
 
 A historical frontend handoff was reviewed in full as a technical interface/implementation guide, without private chats, local personal paths or account data. It was removed from the current tree in `df161af`. No history rewrite or separate repository is needed on the inspected evidence. [Provenance](PROVENANCE.md) records material boundaries without copying private working notes.
 
-The owner selected the license scope in [LICENSING.md](../LICENSING.md), confirmed rights authority and authorized public visibility after candidate checks. That visibility change is pending. The owner-approved source/content licenses are present. Reader documentation and the architecture export do not imply a released App or completed binary-distribution review. See [acceptance levels](PRE_V0_1_ACCEPTANCE.md), [support](SUPPORT.md) and the [support matrix](support-matrix.v1.json) for claim vocabulary.
+The owner selected the license scope in [LICENSING.md](../LICENSING.md), confirmed rights authority and authorized public visibility after candidate checks. The existing independent repository was made public after exact-source CI passed; provider readback and unauthenticated API/raw-file requests confirmed access. No repository fork, history rewrite, release tag or binary upload was created. The owner-approved source/content licenses are present. Reader documentation and the architecture export do not imply a released App or completed binary-distribution review. See [acceptance levels](PRE_V0_1_ACCEPTANCE.md), [support](SUPPORT.md) and the [support matrix](support-matrix.v1.json) for claim vocabulary.
