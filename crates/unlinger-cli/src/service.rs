@@ -4421,8 +4421,51 @@ app.unlinger.daemon = {
             "an active daemon lifetime lock must block offline database mutation"
         );
         drop(held);
-        wait_for_offline_daemon_lock(&paths.daemon_lock, Duration::ZERO)
+        // Parallel tests can fork with this descriptor before CLOEXEC runs.
+        wait_for_offline_daemon_lock(&paths.daemon_lock, Duration::from_secs(2))
             .expect("offline recovery can own the released lifetime lock");
+    }
+
+    #[test]
+    fn offline_lock_remains_held_by_a_child_until_exec_closes_the_descriptor() {
+        use std::io::{Read, Write};
+        use std::os::unix::process::CommandExt;
+
+        let temp = TempDirectory::new();
+        let lock_path = temp.0.join("inherited.lock");
+        let held = DaemonInstanceLock::acquire(&lock_path).expect("hold lock");
+        let (mut parent_gate, child_gate) = UnixStream::pair().expect("gate pair");
+        let fd = child_gate.as_raw_fd();
+        let mut command = Command::new("/bin/echo");
+        command.stdout(Stdio::null());
+        unsafe {
+            command.pre_exec(move || {
+                let mut byte = 1_u8;
+                if libc::write(fd, (&byte as *const u8).cast(), 1) != 1
+                    || libc::read(fd, (&mut byte as *mut u8).cast(), 1) != 1
+                {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+        let spawning = thread::spawn(move || {
+            let child = command.spawn();
+            drop(child_gate);
+            child
+        });
+        parent_gate.read_exact(&mut [0]).expect("child before exec");
+        drop(held);
+        let still_held = wait_for_offline_daemon_lock(&lock_path, Duration::ZERO).is_err();
+        // Always release our child before asserting, including on a failed probe.
+        parent_gate.write_all(&[1]).expect("allow exec");
+        spawning.join().unwrap().unwrap().wait().unwrap();
+        assert!(
+            still_held,
+            "forked descriptor outlives the parent's lock handle"
+        );
+        wait_for_offline_daemon_lock(&lock_path, Duration::from_secs(2))
+            .expect("CLOEXEC releases the inherited lock before offline recovery");
     }
 
     #[test]
@@ -4453,7 +4496,8 @@ app.unlinger.daemon = {
         assert!(still_requested.requested_enforce);
 
         drop(held);
-        let offline = prove_daemon_offline(&paths, Duration::ZERO)
+        // Match the bounded production wait rather than assuming no concurrent fork.
+        let offline = prove_daemon_offline(&paths, Duration::from_secs(2))
             .expect("released lock and stale socket prove daemon offline");
         assert!(!paths.socket.exists(), "stale socket must be removed");
         clear_generation_enforce_request_offline(&paths, &layout, 7, &offline)
