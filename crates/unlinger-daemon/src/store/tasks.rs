@@ -217,7 +217,7 @@ mod tests {
         let migrated = HistoryStore::open(temp.store.path()).unwrap();
         assert_eq!(migrated.pause_until().unwrap(), Some(900_000));
         assert!(migrated.task_scopes().unwrap().is_empty());
-        assert_eq!(HistoryStore::schema_version(), 8);
+        assert_eq!(HistoryStore::schema_version(), 9);
     }
 }
 

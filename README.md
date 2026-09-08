@@ -12,7 +12,7 @@ Unlinger observes abandoned browser-automation sessions on macOS and can reclaim
 
 - **See browser leftovers and their explanation.** Native snapshots, explicit compatibility, protection reasons and redacted local history.
 - **Track a command's browser lifetime.** `unlinger task run -- COMMAND` registers an exact command owner. Its compatible Playwright CLI sessions become candidates after the task ends; release alone never authorizes cleanup.
-- **See actual process cleanup.** Completed receipts drive reclaimed-session/process counts and estimated memory impact. Repeated observations are compressed; they are not counted as cleanup.
+- **See actual process cleanup.** Completed receipts with a durable delivered signal drive reclaimed-session/process counts and estimated memory impact. A tree that ends without a signal remains visible as ended without intervention. Repeated observations are compressed; they are not counted as cleanup.
 - **Inspect disk residue.** Chrome code-sign clone count and logical size are visible. Disk cleanup is unavailable: the active policy deletes no profile, directory or runtime artifact.
 
 | Surface | Current boundary |

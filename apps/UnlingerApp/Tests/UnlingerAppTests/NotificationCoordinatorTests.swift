@@ -205,6 +205,33 @@ struct NotificationCoordinatorTests {
         #expect(await scheduler.scheduled[0].bodyKey == "notification.reclaimed")
     }
 
+    @Test("no-intervention completion does not send a reclaim notification or replay later")
+    func noInterventionDoesNotNotify() async throws {
+        let scheduler = FakeNotificationScheduler()
+        let ledger = MemoryNotificationLedger()
+        let coordinator = NotificationCoordinator(
+            scheduler: scheduler, ledger: ledger, mode: .attentionAndReclaims
+        )
+        let completed = try await history("history-cleared").map { source in
+            var event = source
+            if case .cleanup(var cleanup) = event.payload {
+                cleanup.reasonId = "cleanup.tree_gone_without_signal"
+                cleanup.processActions = []
+                event.payload = .cleanup(cleanup)
+            }
+            return event
+        }
+        await coordinator.receiveTrustedRefresh(status: try await status(), history: [], atUnixMillis: 1)
+        await coordinator.receiveTrustedRefresh(status: try await status(), history: completed, atUnixMillis: 2)
+        #expect(await scheduler.scheduled.isEmpty)
+        #expect(await ledger.snapshot().seenEventTokens[completed[0].eventToken] == 2)
+        let restarted = NotificationCoordinator(
+            scheduler: scheduler, ledger: ledger, mode: .attentionAndReclaims
+        )
+        await restarted.receiveTrustedRefresh(status: try await status(), history: completed, atUnixMillis: 3)
+        #expect(await scheduler.scheduled.isEmpty)
+    }
+
     @Test("cleared-with-residue copy preserves process success")
     func residueCopy() async throws {
         let scheduler = FakeNotificationScheduler()

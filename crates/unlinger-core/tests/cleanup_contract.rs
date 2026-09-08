@@ -1573,3 +1573,58 @@ fn snapshot(processes: &[(u32, u64)]) -> Snapshot {
         },
     }
 }
+
+#[test]
+fn natural_exit_before_any_signal_proves_absence_but_not_reclaim() {
+    let plan = CleanupPlan::from_confirmed(&confirmed_report(vec![target(
+        10,
+        ProcessRole::BrowserRoot,
+        100,
+    )]))
+    .unwrap();
+    let events = Rc::new(RefCell::new(Vec::new()));
+    for disappeared_at_first_snapshot in [true, false] {
+        let mut snapshots = VecDeque::new();
+        if !disappeared_at_first_snapshot {
+            snapshots.push_back(snapshot(&[(10, 100)]));
+        }
+        // Initial or pre-signal absence, followed by grace and revival samples.
+        snapshots.extend(std::iter::repeat_with(|| snapshot(&[])).take(8));
+        let mut runtime = FakeRuntime {
+            snapshots,
+            last_snapshot: None,
+            lookup_scripts: BTreeMap::new(),
+            signals: Vec::new(),
+            waits: Vec::new(),
+            clock: Cell::new(1),
+            events: Rc::clone(&events),
+            interrupt_next_wait: false,
+        };
+        let mut journal = FakeJournal::new(Rc::clone(&events));
+        let receipt = CleanupExecutor::execute(
+            &mut runtime,
+            &IdentityRevalidator,
+            &mut journal,
+            &mut || false,
+            &plan,
+            &CleanupPolicy::default(),
+        )
+        .unwrap();
+        assert_eq!(receipt.state, IncidentState::Cleared);
+        assert_eq!(receipt.revival_checks_completed, 2);
+        assert_eq!(
+            receipt.reason_id.as_deref(),
+            Some("cleanup.tree_gone_without_signal")
+        );
+        assert!(receipt.ended_without_intervention());
+        assert!(!receipt.proves_process_reclaim());
+        assert!(runtime.signals.is_empty());
+        assert_eq!(receipt.resources.estimated_reclaimed_memory_bytes, None);
+        assert!(
+            receipt
+                .actions
+                .iter()
+                .all(|a| a.disposition == SignalDisposition::AlreadyExited)
+        );
+    }
+}

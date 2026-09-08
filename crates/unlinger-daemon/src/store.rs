@@ -25,10 +25,11 @@ use crate::public_action_policy::{
     PolicyDecision, RuntimePolicyFacts, StorePolicyFacts, evaluate_action,
 };
 
+mod attribution;
 mod tasks;
 pub use tasks::{TaskLease, TaskPhase, TaskStatus};
 
-const SCHEMA_VERSION: i64 = 8;
+const SCHEMA_VERSION: i64 = 9;
 const CLEANUP_DETAIL_RETENTION_MILLIS: u64 = 14 * 24 * 60 * 60 * 1_000;
 const MAX_ATTENTION_SUMMARIES: usize = 50;
 const MAX_MUTATION_RECEIPTS: usize = 10_000;
@@ -1611,7 +1612,7 @@ impl HistoryStore {
             ));
         }
         let resources = serde_json::from_str::<CleanupResources>(&resources_json)?;
-        let projected = CleanupReceipt {
+        let mut projected = CleanupReceipt {
             incident_id: attempt.incident_id.clone(),
             state: terminal_receipt.state,
             reason_id: terminal_receipt.reason_id.clone(),
@@ -1621,6 +1622,11 @@ impl HistoryStore {
             revival_checks_completed: terminal_receipt.revival_checks_completed,
             resources,
         };
+        if projected.ended_without_intervention() {
+            projected.reason_id = Some("cleanup.tree_gone_without_signal".to_owned());
+            projected.resources.estimated_reclaimed_memory_bytes = None;
+        }
+        let resources_json = serde_json::to_string(&projected.resources)?;
         let survivor_pids_json = serde_json::to_string(&projected.survivor_pids)?;
         transaction.execute(
             "UPDATE cleanup_attempts
@@ -2058,7 +2064,14 @@ impl HistoryStore {
 
     pub fn most_recent_reclaim(&self) -> Result<Option<MostRecentReclaim>, StoreError> {
         Ok(self
-            .query_cleanup_impacts("WHERE impacts.process_outcome = 'cleared'", 1)?
+            .query_cleanup_impacts(
+                "WHERE impacts.process_outcome = 'cleared' AND EXISTS (
+                    SELECT 1 FROM cleanup_actions AS action
+                    WHERE action.attempt_id = impacts.attempt_id
+                      AND action.disposition = 'delivered'
+                )",
+                1,
+            )?
             .pop()
             .map(|impact| MostRecentReclaim {
                 event_token: impact.event_token,
@@ -3477,6 +3490,10 @@ fn validate_required_schema(connection: &Connection) -> Result<(), StoreError> {
         ),
         ("mutation_authority", &["singleton", "namespace_token"]),
         (
+            "impact_attribution_legacy",
+            &["singleton", "captured_at_ms", "payload_json"],
+        ),
+        (
             "task_scopes",
             &[
                 "task_id",
@@ -3733,6 +3750,10 @@ fn initialize_schema(connection: &mut Connection) -> Result<(), StoreError> {
     }
     if user_version < 8 {
         transaction.execute_batch(tasks::TASK_SCHEMA_SQL)?;
+    }
+    transaction.execute_batch(attribution::SCHEMA_SQL)?;
+    if (7..9).contains(&user_version) {
+        attribution::repair_legacy_impacts(&transaction)?;
     }
     transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     transaction.commit()?;
@@ -4877,7 +4898,14 @@ fn insert_cleanup_impact_transaction(
         },
     )?;
     let outcome = receipt.outcome();
-    let process_count = if outcome.process == ProcessOutcome::Cleared {
+    let attributed = outcome.process == ProcessOutcome::Cleared
+        && transaction.query_row(
+            "SELECT EXISTS(SELECT 1 FROM cleanup_actions
+             WHERE attempt_id = ?1 AND disposition = 'delivered')",
+            params![attempt_id],
+            |row| row.get::<_, bool>(0),
+        )?;
+    let process_count = if attributed {
         receipt
             .resources
             .before
@@ -4891,7 +4919,7 @@ fn insert_cleanup_impact_transaction(
     } else {
         None
     };
-    let estimated_memory = if outcome.process == ProcessOutcome::Cleared {
+    let estimated_memory = if attributed {
         receipt
             .resources
             .estimated_reclaimed_memory_bytes
@@ -4926,7 +4954,7 @@ fn insert_cleanup_impact_transaction(
             })?,
         ],
     )?;
-    let proved_reclaim = i64::from(outcome.process == ProcessOutcome::Cleared);
+    let proved_reclaim = i64::from(attributed);
     let process_measurement = i64::from(process_count.is_some());
     let memory_measurement = i64::from(estimated_memory.is_some());
     transaction.execute(

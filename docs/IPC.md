@@ -261,3 +261,19 @@ Changing wire shape, requiredness, limits, error discriminators, readiness/fresh
 Source schema v1 adds `task_reserve {task_id}`, `task_activate {task_id, capability, owner_pid}`, `task_finish {task_id, capability}` and read-only `task_status {task_id}`. These commands do not exist in frontend schemas v3/v4/v5 and never arm or change service mode. Reserve/activate require a healthy ready daemon and authenticated local socket peer PID (`LOCAL_PEERPID`) in addition to the existing same-UID check. Activation requires the registrar's exact current child; finish checks native owner absence. Registry transitions are durable and conditional, released tasks cannot reactivate, and one timed-out mutation is never resent.
 
 `task_lease` contains the fresh opaque task/session selector and a private capability; only the registering CLI receives it. `task_status` returns task/session selector, phase, optional release reason and bound incident IDs. It does not return capability, command, workspace, native owner identity or a synthetic cleaned state. Existing incident receipt/impact routes remain the cleanup result authority. SQLite v8 adds the two task tables transactionally without changing existing v7 impact/history authority. See [TASKS.md](TASKS.md).
+
+
+## No-intervention completion (observation-truth candidate)
+
+Frontend wire versions remain v5/v4/v3. A process absence result still has
+`process_outcome: cleared`; absence alone does not authorize an impact claim.
+The reason `cleanup.tree_gone_without_signal` identifies a completion without a
+delivered signal or artifact action. Such a receipt has no estimated reclaimed
+memory, is excluded from `proved_reclaim_count` and `recent_settlement`, and is
+rendered as ended without intervention by the candidate App. Retained legacy
+no-signal receipts receive this projection without rewriting their raw events.
+
+An empty `browser_overview` has phase `unknown` when classification coverage is
+incomplete. Complete empty observations remain `clear`, and known positive
+sessions retain their existing phase. No new lifecycle command, automatic retry,
+cleanup eligibility, or public raw-process data is introduced.

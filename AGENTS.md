@@ -7,6 +7,16 @@
 - `docs/current-state.md` owns volatile source, candidate, installed, activated, field-verified, and release truth.
 - The origin conversation/export is private provenance, not repository authority. Never copy, stage, commit, publish, or quote it here.
 
+## Unmerged observation-truth work
+
+Source work based on `9da14b7` introduces SQLite v9 attribution repair, bounded
+FD enumeration, and no-intervention completion presentation. It is source-only;
+all generation-23 / SQLite-v8 / installed-App statements below refer to the
+unchanged reference installation. The candidate preserves frontend v5/v4/v3,
+operator v1, process-only policy, and existing signal gates. Do not treat old
+field acceptance as candidate acceptance or open a migrated v9 DB with an old
+binary. `docs/current-state.md` records the candidate boundary.
+
 ## Current hard boundary
 
 The ordinary daemon default remains report-only. Accepted installed generation 23 runs the owner-authorized process-only task-lifetime policy from source head `b70bc94`: Playwright `0.5.0`, other packs `0.4.0`, SQLite v8 and the unchanged schema-v5 App. Exact-head CI passed; generation 22 installed/restarted and actually rolled back to healthy generation 19/SQLite v7; fresh generation 23 repeated installation/restart/App checks before acceptance and explicit arm. `docs/current-state.md` owns the exact field evidence. Historical generation-15/17/19 results must not be borrowed as current candidate, ambient or multi-day acceptance. The original generation-17 SQLite-I/O failure cause remains unknown.

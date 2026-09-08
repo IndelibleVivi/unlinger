@@ -94,4 +94,62 @@ struct BrowserHistoryPresentationTests {
         #expect(timeline[1].eventCount == 1)
         #expect(timeline[1].latestEvent.eventToken == "timeline-cleanup-1")
     }
+    @Test("an explicit no-intervention receipt remains visible without a reclaim label")
+    @MainActor
+    func endedWithoutInterventionIsNotAReclaim() async throws {
+        let history = try await FixtureClient(
+            statusFixture: "status-recently-reclaimed",
+            historyFixture: "history-cleared"
+        ).history(limit: 10)
+        var event = try #require(history.first)
+        guard case .cleanup(var receipt) = event.payload else {
+            Issue.record("expected cleanup fixture")
+            return
+        }
+        receipt.reasonId = "cleanup.tree_gone_without_signal"
+        receipt.processActions = []
+        event.payload = .cleanup(receipt)
+        let entries = BrowserHistoryMapper.entries(
+            events: [event], currentSessions: [], recentSettlement: nil, mode: .enforce
+        )
+        let entry = try #require(entries.first)
+        #expect(entry.state == .cleared)
+        #expect(entry.stateKey == "browser.session.ended_without_intervention")
+        #expect(entry.reasonKey == "detail.cleanup.without_intervention")
+        #expect(OutcomeCopy.label(for: event) == L10n.text("outcome.ended_without_intervention"))
+
+        // An old/unknown reason is not interpreted from an empty action array.
+        receipt.reasonId = "cleanup.tree_gone_no_revival"
+        #expect(!receipt.endedWithoutIntervention)
+        receipt.reasonId = "cleanup.tree_gone_without_signal"
+        receipt.processOutcome = .failed
+        #expect(!receipt.endedWithoutIntervention)
+    }
+
+    @Test("current protection still wins over a prior no-intervention receipt")
+    func currentStateWinsOverNoIntervention() async throws {
+        let snapshot = try await BrowserFixtureClient(scenario: .protectedUnsupported).browserOverview()
+        let overview = BrowserOverviewMapper.make(connection: .live, snapshot: snapshot)
+        let current = try #require(overview.sessions.first)
+        let history = try await FixtureClient(
+            statusFixture: "status-recently-reclaimed", historyFixture: "history-cleared"
+        ).history(limit: 10)
+        var event = try #require(history.first)
+        event.incidentId = current.incidentID
+        guard case .cleanup(var receipt) = event.payload else {
+            Issue.record("expected cleanup fixture")
+            return
+        }
+        receipt.reasonId = "cleanup.tree_gone_without_signal"
+        event.payload = .cleanup(receipt)
+        let entries = BrowserHistoryMapper.entries(
+            events: [event], currentSessions: overview.sessions,
+            recentSettlement: nil, mode: .reportOnly
+        )
+        let entry = try #require(entries.first)
+        #expect(entry.stateKey == current.stateKey)
+        #expect(entry.reasonKey == current.reasonKey)
+        #expect(entry.isCurrent)
+    }
+
 }

@@ -76,7 +76,7 @@
 "browser.impact.reclaims" = "%d leftover browser sessions cleaned";
 "browser.impact.processes" = "%d browser processes settled";
 "browser.impact.memory" = "%@ estimated memory reclaimed";
-"browser.impact.partial_history" = "Older history was partially backfilled; totals before impact tracking may be incomplete.";
+"browser.impact.partial_history" = "Earlier results could not be fully attributed. Totals include only contributions supported by retained action evidence and subsequent results; the original legacy aggregate is preserved separately.";
 "browser.storage_residue.title" = "Storage residue found";
 "browser.storage_residue.detected" = "%d Chrome code-signing clone leftovers detected";
 "browser.storage_residue.logical_size" = "%@ logical size; APFS physical reclaim may be smaller.";
@@ -118,7 +118,7 @@
 "browser.detail.actions" = "Available actions";
 
 /* Daemon unavailable (app-local state) */
-"unavailable.body" = "Unlinger runs as a local background service. It may not be installed or running — nothing is being observed right now.";
+"unavailable.body" = "The App cannot connect to the local service. Observation or automatic cleanup may still be running; their current state cannot be confirmed here.";
 "unavailable.retry" = "Try again";
 "incompatible.body" = "The App is running, but this service does not support its protocol. Automatic cleanup state cannot be inferred here; update the backend with the operator CLI.";
 
@@ -267,3 +267,9 @@
 
 /* Export panel */
 "export.filename" = "unlinger-diagnostics.json";
+
+"browser.session.ended_without_intervention" = "Ended without intervention";
+
+"outcome.ended_without_intervention" = "Ended without intervention";
+
+"detail.cleanup.without_intervention" = "The session ended without Unlinger sending a cleanup signal. It is not counted as a reclaim.";

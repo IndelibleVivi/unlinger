@@ -105,6 +105,25 @@ pub struct CleanupOutcome {
 }
 
 impl CleanupReceipt {
+    /// Absence is a result, not proof that Unlinger caused it. Attribution
+    /// requires a delivered process action as well as the terminal proof.
+    #[must_use]
+    pub fn proves_process_reclaim(&self) -> bool {
+        self.outcome().process == ProcessOutcome::Cleared
+            && self
+                .actions
+                .iter()
+                .any(|action| action.disposition == SignalDisposition::Delivered)
+    }
+
+    #[must_use]
+    pub fn ended_without_intervention(&self) -> bool {
+        self.state == IncidentState::Cleared
+            && self.outcome().overall == OverallOutcome::Cleared
+            && !self.proves_process_reclaim()
+            && self.artifact_actions.is_empty()
+    }
+
     /// Projects the independent process and runtime-artifact facts from both
     /// current and retained pre-projection receipts. The persisted incident
     /// state remains the whole frozen-plan execution state, while this view
@@ -832,7 +851,10 @@ impl CleanupExecutor {
         }
 
         receipt.state = IncidentState::Cleared;
-        receipt.reason_id = Some(if receipt.artifact_actions.is_empty() {
+        receipt.reason_id = Some(if receipt.ended_without_intervention() {
+            receipt.resources.estimated_reclaimed_memory_bytes = None;
+            "cleanup.tree_gone_without_signal".to_owned()
+        } else if receipt.artifact_actions.is_empty() {
             "cleanup.tree_gone_no_revival".to_owned()
         } else {
             "cleanup.tree_gone_artifacts_reconciled".to_owned()
