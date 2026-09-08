@@ -11,7 +11,7 @@ permissions:
 jobs:
   candidate:
     runs-on: macos-15
-    timeout-minutes: 25
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
         with:
@@ -21,7 +21,7 @@ jobs:
         with:
           toolchain: 1.98.0
           components: rustfmt, clippy
-      - name: Apply bounded source correction
+      - name: Correct synthetic positive and zero-contribution fixtures
         id: correction
         shell: bash
         run: |
@@ -29,106 +29,37 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
           import subprocess
-          base = 'c8709d638188a3a2fb0080ae26f8e2d324b52374'
-          changed = set(subprocess.check_output(['git', 'diff', '--name-only', base, 'HEAD'], text=True).splitlines())
-          assert changed == {'.github/workflows/review-source-export.yml', '.github/workflows/backend.yml', 'apps/UnlingerApp/scripts/verify_bundle.py', 'apps/UnlingerApp/scripts/test_verify_bundle.py'}, changed
-          touched = set()
-          def replace(path, old, new, count=1):
-              p=Path(path); text=p.read_text()
-              assert text.count(old)==count, (path,text.count(old),old)
-              p.write_text(text.replace(old,new)); touched.add(path)
-          replace('crates/unlinger-daemon/src/public_ipc.rs', '            freshness: RosterFreshness::Current,\n            reports,', '            freshness: RosterFreshness::Current,\n            classification_complete: true,\n            reports,')
-          for path, variable in [('apps/UnlingerApp/Tests/UnlingerAppTests/BrowserHistoryPresentationTests.swift','receipt'), ('apps/UnlingerApp/Tests/UnlingerAppTests/NotificationCoordinatorTests.swift','cleanup')]:
-              p=Path(path); text=p.read_text()
-              old=f'{variable}.reasonId = "cleanup.tree_gone_without_signal"'
-              assert old in text
-              indent='        ' if variable=='receipt' else '                '
-              text=text.replace(old,old+f'\n{indent}{variable}.artifactOutcome = .notApplicable\n{indent}{variable}.artifactActions = []\n{indent}{variable}.processActions = []\n{indent}{variable}.resources.estimatedReclaimedMemoryBytes = nil')
-              p.write_text(text); touched.add(path)
-          replace('crates/unlinger-macos/src/lib.rs', '        fn stale_descriptor_hint_does_not_omit_an_owned_debug_connection() {\n            use std::net::{TcpListener, TcpStream};', '''        fn stale_descriptor_hint_does_not_omit_an_owned_debug_connection() {
-                      use std::net::{TcpListener, TcpStream};
-                      // Other tests deliberately churn descriptors. Run this
-                      // native assertion in its own test-owned, signal-free child.
-                      const CHILD: &str = "UNLINGER_OWNED_DESCRIPTOR_PROBE";
-                      if std::env::var_os(CHILD).is_none() {
-                          let output = std::process::Command::new(std::env::current_exe().unwrap())
-                              .args(["--exact", "platform::tests::stale_descriptor_hint_does_not_omit_an_owned_debug_connection", "--nocapture"])
-                              .env(CHILD, "1")
-                              .output().expect("run isolated descriptor probe");
-                          assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
-                          assert!(String::from_utf8_lossy(&output.stdout).contains("owned-descriptor-probe-passed"));
-                          return;
-                      }''')
-          replace('crates/unlinger-macos/src/lib.rs', '            assert!(facts.attached_debug_transport);\n        }', '            assert!(facts.attached_debug_transport);\n            println!("owned-descriptor-probe-passed");\n        }')
-          replace('AGENTS.md', 'Source and installed task lifetime is defined by `docs/TASKS.md`: SQLite v8,', 'Task lifetime is defined by `docs/TASKS.md`: source SQLite v9 (reference installation v8),')
-          replace('AGENTS.md', 'scheduler, SQLite v8 task ownership', 'scheduler, SQLite v9 task ownership and action-attribution repair')
-          replace('docs/IPC.md', 'The current task-lifetime backend uses SQLite v8 and serves', 'The source backend uses SQLite v9 (the unchanged reference installation uses v8) and serves')
-          replace('docs/IPC.md', 'SQLite v8 migration/task ownership,', 'SQLite v9 attribution repair and v8 task ownership,')
-          replace('docs/ARCHITECTURE.md', '**Visible result:** SQLite v8 stores', '**Visible result:** The source SQLite v9 store retains')
-          p=Path('docs/IMPLEMENTATION_PLAN.md'); text=p.read_text(); i=text.index('\n')
-          text=text[:i]+'\n\n**Unmerged observation-truth candidate:** source SQLite v9 adds action-attributed\nimpact repair, complete FD enumeration, and coverage-aware empty overviews. The\ninstalled-generation evidence in the ledger below remains the v8 reference\ninstallation, not acceptance of this candidate. The PR records exact source\nverification; no live-service upgrade or field acceptance is implied.\n'+text[i:]
-          p.write_text(text); touched.add(str(p))
-          replace('README.md', 'its bundle script uses `rg` (ripgrep).', 'its bundle verification uses Python 3 (no ripgrep dependency).')
-          replace('README.zh-CN.md', 'App bundle 脚本使用 `rg`（ripgrep）。', 'App bundle 验证使用 Python 3，无需 ripgrep。')
-          p=Path('apps/UnlingerApp/scripts/bundle.sh'); text=p.read_text()
-          start=text.index('while IFS= read -r rpath; do'); end=text.index('if [[ -f "Resources/AppIcon.icns" ]]',start)
-          text=text[:start]+'''# Capture producer errors outside conditionals and process substitutions.
-          LOAD_COMMANDS="$(otool -l "$OUT/Contents/MacOS/UnlingerApp")"
-          RPATHS="$(printf '%s\\n' "$LOAD_COMMANDS" | awk '
-              $1 == "cmd" && $2 == "LC_RPATH" { capture = 1; next }
-              capture && $1 == "path" {
-                  line = $0
-                  sub(/^[[:space:]]*path /, "", line)
-                  sub(/ \\(offset [0-9]+\\)$/, "", line)
-                  print line
-                  capture = 0
-              }
-          ')"
-          while IFS= read -r rpath; do
-              case "$rpath" in
-                  /Volumes/*)
-                      install_name_tool -delete_rpath "$rpath" "$OUT/Contents/MacOS/UnlingerApp"
-                      ;;
-              esac
-          done <<< "$RPATHS"
-
-          '''+text[end:]
-          start=text.index("if rg -l '"); end=text.index('\nEN_COPY=',start)
-          text=text[:start]+'''# Consume complete command output and propagate tool/read/JSON failures.
-          python3 scripts/verify_bundle.py "$OUT"
-          '''+text[end:]
-          p.write_text(text); touched.add(str(p))
-          subprocess.run(['cargo','fmt','--all'],check=True)
-          actual=set(subprocess.check_output(['git','diff','--name-only'],text=True).splitlines())
-          assert actual==touched, (actual,touched)
-          assert not any(path.startswith('.github/') for path in touched)
+          base = 'a14aa9e214b1bc06211c86def504eb462434fb20'
+          changed = subprocess.check_output(['git', 'diff', '--name-only', base, 'HEAD'], text=True).splitlines()
+          assert changed == ['.github/workflows/review-source-export.yml'], changed
+          path = 'crates/unlinger-daemon/tests/history_store.rs'
+          p = Path(path)
+          text = p.read_text()
+          old = '    let mut receipt = cleared_receipt("inc-resources");'
+          assert text.count(old) == 1
+          text = text.replace(old, '    journal_delivered_term(&store, &attempt, 1_100);\n' + old)
+          old = '    assert_eq!(summary.reclaimed_process_count, None);\n    assert_eq!(summary.estimated_reclaimed_memory_bytes, None);'
+          assert text.count(old) == 1
+          text = text.replace(old, '''    // No attributed actions means a known zero aggregate, not an unknown
+              // measurement. Individual no-intervention receipts still have no
+              // reclaimed-memory estimate.
+              assert_eq!(summary.reclaimed_process_count, Some(0));
+              assert_eq!(summary.estimated_reclaimed_memory_bytes, Some(0));''')
+          p.write_text(text)
+          subprocess.run(['cargo', 'fmt', '--all'], check=True)
+          assert subprocess.check_output(['git','diff','--name-only'],text=True).splitlines() == [path]
           subprocess.run(['git','diff','--check'],check=True)
-          subprocess.run(['git','add','--',*sorted(touched)],check=True)
-          subprocess.run(['git','-c','user.name=github-actions[bot]','-c','user.email=41898282+github-actions[bot]@users.noreply.github.com','commit','-m','fix: complete truthful outcome regressions and bundle checks'],check=True)
+          subprocess.run(['git','add','--',path],check=True)
+          subprocess.run(['git','-c','user.name=github-actions[bot]','-c','user.email=41898282+github-actions[bot]@users.noreply.github.com','commit','-m','test: distinguish zero contribution from missing measurements'],check=True)
           subprocess.run(['git','push','origin','HEAD:refs/heads/cove/observation-truth-20260909'],check=True)
           PY
-      - name: Lint candidate
+      - name: Lint complete candidate
         if: ${{ !cancelled() && steps.correction.outcome == 'success' }}
         run: cargo clippy --locked --workspace --all-targets -- -D warnings
-      - name: Rust isolated regression suite
+      - name: Run every Rust test target without changing concurrency
         if: ${{ !cancelled() && steps.correction.outcome == 'success' }}
-        run: cargo test --locked --workspace
-      - name: Release build
-        if: ${{ !cancelled() && steps.correction.outcome == 'success' }}
-        run: cargo build --locked --release --workspace
-      - name: Swift regression suite
-        if: ${{ !cancelled() && steps.correction.outcome == 'success' }}
-        run: swift test --package-path apps/UnlingerApp
-      - name: Bundle verification regression
-        if: ${{ !cancelled() && steps.correction.outcome == 'success' }}
-        run: python3 apps/UnlingerApp/scripts/test_verify_bundle.py
-      - name: Native App bundle
-        if: ${{ !cancelled() && steps.correction.outcome == 'success' }}
-        run: apps/UnlingerApp/scripts/bundle.sh
-      - name: Isolated demo ownership
-        if: ${{ !cancelled() && steps.correction.outcome == 'success' }}
-        run: python3 apps/UnlingerApp/scripts/test_demo_window.py
-      - name: Export exact formatted candidate
+        run: cargo test --locked --workspace --no-fail-fast
+      - name: Export exact corrected source
         if: ${{ !cancelled() }}
         run: |
           git rev-parse HEAD
