@@ -1,0 +1,27 @@
+name: isolated review source export
+
+on:
+  push:
+    branches: [cove/observation-truth-20260909]
+    paths: [.github/workflows/review-source-export.yml]
+
+permissions:
+  contents: read
+
+jobs:
+  source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Export pinned public source for isolated review
+        run: git archive --format=tar --output=review-source.tar 9da14b789415448b549c7c565155c2ba703d366f
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pinned-review-source
+          path: review-source.tar
+          retention-days: 1
+          if-no-files-found: error
