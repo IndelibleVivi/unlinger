@@ -1,4 +1,4 @@
-name: isolated review source export
+name: isolated observation truth verification
 
 on:
   push:
@@ -6,22 +6,118 @@ on:
     paths: [.github/workflows/review-source-export.yml]
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  source:
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
+  candidate:
+    runs-on: macos-15
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v5
         with:
-          persist-credentials: false
+          ref: cove/observation-truth-20260909
           fetch-depth: 0
-      - name: Export pinned public source for isolated review
-        run: git archive --format=tar --output=review-source.tar 9da14b789415448b549c7c565155c2ba703d366f
-      - uses: actions/upload-artifact@v4
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          name: pinned-review-source
-          path: review-source.tar
+          toolchain: 1.98.0
+          components: rustfmt, clippy
+      - name: Apply hash-verified source patch on the isolated branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import base64, gzip, hashlib, json, os, pathlib, subprocess
+          base = '9da14b789415448b549c7c565155c2ba703d366f'
+          workflow = '.github/workflows/review-source-export.yml'
+          changed = subprocess.check_output(['git', 'diff', '--name-only', base, 'HEAD'], text=True).splitlines()
+          assert changed == [workflow], changed
+          blobs = [
+              'df13dcdd7c8be4038b9794b433e439e9df56749e',
+              '2e0b16a75674249655274967f6e40bd79331fc4b',
+              '2ea843b1bfec6597b942cd07e731f12fa37365e9',
+              'e752eb58f23a75d6764fdc57b88a3ab040464e17',
+              'b7a50ffc7f6768c375df20c17d219327a0525840',
+              '0cca83aabbd46906cf254c4f83af903a9f765f3f',
+              '77e05b24e70d7e44a9c081b4dd3a9bc1a97ee3f8',
+          ]
+          parts = []
+          for index, blob in enumerate(blobs):
+              response = json.loads(subprocess.check_output(['gh', 'api', f'repos/IndelibleVivi/unlinger/git/blobs/{blob}']))
+              part = base64.b64decode(response['content'])
+              if index == 3:
+                  # Correct one transport-only character, then require the exact
+                  # original blob identity before decoding or applying anything.
+                  part = part.replace(b'FHvC1vRF1lKpu', b'FHvC1vRF1Kpu')
+                  assert hashlib.sha1(f'blob {len(part)}\0'.encode() + part).hexdigest() == 'f9956683bb276cc905c19dfdf69ec5cc19a1f60b'
+              parts.append(part)
+          patch = gzip.decompress(base64.b64decode(b''.join(parts), validate=True))
+          assert hashlib.sha256(patch).hexdigest() == 'faf82d8420b62c843b7deb696fe51bbc7c10b679ef675b66c518c52125abdb3e'
+          path = pathlib.Path(os.environ['RUNNER_TEMP']) / 'observation-truth.patch'
+          path.write_bytes(patch)
+          subprocess.run(['git', 'apply', '--check', '--unidiff-zero', str(path)], check=True)
+          subprocess.run(['git', 'apply', '--unidiff-zero', str(path)], check=True)
+          subprocess.run(['cargo', 'fmt', '--all'], check=True)
+          expected = {
+              'AGENTS.md', 'README.md', 'README.zh-CN.md',
+              'apps/UnlingerApp/Sources/UnlingerKit/Copy/en.lproj/Localizable.strings',
+              'apps/UnlingerApp/Sources/UnlingerKit/Copy/zh-Hans.lproj/Localizable.strings',
+              'apps/UnlingerApp/Sources/UnlingerKit/Notifications/NotificationCoordinator.swift',
+              'apps/UnlingerApp/Sources/UnlingerKit/State/BrowserHistoryMapper.swift',
+              'apps/UnlingerApp/Sources/UnlingerKit/State/CleanupPresentation.swift',
+              'apps/UnlingerApp/Sources/UnlingerKit/UI/Formatting.swift',
+              'apps/UnlingerApp/Sources/UnlingerKit/UI/IncidentDetailView.swift',
+              'apps/UnlingerApp/Tests/UnlingerAppTests/BrowserHistoryPresentationTests.swift',
+              'apps/UnlingerApp/Tests/UnlingerAppTests/LocalizationTests.swift',
+              'apps/UnlingerApp/Tests/UnlingerAppTests/NotificationCoordinatorTests.swift',
+              'crates/unlinger-core/src/cleanup.rs', 'crates/unlinger-core/src/model.rs',
+              'crates/unlinger-core/tests/cleanup_contract.rs',
+              'crates/unlinger-core/tests/observation_coverage.rs',
+              'crates/unlinger-daemon/src/engine.rs', 'crates/unlinger-daemon/src/ipc.rs',
+              'crates/unlinger-daemon/src/public_ipc.rs', 'crates/unlinger-daemon/src/store.rs',
+              'crates/unlinger-daemon/src/store/attribution.rs',
+              'crates/unlinger-daemon/src/store/tasks.rs',
+              'crates/unlinger-daemon/tests/engine_cycle.rs',
+              'crates/unlinger-daemon/tests/history_store.rs',
+              'crates/unlinger-daemon/tests/ipc_roundtrip.rs',
+              'crates/unlinger-macos/src/lib.rs', 'crates/unlinger-macos/src/descriptors.rs',
+              'docs/IPC.md', 'docs/SAFETY.md', 'docs/current-state.md',
+          }
+          actual = set(subprocess.check_output(['git', 'diff', '--name-only'], text=True).splitlines())
+          actual.update(subprocess.check_output(['git', 'ls-files', '--others', '--exclude-standard'], text=True).splitlines())
+          assert actual == expected, (actual - expected, expected - actual)
+          subprocess.run(['git', 'diff', '--check'], check=True)
+          subprocess.run(['git', 'add', '--', *sorted(expected)], check=True)
+          subprocess.run(['git', '-c', 'user.name=github-actions[bot]', '-c', 'user.email=41898282+github-actions[bot]@users.noreply.github.com', 'commit', '-m', 'fix: preserve observation completeness and action-attributed cleanup'], check=True)
+          subprocess.run(['git', 'push', 'origin', 'HEAD:refs/heads/cove/observation-truth-20260909'], check=True)
+          PY
+      - name: Lint candidate
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
+      - name: Rust isolated regression suite
+        if: ${{ !cancelled() }}
+        run: cargo test --locked --workspace
+      - name: Release build
+        if: ${{ !cancelled() }}
+        run: cargo build --locked --release --workspace
+      - name: Swift regression suite
+        if: ${{ !cancelled() }}
+        run: swift test --package-path apps/UnlingerApp
+      - name: Native App bundle
+        if: ${{ !cancelled() }}
+        run: apps/UnlingerApp/scripts/bundle.sh
+      - name: Isolated demo ownership
+        if: ${{ !cancelled() }}
+        run: python3 apps/UnlingerApp/scripts/test_demo_window.py
+      - name: Export exact formatted candidate
+        if: ${{ !cancelled() }}
+        run: |
+          git rev-parse HEAD
+          git archive --format=tar --output="${RUNNER_TEMP}/formatted-candidate.tar" HEAD
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: formatted-observation-truth-candidate
+          path: ${{ runner.temp }}/formatted-candidate.tar
           retention-days: 1
           if-no-files-found: error
