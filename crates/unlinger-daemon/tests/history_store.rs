@@ -1549,6 +1549,7 @@ fn resource_receipt_survives_reopen_and_idempotent_completion() {
     let attempt = store
         .begin_cleanup_attempt(1_000, &report, "epoch-a")
         .expect("begin attempt");
+    journal_delivered_term(&store, &attempt, 1_100);
     let mut receipt = cleared_receipt("inc-resources");
     receipt.resources = CleanupResources {
         before: Some(ResourceSnapshot {
@@ -3355,8 +3356,11 @@ fn no_signal_and_already_exited_are_not_attributed_even_if_the_caller_claims_del
     let summary = store.impact_summary(10).unwrap();
     assert_eq!(summary.terminal_cleanup_count, 2);
     assert_eq!(summary.proved_reclaim_count, 0);
-    assert_eq!(summary.reclaimed_process_count, None);
-    assert_eq!(summary.estimated_reclaimed_memory_bytes, None);
+    // No attributed actions means a known zero aggregate, not an unknown
+    // measurement. Individual no-intervention receipts still have no
+    // reclaimed-memory estimate.
+    assert_eq!(summary.reclaimed_process_count, Some(0));
+    assert_eq!(summary.estimated_reclaimed_memory_bytes, Some(0));
     assert!(store.most_recent_reclaim().unwrap().is_none());
     assert!(
         summary
