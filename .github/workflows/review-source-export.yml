@@ -31,7 +31,7 @@ jobs:
           import subprocess
           base = 'c8709d638188a3a2fb0080ae26f8e2d324b52374'
           changed = set(subprocess.check_output(['git', 'diff', '--name-only', base, 'HEAD'], text=True).splitlines())
-          assert changed == {'.github/workflows/review-source-export.yml', 'apps/UnlingerApp/scripts/verify_bundle.py', 'apps/UnlingerApp/scripts/test_verify_bundle.py'}, changed
+          assert changed == {'.github/workflows/review-source-export.yml', '.github/workflows/backend.yml', 'apps/UnlingerApp/scripts/verify_bundle.py', 'apps/UnlingerApp/scripts/test_verify_bundle.py'}, changed
           touched = set()
           def replace(path, old, new, count=1):
               p=Path(path); text=p.read_text()
@@ -98,10 +98,10 @@ jobs:
           python3 scripts/verify_bundle.py "$OUT"
           '''+text[end:]
           p.write_text(text); touched.add(str(p))
-          replace('.github/workflows/backend.yml', '      - name: Test native frontend\n', '      - name: Test fail-closed bundle verification\n        run: python3 apps/UnlingerApp/scripts/test_verify_bundle.py\n      - name: Test native frontend\n')
           subprocess.run(['cargo','fmt','--all'],check=True)
           actual=set(subprocess.check_output(['git','diff','--name-only'],text=True).splitlines())
           assert actual==touched, (actual,touched)
+          assert not any(path.startswith('.github/') for path in touched)
           subprocess.run(['git','diff','--check'],check=True)
           subprocess.run(['git','add','--',*sorted(touched)],check=True)
           subprocess.run(['git','-c','user.name=github-actions[bot]','-c','user.email=41898282+github-actions[bot]@users.noreply.github.com','commit','-m','fix: complete truthful outcome regressions and bundle checks'],check=True)
