@@ -21,50 +21,112 @@ jobs:
         with:
           toolchain: 1.98.0
           components: rustfmt, clippy
-      - name: Apply exact isolated regression correction
+      - name: Apply bounded source correction
+        id: correction
         shell: bash
         run: |
           set -euo pipefail
           python3 - <<'PY'
-          import base64, gzip, hashlib, pathlib, subprocess
+          from pathlib import Path
+          import subprocess
           base = 'c8709d638188a3a2fb0080ae26f8e2d324b52374'
-          changed = subprocess.check_output(['git', 'diff', '--name-only', base, 'HEAD'], text=True).splitlines()
-          assert changed == ['.github/workflows/review-source-export.yml'], changed
-          encoded = '''H4sIAAAAAAAC/8Va3W7jSHa+11PUcDoj0iNR070IMCOPArht94yxbtux3RMEtpdDkSWL2xTJYZGWFcfAJsjFLrCXCywQ7EUugyBAXmCCPEyCze7VvEK+c6pIkZJsd08PEAHTIxVPnTr1nZ/6TtGTPJ2JzC+mcTQW0SxL80Kc4GenE8qJyGUW+4G0SaAn0jjsiUTOeyJIy6QYPXeGHYFPNqIZLORsi0LeFqPMzaUfevTdxpivlIRi+unyXBu6nNGIv/eE1r/ytEf/aP3uPI8KqbWxVGUXWQSDHKfTqYa6Qe4XUg3KJI6Sa5n3Q1/O0mSg8mCQleM4CrwoC9xcdXuiKxqfSS7VNJFKDcVpqgqZv6oHhrtlnktYepk0Z2BJwKV6H64piIFQNIkCv4jSxAvSWRbLQg5FkZfyoVWdziTNhXbNjZ9H/jiWIkrEBYNmd/0sU4M3BoadLBucS1W0RvTAyzydwz1fR6pI88UJbIWBbAg/d9U8mhTdXjeXgYyyouv03nOBo7So97abpnkYJT6WamsPYuknZUbarzaGVTumWOJjcT6FtYgraBKq8BFjEwpoX0x5N1g0FhiNJn5Q9FUZBHCCmES3RZlLV+ymiQLCQSF8oy/ACGYCAJHlKUn30yReiCTtRwk8eYMn2IUwWAjE2lTmopj6NBb7t9i5iGDMdennoctaEaSjSfeuctE9bUOlyUEoRsIy23aLXErvOk2kN4+KaVoWnoquEz+2uqwjSkKsPKrDrCuiSe300aj2jZAx8GhFI4uzkmLUzhz89+mke5ncae33DRMrzI7LAsEoYambpAU8ivwhiUcn7QSEkcKki6uNggbaJ+UQimmZQ9SFg6MZ8jo8lciVaCbD18jqfPFyAd9DQRLF3U3F4rHCMPODVHFdQO1bKQiThMIpll4oVZAD2TT3pogAL0yl8gCFl86iwvMTL50nMoTYuLxG3iaJ5E3Zjrhrp20Jv6giHA4TWQyHd+dBdsiBJvOewI8zBIA/u98mI7o/qRmdH2FFpzVpMBDHHOZlEhUm2UIJ0CQhiuwIpmWeiKWNyhVfRTfIy6kUSHV8XdWnDwTKJF8omfmkiDX3eSNV8vWEyQahsyHW6eW21FHOFmL364PDvaH4BAlNefXm6PDg6Kv9U+/4b47297y9/bPd04OT8+NT7+T0+OW+td1SgWRiVGRyMxwi/rxU2azQcSPCOZFrSNIHNVrAuAz2jbQCYzfqfDqb+QkDPbeXugNd/j15C41umcxzP7MdZ00zfZBP18q+2PiMPla/L2+RblbvYRGEfoFTYjYcstuGww8Kp8dW6veTNPAzKqwPiF09sE0Ao8HuCeu59YCQhtl+SMVtBgttKy8TEak0pkrRiEcKp7G0nO212ToOP7K1ehfoFCXOJH1Q2A4suru3egJ5gcgbDulw8cpi8rkXp0ot7E/qeaHMc+eRBd5BA7454D84e6NE2Ra7oL/cRJ830c9IY2htWiuXQD9pj9+jmjg/rgY2zaeyrly/KPxgWgdGkfuJIjLibC9r3f2Hq+AyDriKOPnoSRxaSzfL/c5X+0fnZ+4sJIPO+BwRyEgcpZQDMQKk8NVbEUcTibMFzImK2iSi6jNeiG/DNFCD852zn5OKb4fi7K8PcayIm8+Z7p2/z1R9iNUavhB2LicSdSCQlTXMjaDc6TW91dqCItjKmCp1bYveAiGUq2mUPSD2xYoYw+BzRvfhjzwal4bUZH6UNw3gnRyc7BoTwLaEqWCssl8jMPaDtxJacb6ohnm0kCLWpKrpBouN8gCGTowyCUCnrgHmAzDxJGDVVP+w0UtrZtF1zhoGbTx6TbEvxDokvNAa2r21RXdOUcfO93fP35zum9W3tr6JVETMHGSmjIvh1lYDH+KoGptNcg28ltbxFEp1qhLr2359crj/GlGzc35wfOSdHO4cGUM+FgfUVMwqbi8wLXnsge7xPnPocHzlE61kbnmEw7BjqPmja65z9m0RgYESzbu1QTshAUZ6MYyuPkWRukwuk62tN8lM5uT6dEyOZYP6oOjFVARwQhSifBE0a7D4YahWY1qGHXS0GDRupD3pxkq82hMyKWdSx0OPHRykN/h9Lfv+3AfEcpYVC0FjN5Gcg9LAHZ26ePSviTRpwORNFJooZcqDx6itYizjdI6lZ+QpfgCP1yHdaYY02uoUTQhOnazwSVM6wQSUlXrTvLw4OaXOAx2UEnz0Gxw6MLLusLahC6XpRvYJwQjKygxxH0JpjtZHxmFzIawBjOJIolmBFz4tLqLh1fYqia6D7HR/Z+91FdvU54zLJETQ6uKsM/Pb/PpblLgIq8rMcVckm6Zq+ZMFKF4ifiZsGG6moZ5mkvqBYAEN6wb83bS/W0U2upJK+Z/+6Z//+Id//5///K///d3/sh0/fP9ro/GH73/z37/6xxX5P//bb//0H/9g5Cs7fvj+t3/8/b/8+Q+/qoyheThZqqBfa3v15tVAK3XVdEPsd7g7XYb/fBph/YNXZyNBUqKfi5w63W0RpjQdm18KIwMvLkR/IqzTqiMaYOEDkAU3ChJliaurbo9XcDqcU/yd8+pjsatZGZGgsAwQmBM/ijGgiLsqhC4x6DAihyDNB4bCClWO0XQVXAcR/Tson0phz52PRZGmMUUTEjMJmGvVumcluDgtwAE/LiO+M0Jwz3z1XSk5Dn1FIYp2DkeVcjuHxzt73u7x69c7R3tnI+uZnbL+fiysZ8dvzgfo0qkhV4PXfnB81kTecqzO6cnO+dc8jSnDRHT/Ql2iuGByS7El/l7487emFX72XIyo+56FlvjkE/HsBf883PVYnSXuhOGyIPbPkVHwobjnmdU4zdJKyG1WozuAeTTt2Wf1CKC0B7+4gFtQjeTw6mqL5ogB6CXIJck7bVlxeWmnk4lCf3HxWf+Lq08vL51nG8V50zxWDy0t1xbcd7rA6bGAMxtDdbee5Xo7UVLrG3yTxiiVarDVZt+mgHmJP0OlYJehK0R19VjHUteTbmyp3dYEVio/6IQ4bMSXX34JFdrPVsdUKeTH8GolqSzkSX5NgdO1VlPoMtk/Qiyc/O3o4UQ554o7laAmOXeVtOvlmRHols50fD2BrpXKl0RFW1R3SnySIEOQD5l/TVyb0R4wPFXeueKgENRycWLk8rsyyombijTTSSi4BCLz4qhYuJ2MC9PPRFVnuIQuPFNusoUG2Gois1bBO0/UrlWdXaepgOD5aFCqfDCOkgEaNmFs6liW9Qrb6gdoZ1AHWtWdDzHJDcBsTIQbC3bp5JJBWfBtJcFpkFMuVHX49s7zJiUNeV51I+0nQIqVqk7HjP1SpYmW33R9bb7nsvqGvDKVrR5ZQBlfc5vNLw2zl1+HrM8R/b9i6jM0F4W7OjwEEsAExFB7rf+dyKJMUkby8S2mVGHr+og2Mc3V4Ozgq5ODk319kWECi+6xlla6qK12nRgXFhdFpL/Vp39VkTdsdK56Om5H53RfXFUATxumB2tVfD+v5bQxI8ucrqZvd0wz2jE3IzmONOnnwdTOrV9cXipTvKqqYPXqDfRI9vWbw/ODw4OjffN2gDtTP0Jx+caPS7lPa9oomsFbn4heIxoMqRU+kab0hsb6N7yKqCuzLkGKu+nHATMy/49g1RBdALbkaquRd171/edRcXnp6rTTppLR7wZddT2KwhLH1FGJLMVpAACLJoZCYwjoWtFe5Z0dovoEdPW/MdQrMcIaWSPDpbybX8fp2La2XMpFy1xjAQQqa0upSHn4YTvEGOhJpfGd9lgvT5TcMBATBNXbD6Ld6zrRmpTU08Buss6NUz9U/DKhQcvAL9MQGkdWWUz6n1uNmzizDTRldMyBKtuVxh72FhQNF23cwsQyNhHFZnaPgjj+JTAZijs2g87Ne6u1YrWEey0L26JWfuZ78JeiyzeH2MaLJ5flGz5x80LoF18VNKKG1NeN0o1cNUSHB7Ur9koQwLRYJjYqJl1K3jjio5Yl6/4rFZYairWTaufkxHv55mjvcN9s3BDxEYdevcDFc3NZuF6ZzYSBsB7jhc3JdaBvmLrk0w8kp0nNwSujhGECHJ6mPR4zQM8j0DzP0pAUSKUaGw2npjS31HYJ+/iMUeo1EOs1C9kud5gn+hc/dshpXICGbeYHf2/qq4hpyBD+5Tl0gznBwIjgNVeVS76JMXkbFfZzp8N3hU8QBbpH9j6ALZwtEpCCIgqMxfT2jK+mqSdAZsbEEnqi6l315S03JIYy8NUsk4X3IQLrx3+BBp9QqX7Tyw2yRKuqfrmzFHXViGTUsnS0QAuCSmAtXHurQYjo4Ze94iVP/KbhNX4fatcL089dcHJTaCg1GXtTBJlxezh1vYpbeIZfeiiVfJnP7xY9fZ+kbCXjSaNoUfU0E6iA2q8AxVFavEphl0liTTmcJ2LTfg5SYkRXiiK9vBG0rgsNtB/brDgqFpmsfjhulUxOT0NsW+0Aax/ydEyCU3lyMkE1HVVahmv34cvl9R30KZUpZbfW3jBtc93htLBUFb19n8qM02n7RvkT2ZjkVU2EN06Lqadbi9AwjTWPaEe1Oc2uaT4qxO0LsJfPiCcQ6RhZtGDjCOEdvxuE+mWBd0MlaKSX5iqDp21I3hmK5qQG6vvflX5sQ60bULdo/uTjxYPyxLZsSNok7r6d01uwC4uxs644bOkBxWytk0S8OFLFmkNqEqR7Us6XijZ5FW3ihMklnc2gNyteIVXm5RMVt9Vjn1F8D4+xjlYSmmjgJLwwK1lU31ss+xz5FUxxltCLGlFdDjx/4Vjgsw++lav16TjpVTtZUlMNxROnH9Z4MrPNNkbm/z8qlau575zKywP0p81jU609FXABpchQ3nyKE45vcLybFxxJMz+ml6tIaTqDViOHba5OGZRzOiL8fLFXEWOb862oxlcCK02LihXVIu2cqYjdSAuD1iifYk+z8bZoyhca/HctFGfdO7HKLsVQvNAv7+7GefpW8ruBi6vuBmCrv59pHPlGufOI46pAMaKjakrvA/xaUztCYCM6TSO5DwjLWabsu9XtD8Vf3q/UsM1rbD6M09zj9wV15NTtD5/K6ieNDfImu5xcuRIhvdWQobio+6afPLFWwXmKGi9plabF7bfT7jWsKceDeZq/ncTpXA3Me0J3MYuX75X7ghYYCgon8/cl9GdfFE7hZfKA3KRxS7WBMi/fItMBWBFW8X40uFLyhIFO5/8Abor0QnYpAAA='''
-          # Verify the exact reviewed edit script before executing it.
-          encoded = encoded.replace('K///d3/sh', 'K///d2/sh')
-          script = gzip.decompress(base64.b64decode(encoded, validate=True))
-          assert hashlib.sha256(script).hexdigest() == 'e2f509d1b9f2b7665201e6e6e64c372c4a27812ef84aaee2ec360e127f6f8b8a'
-          exec(compile(script, '<reviewed-regression-correction>', 'exec'))
-          subprocess.run(['cargo', 'fmt', '--all'], check=True)
-          expected = ['.github/workflows/backend.yml', 'AGENTS.md', 'README.md', 'README.zh-CN.md', 'apps/UnlingerApp/Tests/UnlingerAppTests/BrowserHistoryPresentationTests.swift', 'apps/UnlingerApp/Tests/UnlingerAppTests/NotificationCoordinatorTests.swift', 'apps/UnlingerApp/scripts/bundle.sh', 'crates/unlinger-daemon/src/public_ipc.rs', 'crates/unlinger-macos/src/lib.rs', 'docs/ARCHITECTURE.md', 'docs/IMPLEMENTATION_PLAN.md', 'docs/IPC.md', 'apps/UnlingerApp/scripts/test_verify_bundle.py', 'apps/UnlingerApp/scripts/verify_bundle.py']
-          actual = set(subprocess.check_output(['git', 'diff', '--name-only'], text=True).splitlines())
-          actual.update(subprocess.check_output(['git', 'ls-files', '--others', '--exclude-standard'], text=True).splitlines())
-          assert actual == set(expected), (actual, expected)
-          subprocess.run(['git', 'diff', '--check'], check=True)
-          subprocess.run(['git', 'add', '--', *expected], check=True)
-          subprocess.run(['git', '-c', 'user.name=github-actions[bot]', '-c', 'user.email=41898282+github-actions[bot]@users.noreply.github.com', 'commit', '-m', 'test: correct isolated fixtures and fail closed on bundle verification'], check=True)
-          subprocess.run(['git', 'push', 'origin', 'HEAD:refs/heads/cove/observation-truth-20260909'], check=True)
+          changed = set(subprocess.check_output(['git', 'diff', '--name-only', base, 'HEAD'], text=True).splitlines())
+          assert changed == {'.github/workflows/review-source-export.yml', 'apps/UnlingerApp/scripts/verify_bundle.py', 'apps/UnlingerApp/scripts/test_verify_bundle.py'}, changed
+          touched = set()
+          def replace(path, old, new, count=1):
+              p=Path(path); text=p.read_text()
+              assert text.count(old)==count, (path,text.count(old),old)
+              p.write_text(text.replace(old,new)); touched.add(path)
+          replace('crates/unlinger-daemon/src/public_ipc.rs', '            freshness: RosterFreshness::Current,\n            reports,', '            freshness: RosterFreshness::Current,\n            classification_complete: true,\n            reports,')
+          for path, variable in [('apps/UnlingerApp/Tests/UnlingerAppTests/BrowserHistoryPresentationTests.swift','receipt'), ('apps/UnlingerApp/Tests/UnlingerAppTests/NotificationCoordinatorTests.swift','cleanup')]:
+              p=Path(path); text=p.read_text()
+              old=f'{variable}.reasonId = "cleanup.tree_gone_without_signal"'
+              assert old in text
+              indent='        ' if variable=='receipt' else '                '
+              text=text.replace(old,old+f'\n{indent}{variable}.artifactOutcome = .notApplicable\n{indent}{variable}.artifactActions = []\n{indent}{variable}.processActions = []\n{indent}{variable}.resources.estimatedReclaimedMemoryBytes = nil')
+              p.write_text(text); touched.add(path)
+          replace('crates/unlinger-macos/src/lib.rs', '        fn stale_descriptor_hint_does_not_omit_an_owned_debug_connection() {\n            use std::net::{TcpListener, TcpStream};', '''        fn stale_descriptor_hint_does_not_omit_an_owned_debug_connection() {
+                      use std::net::{TcpListener, TcpStream};
+                      // Other tests deliberately churn descriptors. Run this
+                      // native assertion in its own test-owned, signal-free child.
+                      const CHILD: &str = "UNLINGER_OWNED_DESCRIPTOR_PROBE";
+                      if std::env::var_os(CHILD).is_none() {
+                          let output = std::process::Command::new(std::env::current_exe().unwrap())
+                              .args(["--exact", "platform::tests::stale_descriptor_hint_does_not_omit_an_owned_debug_connection", "--nocapture"])
+                              .env(CHILD, "1")
+                              .output().expect("run isolated descriptor probe");
+                          assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+                          assert!(String::from_utf8_lossy(&output.stdout).contains("owned-descriptor-probe-passed"));
+                          return;
+                      }''')
+          replace('crates/unlinger-macos/src/lib.rs', '            assert!(facts.attached_debug_transport);\n        }', '            assert!(facts.attached_debug_transport);\n            println!("owned-descriptor-probe-passed");\n        }')
+          replace('AGENTS.md', 'Source and installed task lifetime is defined by `docs/TASKS.md`: SQLite v8,', 'Task lifetime is defined by `docs/TASKS.md`: source SQLite v9 (reference installation v8),')
+          replace('AGENTS.md', 'scheduler, SQLite v8 task ownership', 'scheduler, SQLite v9 task ownership and action-attribution repair')
+          replace('docs/IPC.md', 'The current task-lifetime backend uses SQLite v8 and serves', 'The source backend uses SQLite v9 (the unchanged reference installation uses v8) and serves')
+          replace('docs/IPC.md', 'SQLite v8 migration/task ownership,', 'SQLite v9 attribution repair and v8 task ownership,')
+          replace('docs/ARCHITECTURE.md', '**Visible result:** SQLite v8 stores', '**Visible result:** The source SQLite v9 store retains')
+          p=Path('docs/IMPLEMENTATION_PLAN.md'); text=p.read_text(); i=text.index('\n')
+          text=text[:i]+'\n\n**Unmerged observation-truth candidate:** source SQLite v9 adds action-attributed\nimpact repair, complete FD enumeration, and coverage-aware empty overviews. The\ninstalled-generation evidence in the ledger below remains the v8 reference\ninstallation, not acceptance of this candidate. The PR records exact source\nverification; no live-service upgrade or field acceptance is implied.\n'+text[i:]
+          p.write_text(text); touched.add(str(p))
+          replace('README.md', 'its bundle script uses `rg` (ripgrep).', 'its bundle verification uses Python 3 (no ripgrep dependency).')
+          replace('README.zh-CN.md', 'App bundle 脚本使用 `rg`（ripgrep）。', 'App bundle 验证使用 Python 3，无需 ripgrep。')
+          p=Path('apps/UnlingerApp/scripts/bundle.sh'); text=p.read_text()
+          start=text.index('while IFS= read -r rpath; do'); end=text.index('if [[ -f "Resources/AppIcon.icns" ]]',start)
+          text=text[:start]+'''# Capture producer errors outside conditionals and process substitutions.
+          LOAD_COMMANDS="$(otool -l "$OUT/Contents/MacOS/UnlingerApp")"
+          RPATHS="$(printf '%s\\n' "$LOAD_COMMANDS" | awk '
+              $1 == "cmd" && $2 == "LC_RPATH" { capture = 1; next }
+              capture && $1 == "path" {
+                  line = $0
+                  sub(/^[[:space:]]*path /, "", line)
+                  sub(/ \\(offset [0-9]+\\)$/, "", line)
+                  print line
+                  capture = 0
+              }
+          ')"
+          while IFS= read -r rpath; do
+              case "$rpath" in
+                  /Volumes/*)
+                      install_name_tool -delete_rpath "$rpath" "$OUT/Contents/MacOS/UnlingerApp"
+                      ;;
+              esac
+          done <<< "$RPATHS"
+
+          '''+text[end:]
+          start=text.index("if rg -l '"); end=text.index('\nEN_COPY=',start)
+          text=text[:start]+'''# Consume complete command output and propagate tool/read/JSON failures.
+          python3 scripts/verify_bundle.py "$OUT"
+          '''+text[end:]
+          p.write_text(text); touched.add(str(p))
+          replace('.github/workflows/backend.yml', '      - name: Test native frontend\n', '      - name: Test fail-closed bundle verification\n        run: python3 apps/UnlingerApp/scripts/test_verify_bundle.py\n      - name: Test native frontend\n')
+          subprocess.run(['cargo','fmt','--all'],check=True)
+          actual=set(subprocess.check_output(['git','diff','--name-only'],text=True).splitlines())
+          assert actual==touched, (actual,touched)
+          subprocess.run(['git','diff','--check'],check=True)
+          subprocess.run(['git','add','--',*sorted(touched)],check=True)
+          subprocess.run(['git','-c','user.name=github-actions[bot]','-c','user.email=41898282+github-actions[bot]@users.noreply.github.com','commit','-m','fix: complete truthful outcome regressions and bundle checks'],check=True)
+          subprocess.run(['git','push','origin','HEAD:refs/heads/cove/observation-truth-20260909'],check=True)
           PY
       - name: Lint candidate
+        if: ${{ !cancelled() && steps.correction.outcome == 'success' }}
         run: cargo clippy --locked --workspace --all-targets -- -D warnings
       - name: Rust isolated regression suite
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.correction.outcome == 'success' }}
         run: cargo test --locked --workspace
       - name: Release build
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.correction.outcome == 'success' }}
         run: cargo build --locked --release --workspace
       - name: Swift regression suite
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.correction.outcome == 'success' }}
         run: swift test --package-path apps/UnlingerApp
       - name: Bundle verification regression
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.correction.outcome == 'success' }}
         run: python3 apps/UnlingerApp/scripts/test_verify_bundle.py
       - name: Native App bundle
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.correction.outcome == 'success' }}
         run: apps/UnlingerApp/scripts/bundle.sh
       - name: Isolated demo ownership
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.correction.outcome == 'success' }}
         run: python3 apps/UnlingerApp/scripts/test_demo_window.py
       - name: Export exact formatted candidate
         if: ${{ !cancelled() }}
