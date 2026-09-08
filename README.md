@@ -27,7 +27,7 @@ Unlinger observes abandoned browser-automation sessions on macOS and can reclaim
 
 ## Try it without installing a service
 
-You need Rust **1.98.0**, macOS command-line developer tools and Git. The App additionally needs **Swift 6.0+**; its bundle script uses `rg` (ripgrep).
+You need Rust **1.98.0**, macOS command-line developer tools and Git. The App additionally needs **Swift 6.0+**; its bundle verification uses Python 3 (no ripgrep dependency).
 
 ```bash
 git clone https://github.com/IndelibleVivi/unlinger.git

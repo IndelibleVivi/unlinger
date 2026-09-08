@@ -27,7 +27,7 @@ Unlinger 在 macOS 上观察浏览器自动化留下的会话，并清理其中�
 
 ## 不安装服务，先试一次
 
-需要 Rust **1.98.0**、macOS command-line developer tools 和 Git。构建 App 还需要 **Swift 6.0+**；App bundle 脚本使用 `rg`（ripgrep）。
+需要 Rust **1.98.0**、macOS command-line developer tools 和 Git。构建 App 还需要 **Swift 6.0+**；App bundle 验证使用 Python 3，无需 ripgrep。
 
 ```bash
 git clone https://github.com/IndelibleVivi/unlinger.git

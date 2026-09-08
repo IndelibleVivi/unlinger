@@ -107,6 +107,10 @@ struct BrowserHistoryPresentationTests {
             return
         }
         receipt.reasonId = "cleanup.tree_gone_without_signal"
+        receipt.artifactOutcome = .notApplicable
+        receipt.artifactActions = []
+        receipt.processActions = []
+        receipt.resources.estimatedReclaimedMemoryBytes = nil
         receipt.processActions = []
         event.payload = .cleanup(receipt)
         let entries = BrowserHistoryMapper.entries(
@@ -122,6 +126,10 @@ struct BrowserHistoryPresentationTests {
         receipt.reasonId = "cleanup.tree_gone_no_revival"
         #expect(!receipt.endedWithoutIntervention)
         receipt.reasonId = "cleanup.tree_gone_without_signal"
+        receipt.artifactOutcome = .notApplicable
+        receipt.artifactActions = []
+        receipt.processActions = []
+        receipt.resources.estimatedReclaimedMemoryBytes = nil
         receipt.processOutcome = .failed
         #expect(!receipt.endedWithoutIntervention)
     }
@@ -141,6 +149,10 @@ struct BrowserHistoryPresentationTests {
             return
         }
         receipt.reasonId = "cleanup.tree_gone_without_signal"
+        receipt.artifactOutcome = .notApplicable
+        receipt.artifactActions = []
+        receipt.processActions = []
+        receipt.resources.estimatedReclaimedMemoryBytes = nil
         event.payload = .cleanup(receipt)
         let entries = BrowserHistoryMapper.entries(
             events: [event], currentSessions: overview.sessions,

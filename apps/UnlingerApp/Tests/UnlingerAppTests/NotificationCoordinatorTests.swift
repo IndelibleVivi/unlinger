@@ -216,6 +216,10 @@ struct NotificationCoordinatorTests {
             var event = source
             if case .cleanup(var cleanup) = event.payload {
                 cleanup.reasonId = "cleanup.tree_gone_without_signal"
+                cleanup.artifactOutcome = .notApplicable
+                cleanup.artifactActions = []
+                cleanup.processActions = []
+                cleanup.resources.estimatedReclaimedMemoryBytes = nil
                 cleanup.processActions = []
                 event.payload = .cleanup(cleanup)
             }

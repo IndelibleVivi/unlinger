@@ -238,14 +238,14 @@ V1 may expose bounded internal diagnostic identities needed by CLI/service trans
 
 Current source accepts schemas 1, 3, 4 and 5. The source App emits schema v5 only and treats a v4-, v3-, or v1-only endpoint as incompatible rather than silently downgrading. Schema v4 preserves its prior atomic overview and response shapes; schema v3 preserves its existing commands; schema v1 remains operator-only and returns a trusted `unsupported_schema` envelope to an unsupported frontend request.
 
-The current task-lifetime backend uses SQLite v8 and serves the unchanged schema-v5 App, retaining v4/v3 compatibility and operator v1. SQLite and frontend protocol versions are distinct. [Current state](current-state.md) owns exact installed generation and rollback evidence.
+The source backend uses SQLite v9 (the unchanged reference installation uses v8) and serves the unchanged schema-v5 App, retaining v4/v3 compatibility and operator v1. SQLite and frontend protocol versions are distinct. [Current state](current-state.md) owns exact installed generation and rollback evidence.
 
 The service retains the prior snapshot and exact generation identity after candidate readiness, blocks mode/install/uninstall mutations during the lease, and exposes explicit report-only restart, accept and rollback commands. A first install can roll back to the absence of a prior service; an upgrade restores the exact prior generation/database. Readiness, acceptance and enforcement are separate durable states.
 
 ## Verification anchors
 
 - [`crates/unlinger-protocol/src/lib.rs`](../crates/unlinger-protocol/src/lib.rs): v5 DTOs/commands, v4/v3 compatibility responses, receipts, envelopes and fixture decoders;
-- [`crates/unlinger-daemon/src/store.rs`](../crates/unlinger-daemon/src/store.rs): SQLite v8 migration/task ownership, observation spans, independent impact authority, storage residue, event tokens, namespace/receipt/revision transactions;
+- [`crates/unlinger-daemon/src/store.rs`](../crates/unlinger-daemon/src/store.rs): SQLite v9 attribution repair and v8 task ownership, observation spans, independent impact authority, storage residue, event tokens, namespace/receipt/revision transactions;
 - [`crates/unlinger-daemon/src/public_action_policy.rs`](../crates/unlinger-daemon/src/public_action_policy.rs): shared policy matrix;
 - [`crates/unlinger-daemon/tests/history_store.rs`](../crates/unlinger-daemon/tests/history_store.rs): migration, atomicity, namespace, replay and recovery tests;
 - [`crates/unlinger-daemon/tests/ipc_roundtrip.rs`](../crates/unlinger-daemon/tests/ipc_roundtrip.rs): v1/v2/v3/v4/v5 routing, atomic browser projection, impact/residue/span compatibility, exact settlement identity, lifecycle serialization and raw-socket behavior;

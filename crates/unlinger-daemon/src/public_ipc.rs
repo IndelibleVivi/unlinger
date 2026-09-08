@@ -1053,6 +1053,7 @@ mod tests {
             cycle_token: Some("cycle".to_owned()),
             observed_at_unix_millis: Some(100),
             freshness: RosterFreshness::Current,
+            classification_complete: true,
             reports,
         }
     }
