@@ -8,6 +8,9 @@ import re
 import subprocess
 import sys
 
+SUPPORTED_FIXTURE_SCHEMAS = frozenset({3, 4, 5})
+APP_LOCAL_FIXTURE_SCHEMA = 1
+
 
 def verify_executable(executable: Path) -> None:
     # Consume all output: grep -q pipelines can hide producer errors/SIGPIPE.
@@ -33,8 +36,19 @@ def verify_fixtures(directory: Path) -> None:
         document = json.loads(path.read_text(encoding="utf-8"))
         if not isinstance(document, dict):
             raise ValueError(f"fixture is not an object: {path.name}")
-        if document.get("schema_version") == 2:
-            raise ValueError(f"stale v2 daemon fixture packaged as active: {path.name}")
+        relative = path.relative_to(directory)
+        if "schema_version" not in document:
+            fixture_schema_version = document.get("fixture_schema_version")
+            if (type(fixture_schema_version) is not int
+                    or fixture_schema_version != APP_LOCAL_FIXTURE_SCHEMA
+                    or relative.parent != Path("v3")):
+                raise ValueError(f"fixture has an unsupported schema generation: {path.name}")
+            continue
+        schema_version = document["schema_version"]
+        if type(schema_version) is not int or schema_version not in SUPPORTED_FIXTURE_SCHEMAS:
+            raise ValueError(f"fixture has an unsupported schema generation: {path.name}")
+        if relative.parent != Path(f"v{schema_version}"):
+            raise ValueError(f"fixture schema generation does not match its directory: {path.name}")
 
 
 def main() -> None:

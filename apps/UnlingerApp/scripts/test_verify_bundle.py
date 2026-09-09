@@ -33,16 +33,73 @@ class BundleVerificationTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     verify_executable(Path("synthetic-app"))
 
-    def test_fixture_scan_rejects_whitespace_v2_and_malformed_json(self):
+    def test_fixture_scan_rejects_invalid_schema_generation(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            fixture = root / "sample.json"
-            for content in ('{ "schema_version" : 2 }', '{broken', '[]'):
+            fixture = root / "v3" / "sample.json"
+            fixture.parent.mkdir()
+            for content in (
+                '{ "schema_version" : 2 }',
+                '{}',
+                '{"schema_version": "2"}',
+                '{"schema_version": true}',
+                '{"schema_version": 6}',
+                '{broken',
+                '[]',
+            ):
                 fixture.write_text(content)
                 with self.subTest(content=content), self.assertRaises(ValueError):
                     verify_fixtures(root)
+
+    def test_fixture_schema_must_match_its_generation_directory(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            fixture = root / "v3" / "sample.json"
+            fixture.parent.mkdir()
             fixture.write_text(json.dumps({"schema_version": 5}))
+            with self.assertRaises(ValueError):
+                verify_fixtures(root)
+
+    def test_supported_fixture_generations_are_accepted(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for generation in (3, 4, 5):
+                directory = root / f"v{generation}"
+                directory.mkdir()
+                (directory / "sample.json").write_text(
+                    json.dumps({"schema_version": generation})
+                )
             verify_fixtures(root)
+
+    def test_v3_app_local_fixture_schema_is_accepted(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            directory = root / "v3"
+            directory.mkdir()
+            (directory / "app-scenario.json").write_text(
+                json.dumps({"fixture_schema_version": 1})
+            )
+            verify_fixtures(root)
+
+    def test_app_local_fixture_schema_is_exact_and_v3_only(self):
+        for generation, fixture_schema_version in (
+            (3, "1"),
+            (3, True),
+            (3, 2),
+            (4, 1),
+        ):
+            with self.subTest(
+                generation=generation,
+                fixture_schema_version=fixture_schema_version,
+            ), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                directory = root / f"v{generation}"
+                directory.mkdir()
+                (directory / "app-scenario.json").write_text(
+                    json.dumps({"fixture_schema_version": fixture_schema_version})
+                )
+                with self.assertRaises(ValueError):
+                    verify_fixtures(root)
 
     def test_missing_or_empty_fixture_directory_fails(self):
         with tempfile.TemporaryDirectory() as temporary:
