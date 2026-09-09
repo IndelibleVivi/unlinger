@@ -69,3 +69,33 @@ A candidate retains rollback material until acceptance. `DatabaseBackedUp` is a 
 ### Native artifact-reference verification gap
 
 On 2026-09-08, parallel native tests intermittently returned no pathname reference despite an owned open ordinary or `O_EVTONLY` descriptor. The same exact tests passed serially; the cause is unresolved. Current packs disable all artifact admission, and process cleanup does not call this pathname query. Resolve this discrepancy before treating the dormant artifact engine as deletion-ready; the existing quarantine/crash and final-path-swap residuals remain separate.
+
+
+## Observation and attribution candidate (2026-09-09)
+
+The FD-count read from process metadata is only a sizing hint. The native
+sampler retries a saturated descriptor list with bounded additional capacity;
+errors, repeated saturation, and the capacity ceiling retain incomplete
+visibility. An unsaturated enumeration is a bounded point observation, not an
+atomic guarantee against later connection or process-identity changes. Existing
+per-signal fresh snapshots, identity checks, arming, and client protections stay
+in place; no browser versions or artifact admission flags are expanded.
+
+A complete empty classification can support a clear overview. Missing process,
+argument, or classification identity facts produce an unknown empty overview;
+a known positive report is still shown. Unrelated socket visibility alone does
+not turn an otherwise complete empty classification into a global failure.
+
+`cleanup.tree_gone_without_signal` means the process tree was confirmed absent
+without a delivered Unlinger signal. Another actor may have ended it; no natural
+exit cause is asserted. It remains a terminal absence record, contributes no
+reclaimed-session/process/memory impact, and sends no reclaim notification in
+the candidate App. Signal attribution is a necessary condition for reclaim
+accounting, not proof of exclusive causation. Memory impact remains an RSS-based
+estimate, not a physical-memory measurement.
+
+SQLite v9 preserves the original aggregate in `impact_attribution_legacy`, then
+rebuilds the public proved-reclaim contribution from retained durable action
+evidence in the same transaction. Incomplete retained history is labeled partial;
+raw receipts, task authority, pause and protection are not reset. Managed upgrade
+and report-only rollback must retain their exact prior-schema backup contract.

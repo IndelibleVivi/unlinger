@@ -1176,3 +1176,28 @@ fn pause_acknowledged_after_prepare_prevents_signal_delivery() {
 fn protect_acknowledged_after_prepare_prevents_signal_delivery() {
     assert_owner_policy_mutation_stops_inflight_cleanup(OwnerPolicyMutation::ProtectLatestIncident);
 }
+
+#[test]
+fn natural_exit_between_confirmation_and_execution_is_not_an_engine_reclaim() {
+    let runtime = FakeRuntime::with_snapshots(vec![
+        abandoned_snapshot(1_000),
+        abandoned_snapshot(1_015),
+        empty_snapshot(2_016),
+        empty_snapshot(2_035),
+        empty_snapshot(2_095),
+    ]);
+    let (mut engine, control, _database) = engine(DaemonMode::Enforce, runtime);
+    let cycle = engine.run_cycle_at(2_000).unwrap();
+    assert_eq!(cycle.cleanup_receipts.len(), 1);
+    assert!(cycle.cleanup_receipts[0].ended_without_intervention());
+    assert!(engine.runtime().signals.is_empty());
+    assert_eq!(
+        control
+            .store()
+            .impact_summary(10)
+            .unwrap()
+            .proved_reclaim_count,
+        0
+    );
+    assert!(control.status().unwrap().most_recent_reclaim.is_none());
+}

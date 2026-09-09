@@ -426,6 +426,7 @@ pub(crate) struct RosterSnapshot {
     pub cycle_token: Option<String>,
     pub observed_at_unix_millis: Option<u64>,
     pub freshness: RosterFreshness,
+    pub classification_complete: bool,
     pub reports: Vec<IncidentReport>,
 }
 
@@ -440,6 +441,7 @@ struct RosterState {
     cycle_token: Option<String>,
     observed_at_unix_millis: Option<u64>,
     freshness: RosterFreshness,
+    classification_complete: bool,
     reports: Vec<IncidentReport>,
     active_cycle_token: Option<String>,
 }
@@ -450,6 +452,7 @@ impl Default for RosterState {
             cycle_token: None,
             observed_at_unix_millis: None,
             freshness: RosterFreshness::NeverObserved,
+            classification_complete: false,
             reports: Vec::new(),
             active_cycle_token: None,
         }
@@ -547,6 +550,7 @@ impl ControlPlane {
         cycle_token: &str,
         observed_at_unix_millis: u64,
         reports: Vec<IncidentReport>,
+        classification_complete: bool,
     ) -> Result<(), ControlError> {
         let mut roster = match self.roster.lock() {
             Ok(guard) => guard,
@@ -559,6 +563,8 @@ impl ControlPlane {
         }
         roster.cycle_token = Some(cycle_token.to_owned());
         roster.observed_at_unix_millis = Some(observed_at_unix_millis);
+        roster.classification_complete =
+            classification_complete && reports.len() <= MAX_ROSTER_ITEMS;
         roster.reports.clear();
         roster
             .reports
@@ -596,6 +602,7 @@ impl ControlPlane {
             cycle_token: roster.cycle_token.clone(),
             observed_at_unix_millis: roster.observed_at_unix_millis,
             freshness: roster.freshness,
+            classification_complete: roster.classification_complete,
             reports: roster.reports.clone(),
         }
     }
@@ -627,6 +634,7 @@ impl ControlPlane {
             cycle_token: roster_guard.cycle_token.clone(),
             observed_at_unix_millis: roster_guard.observed_at_unix_millis,
             freshness: roster_guard.freshness,
+            classification_complete: roster_guard.classification_complete,
             reports: roster_guard.reports.clone(),
         };
         drop(roster_guard);

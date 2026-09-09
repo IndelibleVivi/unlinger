@@ -2,6 +2,31 @@
 
 **Updated:** 2026-09-08. **Programme:** 0.1. **Reader posture:** experimental developer source preview; not a signed/notarized App release or multi-day reliability claim.
 
+## Unmerged observation-truth candidate (2026-09-09)
+
+The source candidate based on `9da14b7` adds bounded FD-list sampling, explicit
+no-intervention completion, action-attributed impact accounting, and honest
+empty-observation/connection-failure presentation. It introduces SQLite v9;
+frontend schemas v5/v4/v3 and operator v1 are unchanged. This candidate has not
+replaced, migrated, restarted, armed, or observed the reference installation.
+The reference generation 23 / SQLite v8 statements below remain historical
+installed evidence, not acceptance of the candidate.
+
+Schema-v9 migration archives the old cumulative impact row and leaves raw action
+and event records intact. Proved-reclaim totals are rebuilt only from retained
+cleared attempts with a durable delivered signal; pruned legacy contributions
+are not presented as newly proved and force partial-history labeling. Future
+pruning preserves the corrected cumulative totals. A pre-v9 binary needs its
+pre-upgrade database backup; do not point it at a v9 database.
+
+Candidate regressions cover bounded saturation/error handling, an owned native
+FD/socket sample, no-signal completion through executor/store/IPC, transactional
+v8 migration including rollback on failure, partial observation, App labels and
+notification suppression. Exact candidate CI results belong to its draft PR.
+No new live-browser, installed-service, Accessibility/RSS, multi-day, or release
+acceptance is claimed. Task-registry capacity, settlement scheduling, and the
+disabled artifact-engine residuals remain outside this change.
+
 ## Source, remote and installed state
 
 | Surface | Observed truth |

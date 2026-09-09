@@ -46,7 +46,7 @@ The controlled DAP results repeat one historical exact admitted point across two
 | Schema v2 | historical fixtures retained; superseded before installation; current server returns typed `unsupported_schema` |
 | Installed generation | see [current-state](current-state.md) for exact generation, activation and rollback lease; current compatible runtime uses operator v1, frontend v5/v4/v3 and SQLite v8 |
 | Installed App/v5 integration | schema-v5 ad-hoc-signed private App installed and running; bundle identity/signature/plist verified; seven live-socket tests passed before and after candidate restart; v5 home and cleanup-only history UI read live; packaged notification observation remains an owner gate |
-| Current source/installed line | schema v5/v4/v3 plus operator v1; SQLite v8; Playwright `0.5.0`, other packs `0.4.0`; exact CfT 151/152 process allowlist; all runtime-artifact flags false; task ownership, impact/spans and observe-only storage residue |
+| Unmerged source candidate | schema v5/v4/v3 plus operator v1; SQLite v9 attribution repair over the v8 task-ownership authority; Playwright `0.5.0`, other packs `0.4.0`; exact CfT 151/152 process allowlist; all runtime-artifact flags false; task ownership, impact/spans and observe-only storage residue |
 
 SQLite v8 has a candidate-specific v7 backup/rollback/open proof: generation 22 really rolled back to healthy generation 19 with the old CLI/daemon reopening v7; the corrected candidate freshly reinstalled as generation 23, repeated App/socket checks before/after restart and was accepted before arming. The unchanged schema-v5 App remains compatible. Earlier schema migrations remain historical evidence.
 

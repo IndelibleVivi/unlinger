@@ -569,6 +569,7 @@ fn aggregate_impact_survives_expired_cleanup_detail_without_claiming_full_histor
     let attempt = store
         .begin_cleanup_attempt(1_000, &report, "epoch-a")
         .expect("begin cleanup");
+    journal_delivered_term(&store, &attempt, 1010);
     store
         .complete_cleanup_attempt(&attempt, 1_100, &cleared_receipt("inc-expired-impact"))
         .expect("complete cleanup");
@@ -708,7 +709,7 @@ fn migrates_v2_history_and_pause_but_resets_legacy_wall_clock_cooling() {
     let synchronous: i64 = connection
         .pragma_query_value(None, "synchronous", |row| row.get(0))
         .expect("read synchronous mode");
-    assert_eq!(version, 8);
+    assert_eq!(version, 9);
     assert_eq!(journal_mode, "wal");
     assert_eq!(synchronous, 2);
     drop(connection);
@@ -807,7 +808,7 @@ fn v4_to_current_preserves_history_and_retry_block_but_resets_incompatible_cooli
     downgrade_current_database_to_v4(&database.0);
 
     let migrated = HistoryStore::open(&database.0).expect("migrate v4 to current");
-    assert_eq!(HistoryStore::schema_version(), 8);
+    assert_eq!(HistoryStore::schema_version(), 9);
     let connection = Connection::open(&database.0).expect("inspect migrated artifact journal");
     let artifact_columns = connection
         .prepare("PRAGMA table_info(cleanup_artifact_actions)")
@@ -859,6 +860,7 @@ fn v5_to_current_backfills_event_tokens_and_impact_authority() {
     let attempt = store
         .begin_cleanup_attempt(1_020, &cleanup_report, "epoch-v5")
         .expect("begin cleanup before v5 fixture");
+    journal_delivered_term(&store, &attempt, 1025);
     store
         .complete_cleanup_attempt(&attempt, 1_030, &cleared_receipt("cleanup-v5"))
         .expect("complete cleanup before v5 fixture");
@@ -892,7 +894,7 @@ fn v5_to_current_backfills_event_tokens_and_impact_authority() {
     let version: i64 = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .expect("read migrated version");
-    assert_eq!(version, 8);
+    assert_eq!(version, 9);
 }
 
 #[test]
@@ -1547,6 +1549,7 @@ fn resource_receipt_survives_reopen_and_idempotent_completion() {
     let attempt = store
         .begin_cleanup_attempt(1_000, &report, "epoch-a")
         .expect("begin attempt");
+    journal_delivered_term(&store, &attempt, 1_100);
     let mut receipt = cleared_receipt("inc-resources");
     receipt.resources = CleanupResources {
         before: Some(ResourceSnapshot {
@@ -2473,6 +2476,7 @@ fn most_recent_reclaim_uses_a_dedicated_query_not_history_presentation_limit() {
     let attempt = store
         .begin_cleanup_attempt(1_000, &report, "epoch-a")
         .expect("begin cleanup");
+    journal_delivered_term(&store, &attempt, 1010);
     store
         .complete_cleanup_attempt(&attempt, 1_100, &cleared_receipt("inc-cleared"))
         .expect("complete cleanup");
@@ -2530,6 +2534,7 @@ fn most_recent_reclaim_includes_proved_process_clearance_with_artifact_residue()
     let attempt = store
         .begin_cleanup_attempt(1_000, &report, "epoch-a")
         .expect("begin cleanup");
+    journal_delivered_term(&store, &attempt, 1010);
     store
         .complete_cleanup_attempt(
             &attempt,
@@ -3303,4 +3308,230 @@ fn observation_batch_rolls_back_every_event_when_one_insert_fails() {
             .is_empty(),
         "the first observation must not survive a failed batch"
     );
+}
+
+fn journal_delivered_term(
+    store: &HistoryStore,
+    attempt: &unlinger_daemon::CleanupAttemptHandle,
+    now: u64,
+) {
+    let prepared = store
+        .prepare_cleanup_action(attempt, 0, now, &primary_term_intent())
+        .unwrap();
+    store
+        .complete_cleanup_action(&prepared, now, SignalDisposition::Delivered)
+        .unwrap();
+}
+
+#[test]
+fn no_signal_and_already_exited_are_not_attributed_even_if_the_caller_claims_delivery() {
+    let database = TempDatabase::new();
+    let store = HistoryStore::open(&database.0).unwrap();
+    for (index, disposition) in [None, Some(SignalDisposition::AlreadyExited)]
+        .into_iter()
+        .enumerate()
+    {
+        let id = format!("natural-{index}");
+        let attempt = store
+            .begin_cleanup_attempt(1_000, &confirmed_report(&id), "epoch-test")
+            .unwrap();
+        if let Some(disposition) = disposition {
+            let action = store
+                .prepare_cleanup_action(&attempt, 0, 1_001, &primary_term_intent())
+                .unwrap();
+            store
+                .complete_cleanup_action(&action, 1_002, disposition)
+                .unwrap();
+        }
+        // complete_cleanup_attempt must use the durable journal, not this
+        // caller-supplied (and deliberately false) Delivered action array.
+        let mut claimed = cleared_receipt(&id);
+        claimed.resources.estimated_reclaimed_memory_bytes = Some(8_192);
+        let actual = store
+            .complete_cleanup_attempt(&attempt, 1_010, &claimed)
+            .unwrap();
+        assert!(actual.ended_without_intervention());
+        assert_eq!(actual.resources.estimated_reclaimed_memory_bytes, None);
+    }
+    let summary = store.impact_summary(10).unwrap();
+    assert_eq!(summary.terminal_cleanup_count, 2);
+    assert_eq!(summary.proved_reclaim_count, 0);
+    // No attributed actions means a known zero aggregate, not an unknown
+    // measurement. Individual no-intervention receipts still have no
+    // reclaimed-memory estimate.
+    assert_eq!(summary.reclaimed_process_count, Some(0));
+    assert_eq!(summary.estimated_reclaimed_memory_bytes, Some(0));
+    assert!(store.most_recent_reclaim().unwrap().is_none());
+    assert!(
+        summary
+            .recent
+            .iter()
+            .all(|impact| impact.process_count.is_none())
+    );
+}
+
+fn v8_attribution_fixture() -> TempDatabase {
+    let database = TempDatabase::new();
+    let store = HistoryStore::open(&database.0).unwrap();
+    store.set_pause_until(Some(90_000)).unwrap();
+    for (index, delivered) in [true, false].into_iter().enumerate() {
+        let id = format!("legacy-{index}");
+        let report = confirmed_report(&id);
+        store.record_observation(900, &report).unwrap();
+        let attempt = store
+            .begin_cleanup_attempt(1_000, &report, "epoch-test")
+            .unwrap();
+        if delivered {
+            journal_delivered_term(&store, &attempt, 1_001);
+        }
+        let mut receipt = cleared_receipt(&id);
+        receipt.resources = CleanupResources {
+            before: Some(ResourceSnapshot {
+                process_count: 2,
+                resident_memory_bytes: 8_192,
+            }),
+            after: Some(ResourceSnapshot {
+                process_count: 0,
+                resident_memory_bytes: 0,
+            }),
+            estimated_reclaimed_memory_bytes: Some(8_192),
+        };
+        store
+            .complete_cleanup_attempt(&attempt, 1_010 + index as u64, &receipt)
+            .unwrap();
+    }
+    drop(store);
+    let connection = Connection::open(&database.0).unwrap();
+    // Reconstruct precisely the old derived-count semantics, keeping the
+    // actual durable action evidence different for the two attempts.
+    connection
+        .execute_batch(
+            "UPDATE cleanup_impacts SET process_count = 2, estimated_reclaimed_memory_bytes = 8192;
+        UPDATE impact_authority SET proved_reclaim_count = 2, reclaimed_process_count = 4,
+            reclaimed_process_measurement_count = 2, estimated_reclaimed_memory_bytes = 16384,
+            reclaimed_memory_measurement_count = 2;
+        DROP TABLE impact_attribution_legacy;
+        PRAGMA user_version = 8;",
+        )
+        .unwrap();
+    database
+}
+
+#[test]
+fn v8_attribution_migration_preserves_raw_history_and_old_totals_and_is_idempotent() {
+    let database = v8_attribution_fixture();
+    let connection = Connection::open(&database.0).unwrap();
+    let history_before: String = connection
+        .query_row(
+            "SELECT group_concat(payload_json, '|') FROM events",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    drop(connection);
+    let migrated = HistoryStore::open(&database.0).unwrap();
+    let summary = migrated.impact_summary(10).unwrap();
+    assert_eq!(summary.terminal_cleanup_count, 2);
+    assert_eq!(summary.proved_reclaim_count, 1);
+    assert_eq!(summary.reclaimed_process_count, Some(2));
+    assert_eq!(summary.estimated_reclaimed_memory_bytes, Some(8_192));
+    assert_eq!(
+        summary.historical_completeness,
+        ImpactHistoryCompleteness::Complete
+    );
+    assert_eq!(migrated.pause_until().unwrap(), Some(90_000));
+    assert_eq!(
+        migrated.most_recent_reclaim().unwrap().unwrap().incident_id,
+        "legacy-0"
+    );
+    drop(migrated);
+    let connection = Connection::open(&database.0).unwrap();
+    let archived: String = connection
+        .query_row(
+            "SELECT payload_json FROM impact_attribution_legacy",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let archived: serde_json::Value = serde_json::from_str(&archived).unwrap();
+    assert_eq!(archived["proved_reclaim_count"], 2);
+    assert_eq!(archived["estimated_reclaimed_memory_bytes"], 16_384);
+    let history_after: String = connection
+        .query_row(
+            "SELECT group_concat(payload_json, '|') FROM events",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(history_before, history_after);
+    drop(connection);
+    let reopened = HistoryStore::open(&database.0).unwrap();
+    assert_eq!(reopened.impact_summary(10).unwrap().proved_reclaim_count, 1);
+}
+
+#[test]
+fn migration_never_represents_pruned_legacy_totals_as_proved_reclaims() {
+    let database = v8_attribution_fixture();
+    let connection = Connection::open(&database.0).unwrap();
+    // Equivalent retained authority after all details expired under v8.
+    connection
+        .execute_batch(
+            "DELETE FROM cleanup_impacts; DELETE FROM public_event_tokens; DELETE FROM events;
+        DELETE FROM cleanup_actions; DELETE FROM cleanup_attempts;",
+        )
+        .unwrap();
+    drop(connection);
+    let migrated = HistoryStore::open(&database.0).unwrap();
+    let summary = migrated.impact_summary(10).unwrap();
+    assert_eq!(summary.terminal_cleanup_count, 2);
+    assert_eq!(summary.proved_reclaim_count, 0);
+    assert_eq!(
+        summary.historical_completeness,
+        ImpactHistoryCompleteness::PartialBackfill
+    );
+    let connection = Connection::open(&database.0).unwrap();
+    let archived: String = connection
+        .query_row(
+            "SELECT payload_json FROM impact_attribution_legacy",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&archived).unwrap()["proved_reclaim_count"],
+        2
+    );
+}
+
+#[test]
+fn attribution_migration_failure_rolls_back_counts_and_schema_together() {
+    let database = v8_attribution_fixture();
+    let connection = Connection::open(&database.0).unwrap();
+    connection
+        .execute_batch(
+            "CREATE TRIGGER reject_attribution BEFORE UPDATE ON impact_authority
+        BEGIN SELECT RAISE(ABORT, 'synthetic attribution failure'); END;",
+        )
+        .unwrap();
+    assert!(HistoryStore::open(&database.0).is_err());
+    let version: u32 = connection
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .unwrap();
+    assert_eq!(version, 8);
+    let count: i64 = connection
+        .query_row(
+            "SELECT proved_reclaim_count FROM impact_authority",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(count, 2);
+    let legacy_exists: bool = connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE name = 'impact_attribution_legacy')",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert!(!legacy_exists);
 }

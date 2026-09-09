@@ -2,6 +2,9 @@
 mod artifacts;
 
 #[cfg(target_os = "macos")]
+mod descriptors;
+
+#[cfg(target_os = "macos")]
 mod events;
 
 #[cfg(target_os = "macos")]
@@ -592,10 +595,9 @@ mod platform {
         declared_file_count: u32,
         arguments: &Option<Vec<String>>,
     ) -> ProcessRuntimeFacts {
-        let Ok(max_len) = usize::try_from(declared_file_count) else {
-            return ProcessRuntimeFacts::default();
-        };
-        let Ok(fds) = listpidinfo::<ListFDs>(pid, max_len) else {
+        let Some(fds) = crate::descriptors::read_complete_list(declared_file_count, |capacity| {
+            listpidinfo::<ListFDs>(pid, capacity)
+        }) else {
             return ProcessRuntimeFacts::default();
         };
         let mut facts = ProcessRuntimeFacts {
@@ -1027,6 +1029,45 @@ mod platform {
                 snapshot.processes.len(),
                 snapshot.coverage.inspected_processes
             );
+        }
+
+        #[test]
+        fn stale_descriptor_hint_does_not_omit_an_owned_debug_connection() {
+            use std::net::{TcpListener, TcpStream};
+            // Other tests deliberately churn descriptors. Run this
+            // native assertion in its own test-owned, signal-free child.
+            const CHILD: &str = "UNLINGER_OWNED_DESCRIPTOR_PROBE";
+            if std::env::var_os(CHILD).is_none() {
+                let output = std::process::Command::new(std::env::current_exe().unwrap())
+                    .args(["--exact", "platform::tests::stale_descriptor_hint_does_not_omit_an_owned_debug_connection", "--nocapture"])
+                    .env(CHILD, "1")
+                    .output().expect("run isolated descriptor probe");
+                assert!(
+                    output.status.success(),
+                    "{}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                assert!(
+                    String::from_utf8_lossy(&output.stdout)
+                        .contains("owned-descriptor-probe-passed")
+                );
+                return;
+            }
+
+            let files: Vec<_> = (0..130)
+                .map(|_| std::fs::File::open("/dev/null").expect("owned test descriptor"))
+                .collect();
+            let listener = TcpListener::bind("127.0.0.1:0").expect("owned listener");
+            let port = listener.local_addr().unwrap().port();
+            let _client = TcpStream::connect(("127.0.0.1", port)).expect("owned client");
+            let (_server, _) = listener.accept().expect("owned server");
+            let arguments = Some(vec![format!("--remote-debugging-port={port}")]);
+            let facts = process_runtime_facts(std::process::id() as i32, 1, &arguments);
+            assert!(facts.descriptor_facts_complete);
+            assert!(facts.open_file_descriptors >= files.len());
+            assert!(facts.tcp_established_local_ports.contains(&port));
+            assert!(facts.attached_debug_transport);
+            println!("owned-descriptor-probe-passed");
         }
 
         #[test]

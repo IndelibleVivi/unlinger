@@ -76,7 +76,7 @@
 "browser.impact.reclaims" = "已清理 %d 个遗留浏览器会话";
 "browser.impact.processes" = "已处理 %d 个浏览器进程";
 "browser.impact.memory" = "预计回收内存 %@";
-"browser.impact.partial_history" = "旧历史仅完成部分回填；成果记录开始前的总数可能不完整。";
+"browser.impact.partial_history" = "早期结果无法全部确认归因；成果仅计入留存动作证据支持的部分及后续结果。旧累计原值另行保留。";
 "browser.storage_residue.title" = "发现存储残留";
 "browser.storage_residue.detected" = "发现 %d 份 Chrome 代码签名 clone 残留";
 "browser.storage_residue.logical_size" = "账面大小 %@；APFS 实际可释放空间可能更少。";
@@ -118,7 +118,7 @@
 "browser.detail.actions" = "可用操作";
 
 /* Daemon unavailable (app-local state) */
-"unavailable.body" = "Unlinger 以后台服务形式在本机运行。服务可能未安装或未在运行——当前没有在进行任何观察。";
+"unavailable.body" = "App 无法连接本地服务。后台可能仍在观察或自动清理；这里无法确认当前运行状态。";
 "unavailable.retry" = "重试";
 "incompatible.body" = "App 正在运行，但该服务不支持当前协议。这里无法推断自动清理状态；请通过 operator CLI 更新 backend。";
 
@@ -267,3 +267,9 @@
 
 /* Export panel */
 "export.filename" = "unlinger-diagnostics.json";
+
+"browser.session.ended_without_intervention" = "已结束，未介入";
+
+"outcome.ended_without_intervention" = "已结束，未介入";
+
+"detail.cleanup.without_intervention" = "会话已结束；Unlinger 未发送清理信号，不计为回收成果。";

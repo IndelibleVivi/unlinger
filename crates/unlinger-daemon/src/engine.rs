@@ -380,8 +380,12 @@ impl<R: CleanupRuntime> ReconciliationEngine<R> {
         self.control
             .store()
             .record_observation_batch(observed_at_unix_millis, &incidents)?;
-        self.control
-            .publish_roster(cycle_token, observed_at_unix_millis, incidents.clone())?;
+        self.control.publish_roster(
+            cycle_token,
+            observed_at_unix_millis,
+            incidents.clone(),
+            latest_snapshot.proves_complete_classification_coverage(),
+        )?;
 
         let status = self.control.status_at(now_unix_millis)?;
         let paused = status

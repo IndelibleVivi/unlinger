@@ -28,6 +28,8 @@ jobs:
         run: cargo build --release --workspace
       - name: Test isolated demo ownership
         run: python3 apps/UnlingerApp/scripts/test_demo_window.py
+      - name: Test fail-closed bundle verification
+        run: python3 apps/UnlingerApp/scripts/test_verify_bundle.py
       - name: Test native frontend
         run: swift test --package-path apps/UnlingerApp
       - name: Bundle native frontend

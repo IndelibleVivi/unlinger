@@ -416,7 +416,11 @@ fn browser_overview_phase(
     }) {
         return public::BrowserOverviewPhase::Protected;
     }
-    public::BrowserOverviewPhase::Clear
+    if roster.classification_complete {
+        public::BrowserOverviewPhase::Clear
+    } else {
+        public::BrowserOverviewPhase::Unknown
+    }
 }
 
 fn project_roster_freshness(
@@ -704,10 +708,15 @@ fn project_history_event(event: HistoryEvent, schema_version: u32) -> public::Hi
             },
             EventPayload::Cleanup { receipt } => {
                 let outcome = receipt.outcome();
+                let without_intervention = receipt.ended_without_intervention();
                 public::EventPayload::Cleanup {
                     cleanup: public::Cleanup {
                         state: project_incident_state(receipt.state),
-                        reason_id: receipt.reason_id,
+                        reason_id: if without_intervention {
+                            Some("cleanup.tree_gone_without_signal".to_owned())
+                        } else {
+                            receipt.reason_id
+                        },
                         process_outcome: project_process_outcome(outcome.process),
                         artifact_outcome: project_artifact_outcome(outcome.artifact),
                         overall_outcome: project_overall_outcome(outcome.overall),
@@ -748,9 +757,11 @@ fn project_history_event(event: HistoryEvent, schema_version: u32) -> public::Hi
                                     resident_memory_bytes: snapshot.resident_memory_bytes,
                                 }
                             }),
-                            estimated_reclaimed_memory_bytes: receipt
-                                .resources
-                                .estimated_reclaimed_memory_bytes,
+                            estimated_reclaimed_memory_bytes: if without_intervention {
+                                None
+                            } else {
+                                receipt.resources.estimated_reclaimed_memory_bytes
+                            },
                         },
                     },
                 }
@@ -1042,6 +1053,7 @@ mod tests {
             cycle_token: Some("cycle".to_owned()),
             observed_at_unix_millis: Some(100),
             freshness: RosterFreshness::Current,
+            classification_complete: true,
             reports,
         }
     }

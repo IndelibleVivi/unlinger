@@ -139,6 +139,19 @@ pub struct Snapshot {
 }
 
 impl Snapshot {
+    /// A negative classifier result needs readable classification inputs, not
+    /// merely a successful process-list call. Socket visibility is a separate
+    /// per-candidate action gate and does not hide already identified sessions.
+    #[must_use]
+    pub fn proves_complete_classification_coverage(&self) -> bool {
+        self.proves_complete_exact_identity_coverage()
+            && self.coverage.arguments_unavailable == 0
+            && self
+                .processes
+                .iter()
+                .all(ProcessRecord::has_complete_classification_facts)
+    }
+
     /// True only when the snapshot can prove exact process absence rather than
     /// merely omitting an unreadable or identity-incomplete process.
     #[must_use]

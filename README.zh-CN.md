@@ -12,7 +12,7 @@ Unlinger 在 macOS 上观察浏览器自动化留下的会话，并清理其中�
 
 - **看见遗留会话及其原因。** 原生进程快照、版本兼容性、保护原因和脱敏的本地历史。
 - **跟踪一个命令的浏览器生命周期。** `unlinger task run -- COMMAND` 注册实际 command owner；兼容的 Playwright CLI 会话在任务结束后进入候选判断。任务结束本身不授权清理。
-- **看见真实清理成果。** 完成后的 receipt 决定清理会话数、进程数和估算内存。重复观察会合并，不会计成清理成绩。
+- **看见真实清理成果。** 完成后的 receipt 结合已送达信号的耐久记录，决定清理会话数、进程数和估算内存。未发送信号就结束的会话单独显示为“已结束，未介入”。重复观察会合并，不会计成清理成绩。
 - **观察磁盘残留。** 展示 Chrome code-sign clone 数量及文件逻辑大小。目前不能清理磁盘：启用的策略不会删除 profile、目录或 runtime artifact。
 
 | 范围 | 当前边界 |
@@ -27,7 +27,7 @@ Unlinger 在 macOS 上观察浏览器自动化留下的会话，并清理其中�
 
 ## 不安装服务，先试一次
 
-需要 Rust **1.98.0**、macOS command-line developer tools 和 Git。构建 App 还需要 **Swift 6.0+**；App bundle 脚本使用 `rg`（ripgrep）。
+需要 Rust **1.98.0**、macOS command-line developer tools 和 Git。构建 App 还需要 **Swift 6.0+**；App bundle 验证使用 Python 3，无需 ripgrep。
 
 ```bash
 git clone https://github.com/IndelibleVivi/unlinger.git

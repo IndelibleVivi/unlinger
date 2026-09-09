@@ -1,5 +1,12 @@
 # Unlinger 0.1 implementation plan
 
+**Unmerged observation-truth candidate:** source SQLite v9 adds action-attributed
+impact repair, complete FD enumeration, and coverage-aware empty overviews. The
+installed-generation evidence in the ledger below remains the v8 reference
+installation, not acceptance of this candidate. The PR records exact source
+verification; no live-service upgrade or field acceptance is implied.
+
+
 ## Authority and status language
 
 - Product/technical scope: [`SPEC.md`](SPEC.md), still a working draft.
