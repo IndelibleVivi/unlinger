@@ -1,8 +1,9 @@
 schema_version = 2
 id = "playwright"
-version = "0.5.0"
-supported_versions = "Chrome for Testing 151.0.7922.34 and 152.0.7977.42 only; task-owned Playwright CLI 1.63.0-alpha-2026-08-31; other controllers remain observational"
+version = "0.6.0"
+supported_versions = "Chrome for Testing 151.0.7922.34 and 152.0.7977.42 only; task-owned Playwright CLI 1.63.0-alpha-2026-08-31; host-owned ordinary Playwright CLI 1.62.1; other controllers remain observational"
 task_controller_version = "1.63.0-alpha-2026-08-31"
+session_owner_controller_version = "1.62.1"
 graceful_strategy = "os_term_only"
 controller_markers = ["playwright", "@playwright/mcp", "playwright-mcp"]
 framework_markers = ["playwright", "@playwright/mcp", "ms-playwright"]

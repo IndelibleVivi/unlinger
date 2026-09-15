@@ -72,6 +72,13 @@ pub struct PlaywrightCliRuntime {
     pub version: String,
     pub persistent: bool,
     pub attached: bool,
+    /// Path-free identity of the exact ordinary Playwright session this
+    /// controller owns. Derived from the controller-owned registry record and
+    /// verified against the controller's live socket. `None` when the record
+    /// does not carry the facts needed to distinguish two same-named sessions
+    /// (or when the session is task-owned), which fails closed.
+    #[doc(hidden)]
+    pub selector_fingerprint: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -139,6 +146,19 @@ pub struct Snapshot {
 }
 
 impl Snapshot {
+    /// A negative classifier result needs readable classification inputs, not
+    /// merely a successful process-list call. Socket visibility is a separate
+    /// per-candidate action gate and does not hide already identified sessions.
+    #[must_use]
+    pub fn proves_complete_classification_coverage(&self) -> bool {
+        self.proves_complete_exact_identity_coverage()
+            && self.coverage.arguments_unavailable == 0
+            && self
+                .processes
+                .iter()
+                .all(ProcessRecord::has_complete_classification_facts)
+    }
+
     /// True only when the snapshot can prove exact process absence rather than
     /// merely omitting an unreadable or identity-incomplete process.
     #[must_use]

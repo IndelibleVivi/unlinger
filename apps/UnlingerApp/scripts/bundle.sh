@@ -41,33 +41,26 @@ cp "Resources/Info.plist" "$OUT/Contents/Info.plist"
 # toolchain directory as an LC_RPATH even though the packaged app uses the
 # system Swift runtime. dyld probing that path at launch triggers an unrelated
 # removable-volume permission prompt under the app's identity.
+# Capture producer errors outside conditionals and process substitutions.
+LOAD_COMMANDS="$(otool -l "$OUT/Contents/MacOS/UnlingerApp")"
+RPATHS="$(printf '%s\n' "$LOAD_COMMANDS" | awk '
+    $1 == "cmd" && $2 == "LC_RPATH" { capture = 1; next }
+    capture && $1 == "path" {
+        line = $0
+        sub(/^[[:space:]]*path /, "", line)
+        sub(/ \(offset [0-9]+\)$/, "", line)
+        print line
+        capture = 0
+    }
+')"
 while IFS= read -r rpath; do
     case "$rpath" in
         /Volumes/*)
             install_name_tool -delete_rpath "$rpath" "$OUT/Contents/MacOS/UnlingerApp"
             ;;
     esac
-done < <(
-    otool -l "$OUT/Contents/MacOS/UnlingerApp" | awk '
-        $1 == "cmd" && $2 == "LC_RPATH" { capture = 1; next }
-        capture && $1 == "path" {
-            line = $0
-            sub(/^[[:space:]]*path /, "", line)
-            sub(/ \(offset [0-9]+\)$/, "", line)
-            print line
-            capture = 0
-        }
-    '
-)
+done <<< "$RPATHS"
 
-if otool -l "$OUT/Contents/MacOS/UnlingerApp" | rg -q 'path /Volumes/'; then
-    echo "packaged executable retains a removable-volume LC_RPATH" >&2
-    exit 1
-fi
-if strings "$OUT/Contents/MacOS/UnlingerApp" | rg -q '/Volumes/.*UnlingerApp_UnlingerKit\.bundle'; then
-    echo "packaged resource fallback points at a removable volume" >&2
-    exit 1
-fi
 if [[ -f "Resources/AppIcon.icns" ]]; then
     cp "Resources/AppIcon.icns" "$OUT/Contents/Resources/"
 fi
@@ -102,10 +95,8 @@ FIXTURE_DIR="$OUT/Contents/Resources/UnlingerApp_UnlingerKit.bundle/Fixtures"
 [[ -f "$FIXTURE_DIR/v3/diagnostics.json" ]] || { echo "missing v3 diagnostics fixture" >&2; exit 1; }
 [[ -f "$FIXTURE_DIR/v4/browser-overview-confirmed.json" ]] || { echo "missing v4 overview fixture" >&2; exit 1; }
 [[ -f "$FIXTURE_DIR/v5/browser-overview-impact-residue.json" ]] || { echo "missing v5 impact fixture" >&2; exit 1; }
-if rg -l '"schema_version":2' "$FIXTURE_DIR" >/dev/null; then
-    echo "stale v2 daemon fixture packaged as active" >&2
-    exit 1
-fi
+# Consume complete command output and propagate tool/read/JSON failures.
+python3 scripts/verify_bundle.py "$OUT"
 
 EN_COPY="$OUT/Contents/Resources/UnlingerApp_UnlingerKit.bundle/en.lproj/Localizable.strings"
 ZH_COPY="$OUT/Contents/Resources/UnlingerApp_UnlingerKit.bundle/zh-Hans.lproj/Localizable.strings"

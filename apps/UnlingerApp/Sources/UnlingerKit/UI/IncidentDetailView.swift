@@ -272,7 +272,7 @@ struct EventCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Text(OutcomeCopy.label(for: event.state))
+                Text(OutcomeCopy.label(for: event))
                     .font(.subheadline.weight(.medium))
                 Spacer()
                 if entry.eventCount > 1 {
@@ -318,12 +318,17 @@ struct EventCard: View {
         // dual truth "processes cleared, residue kept" and must not read as a
         // process failure.
         let outcomeLabel = OutcomeCopy.label(for: receipt.overallOutcome)
-        if outcomeLabel != OutcomeCopy.label(for: event.state) {
+        if receipt.endedWithoutIntervention {
+            Text(L10n.text("detail.cleanup.without_intervention"))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        } else if outcomeLabel != OutcomeCopy.label(for: event.state) {
             Text(outcomeLabel)
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
-        if let reclaimed = receipt.resources.estimatedReclaimedMemoryBytes, reclaimed > 0
+        if !receipt.endedWithoutIntervention,
+           let reclaimed = receipt.resources.estimatedReclaimedMemoryBytes, reclaimed > 0
         {
             Text(L10n.text("detail.resources.reclaimed", Format.bytes(reclaimed)))
                 .font(.caption)

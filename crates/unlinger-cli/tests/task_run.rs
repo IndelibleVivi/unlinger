@@ -68,6 +68,18 @@ impl Fixture {
             .optional()
             .unwrap()
     }
+    fn only_session_owner(&self) -> Option<(String, Option<String>, Option<i64>)> {
+        use rusqlite::OptionalExtension;
+        rusqlite::Connection::open(self.store.path())
+            .unwrap()
+            .query_row(
+                "SELECT lease_id, owner_json, released_at_us FROM session_owner_leases",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .optional()
+            .unwrap()
+    }
 }
 impl Drop for Fixture {
     fn drop(&mut self) {
@@ -82,6 +94,189 @@ fn now() -> u64 {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_millis() as u64
+}
+
+/// The session-owner lane is additive and optional: it adopts an already
+/// existing ordinary Playwright session over the authenticated operator
+/// socket, never launches a browser, never signals anything, and only ever
+/// binds the registrar's own exact child.
+#[test]
+fn session_owner_lease_adopts_an_existing_session_and_requires_the_exact_child() {
+    let fixture = Fixture::new(true);
+    let client = fixture.client();
+    let registry_namespace = "0521184cff085302".to_owned();
+    let declare = || IpcCommand::SessionOwnerDeclare {
+        session_name: "default".to_owned(),
+        registry_namespace: registry_namespace.clone(),
+        controller_version: "1.62.1".to_owned(),
+    };
+
+    let IpcPayload::SessionOwnerLease(lease) = client.request(declare()).unwrap() else {
+        panic!("session-owner declaration response");
+    };
+    assert_eq!(lease.session_name, "default");
+    assert_eq!(lease.generation, 1);
+    assert_eq!(lease.selector_fingerprint.len(), 16);
+    assert_ne!(lease.lease_id, lease.session_name);
+    assert_eq!(lease.capability.len(), 32);
+
+    // Re-declaring the same active selector is idempotent for this registrar.
+    let IpcPayload::SessionOwnerLease(again) = client.request(declare()).unwrap() else {
+        panic!("session-owner re-declaration response");
+    };
+    assert_eq!(again.lease_id, lease.lease_id);
+    assert_eq!(again.capability, lease.capability);
+
+    // A live process that is not the registrar's exact child is refused.
+    assert!(
+        client
+            .request(IpcCommand::SessionOwnerActivate {
+                lease_id: lease.lease_id.clone(),
+                capability: lease.capability.clone(),
+                owner_pid: std::process::id(),
+            })
+            .is_err()
+    );
+
+    let mut child = Command::new("/bin/sleep")
+        .arg("60")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("owned session-owner child");
+    let IpcPayload::SessionOwnerStatus(active) = client
+        .request(IpcCommand::SessionOwnerActivate {
+            lease_id: lease.lease_id.clone(),
+            capability: lease.capability.clone(),
+            owner_pid: child.id(),
+        })
+        .unwrap()
+    else {
+        panic!("session-owner activation response");
+    };
+    assert_eq!(active.phase, TaskPhase::Active);
+    // No Playwright controller has been observed in this isolated fixture, so
+    // the lease is active ownership evidence and nothing more.
+    assert!(!active.controller_bound);
+
+    // Release is refused while the exact owner is still live.
+    assert!(
+        client
+            .request(IpcCommand::SessionOwnerRelease {
+                lease_id: lease.lease_id.clone(),
+                capability: lease.capability.clone(),
+            })
+            .is_err()
+    );
+    let _ = child.kill();
+    let _ = child.wait();
+
+    let IpcPayload::SessionOwnerStatus(released) = client
+        .request(IpcCommand::SessionOwnerRelease {
+            lease_id: lease.lease_id.clone(),
+            capability: lease.capability.clone(),
+        })
+        .unwrap()
+    else {
+        panic!("session-owner release response");
+    };
+    assert_eq!(released.phase, TaskPhase::Released);
+    assert_eq!(released.release_reason.as_deref(), Some("reported_exit"));
+
+    // A released generation is terminal: it cannot be re-activated, a wrong
+    // capability is refused, and a later host turn receives a fresh generation
+    // instead of resurrecting the released lease.
+    assert!(
+        client
+            .request(IpcCommand::SessionOwnerActivate {
+                lease_id: lease.lease_id.clone(),
+                capability: lease.capability.clone(),
+                owner_pid: std::process::id(),
+            })
+            .is_err()
+    );
+    assert!(
+        client
+            .request(IpcCommand::SessionOwnerRelease {
+                lease_id: lease.lease_id.clone(),
+                capability: "0".repeat(32),
+            })
+            .is_err()
+    );
+    let IpcPayload::SessionOwnerStatus(status) = client
+        .request(IpcCommand::SessionOwnerStatus {
+            lease_id: lease.lease_id.clone(),
+        })
+        .unwrap()
+    else {
+        panic!("session-owner status response");
+    };
+    assert_eq!(status.phase, TaskPhase::Released);
+
+    let IpcPayload::SessionOwnerLease(second) = client.request(declare()).unwrap() else {
+        panic!("second session-owner generation");
+    };
+    assert_ne!(second.lease_id, lease.lease_id);
+    assert_eq!(second.generation, 2);
+    assert_ne!(second.capability, lease.capability);
+
+    // Commands that were never declared report absence without inventing state.
+    assert!(
+        client
+            .request(IpcCommand::SessionOwnerStatus {
+                lease_id: "ffffffffffffffffffffffffffffffff".to_owned(),
+            })
+            .is_err()
+    );
+}
+
+#[test]
+fn session_run_preserves_the_ordinary_selector_and_releases_the_exact_command_owner() {
+    let fixture = Fixture::new(true);
+    let output = fixture
+        .command()
+        .args([
+            "session",
+            "run",
+            "--session",
+            "default",
+            "--registry-namespace",
+            "0521184cff085302",
+            "--controller-version",
+            "1.62.1",
+            "--",
+            "/bin/sh",
+            "-c",
+            "printf '%s' \"$PLAYWRIGHT_CLI_SESSION\"; exit 7",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(
+        output.status.code(),
+        Some(7),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "default");
+    let (lease_id, owner, released) = fixture.only_session_owner().unwrap();
+    assert!(owner.is_some());
+    assert!(released.is_some());
+
+    let output = fixture
+        .command()
+        .args(["session", "status", &lease_id, "--json"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["session_name"], "default");
+    assert_eq!(json["controller_version"], "1.62.1");
+    assert_eq!(json["phase"], "released");
+    assert!(json.get("capability").is_none() && json.get("owner_json").is_none());
 }
 
 #[test]

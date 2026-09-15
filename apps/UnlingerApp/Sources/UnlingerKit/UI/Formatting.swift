@@ -43,6 +43,13 @@ public enum CapabilityCopy {
 
 @MainActor
 public enum OutcomeCopy {
+    public static func label(for event: HistoryEvent) -> String {
+        if case .cleanup(let receipt) = event.payload, receipt.endedWithoutIntervention {
+            return L10n.text("outcome.ended_without_intervention")
+        }
+        return label(for: event.state)
+    }
+
     public static func label(for outcome: OverallOutcome) -> String {
         switch outcome {
         case .cleared: L10n.text("outcome.cleared")

@@ -10,12 +10,12 @@ Editable source: [architecture.mmd](architecture.mmd). The SVG is a rendered exp
 
 ## Read the flow / 读图
 
-1. **Task ownership:** `unlinger task run` reserves a durable task, creates a gated command child, and activates its exact PID/birth/UID identity before execution. The issued session binds only verified Playwright CLI controllers. The daemon releases ownership after exact command absence; an active client or incomplete proof keeps protection. Task release grants no signal permission.
+1. **Lifetime evidence:** `unlinger task run` reserves a durable task, creates a gated command child, and activates its exact PID/birth/UID identity before execution. The issued session binds only verified Playwright CLI controllers. Separately, an optional host adapter may keep an existing ordinary session name while declaring an exact registry selector, live child owner and controller version. The daemon releases either kind only after exact owner absence; an active client, unsupported controller or incomplete proof keeps protection. No release grants signal permission.
 2. **Observation and decision:** native snapshots and exact bundle versions feed the shared rule sessionizer. Protections, age/stability and durable abandonment checks select eligible process trees. Periodic/process-exit/wake/pressure inputs only request a fresh snapshot; pressure never lowers a gate.
 3. **Execution:** report-only records the decision. Enforce mode additionally needs valid signal authority. A frozen plan is revalidated, its signal action is durably PREPARED, then exact controller/root/member TERM and necessary survivor KILL stages run. Absence and bounded revival checks precede terminal settlement.
-4. **Visible result:** SQLite v8 stores redacted observations, task state, action journals, receipts and independent cleanup impact. One daemon-owned browser overview joins coherent current state and proved impact; the App only maps it into presentation.
+4. **Visible result:** The source SQLite v10 store composes v9 action attribution with task and optional host session-owner state, redacted observations, action journals, receipts and independent cleanup impact. One daemon-owned browser overview joins coherent current state and proved impact; the App only maps it into presentation.
 
-中文对应路径：CLI 先登记真实 command owner；daemon 独立核实任务结束和客户端状态，再经过完整分类、保护及冷却条件。report-only 只记录。enforce 还必须获得有效执行权限，先持久化 action，再对精确身份发送信号。最终 receipt 和独立 impact 决定 App 显示的成果，任务结束或一次观察不会增加成绩。
+中文对应路径：`task run` 可登记真实 command owner；兼容宿主也可通过 optional adapter 提供普通会话的精确 owner lifetime。没有 adapter、版本不支持、owner 仍存活或事实不完整时，controller 会继续受保护。daemon 还要经过完整分类、客户端、profile、冷却和身份条件。report-only 只记录。enforce 还必须获得有效执行权限，先持久化 action，再对精确身份发送信号。最终 receipt 和独立 impact 决定 App 显示的成果，任务结束或一次观察不会增加成绩。
 
 The separate Chrome clone observer records only typed count/logical-size/shape/reference facts. It has **no deletion edge**. Every artifact admission flag is false. The dormant DAP engine is outside the active diagram and retains the unresolved risks in [SAFETY.md](SAFETY.md).
 
@@ -26,7 +26,7 @@ Chrome clone 的磁盘观察单独进入状态库，**没有删除出口**。逻
 | Node / boundary | Canonical implementation |
 | --- | --- |
 | Command wrapper and activation gate | [CLI task runner](../crates/unlinger-cli/src/task.rs), [task contract](TASKS.md) |
-| Task lifetime and controller binding | [daemon crate](../crates/unlinger-daemon/src), [rules](../crates/unlinger-rules/src/lib.rs) |
+| Task and optional host lifetime/controller binding | [daemon ownership stores](../crates/unlinger-daemon/src/store), [operator IPC](IPC.md#optional-host-session-owner-commands), [rules](../crates/unlinger-rules/src/lib.rs) |
 | Exact native identity and snapshots | [macOS adapter](../crates/unlinger-macos/src/lib.rs) |
 | Classification and protection | [core](../crates/unlinger-core/src/lib.rs), [embedded rule packs](../rules) |
 | Frozen plans, revalidation, signals and revival | [core cleanup](../crates/unlinger-core/src), [reconciliation engine](../crates/unlinger-daemon/src) |
@@ -43,4 +43,4 @@ Managed installs use immutable generations and a candidate acceptance transactio
 
 The owner-private Unix socket serves frontend schema v5, transitional v4, legacy-compatible v3 and operator v1; historical v2 is rejected. The App emits v5 only and cannot encode lifecycle operations. Ordinary mutations are journalled before send and reconciled after uncertain delivery without automatic resend. The daemon commits mutation state and receipt atomically. Each IPC request makes one bounded attempt.
 
-Raw arguments, executable/profile paths and frozen signal targets stay transient. Public persistence and UI use typed redacted records. Task capabilities remain private operator authority, excluded from ordinary App DTOs and diagnostic exports. There is no normal-operation network service. See [IPC](IPC.md) and [privacy](PRIVACY.md) for exact schema and data boundaries.
+Raw arguments, executable/profile paths and frozen signal targets stay transient. Public persistence and UI use typed redacted records. Task and host-session capabilities remain private operator authority, excluded from ordinary App DTOs and diagnostic exports. There is no normal-operation network service. See [IPC](IPC.md) and [privacy](PRIVACY.md) for exact schema and data boundaries.

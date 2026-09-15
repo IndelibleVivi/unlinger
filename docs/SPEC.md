@@ -436,6 +436,7 @@ The daemon stores a compact local SQLite database containing:
 - coalesced observation span boundaries/counts;
 - cleanup-impact rows and lifetime aggregate authority;
 - the latest typed observe-only storage-residue observation.
+- private task-owner and optional host session-owner leases plus exact controller bindings.
 
 Observation history defaults to 14 days or 10,000 observation rows, whichever is smaller. Consecutive semantically identical observations for one incident extend one span; resource sampling may update without creating a new semantic state. Cleanup detail has an independent minimum 14-day retention and is never evicted by the observation count cap. Lifetime impact aggregates survive cleanup-detail expiry. A migrated database labels pre-v7 totals `partial_backfill`; a fresh v7 authority begins `complete`. Ordinary-mutation receipts retain their separate minimum 14-day reconciliation window and cannot be pruned early to satisfy a count cap; capacity pressure rejects a new mutation rather than destroying authority.
 
@@ -469,7 +470,12 @@ Each supported runtime has a versioned signature pack that parameterizes one sha
 
 Version 0.1 ships rules inside the signed binary. Remote executable rule updates are out of scope. Later data-only updates must be signed and auditable.
 
-Automatic-cleanup admission remains narrower than recognized families: Chrome for Testing with bundle identifier `com.google.chrome.for.testing` at exact version `151.0.7922.34` or `152.0.7977.42`, plus every ordinary hard gate. Source adds an owner-authorized command-lifetime lane in Playwright pack `0.5.0`: exact `playwright-core` `1.63.0-alpha-2026-08-31`, daemon-issued task/session binding, native package/registry/socket verification and a durably released actual command owner. Other controllers remain protected. This is an exact allowlist, not a range. [TASKS.md](TASKS.md) defines command launch, release, background-work/client protection, multiple workspaces, report-only behavior, privacy and retention. Release supplies ownership evidence, never signal or cleanup-success authority. The App's existing terminal receipt/impact projection remains the result authority. Installed activation remains separately recorded in [current-state.md](current-state.md).
+Automatic-cleanup admission remains narrower than recognized families: Chrome for Testing with bundle identifier `com.google.chrome.for.testing` at exact version `151.0.7922.34` or `152.0.7977.42`, plus every ordinary hard gate. Source Playwright pack `0.6.0` contains two disjoint exact controller lanes:
+
+- task-owned `playwright-core` `1.63.0-alpha-2026-08-31`, with a daemon-issued session, native package/registry/socket verification and a durably released actual command owner; and
+- host-owned ordinary `playwright-core` `1.62.1`, retaining the host's existing session name and binding a path-free registry namespace, exact live owner, exact controller identity and immutable owner release.
+
+The optional host lane exists for runtimes whose detached controller has no observable distinction between “the task ended” and “a live task may call again.” It is adapter evidence, not a required user wrapper: an adapter may declare and release it, while an absent, mismatched, active, unsupported-version or incomplete lease leaves that controller protected. Controllerless exact orphan handling remains independent of host integration. Neither lane bypasses client visibility, profile, browser-version, age, cooling, identity, mode, journaling or revival gates. [TASKS.md](TASKS.md) defines command-owned semantics; [IPC.md](IPC.md) defines the optional host primitive. Release supplies ownership evidence, never signal or cleanup-success authority. The App's terminal receipt/impact projection remains the result authority. Installed activation remains separately recorded in [current-state.md](current-state.md).
 
 ---
 
@@ -531,7 +537,11 @@ unlinger protect <incident-id>
 unlinger unprotect <incident-id>
 unlinger scan --dry-run
 unlinger export-diagnostics <incident-id>
+unlinger session run --session <name> --registry-namespace <16-hex> --controller-version <version> -- COMMAND...
+unlinger session status <lease-id> [--json]
 ```
+
+`unlinger session run` is an optional host-integration wrapper, not an ordinary manual cleanup command. It does not launch a browser by itself or send a signal: it runs the supplied host command as the exact owner while preserving the declared ordinary Playwright session name. A person installing Unlinger is not expected to create leases by hand, and this optional path does not replace integration-independent cleanup of controllerless exact orphans.
 
 `status` should answer only what matters:
 
@@ -568,6 +578,7 @@ The App may select user-facing coverage copy only from typed compatibility reaso
 16. Stable public event tokens identify retained events without exposing internal event/attempt IDs; missing typed outcome never becomes a fabricated success.
 17. Frontend schemas cannot encode service lifecycle or signal authority, and version skew never falls back from v4 to v3 or v1.
 18. Browser product phase, compatibility, coverage, support catalog and recent settlement have one daemon-owned v4 projection; a frontend must not reconstruct stronger truth from separate reads.
+19. A host session-owner hint applies only to an exact allowlisted controller version, path-free registry selector, live owner window and controller identity; absence or mismatch preserves protection and never becomes signal authority by itself.
 
 ---
 

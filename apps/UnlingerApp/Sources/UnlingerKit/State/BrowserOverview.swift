@@ -23,6 +23,7 @@ public enum BrowserCoverageNotice: Equatable, Hashable, Sendable {
     case unsupportedVersion
     case versionUnavailable
     case controllerUnverified
+    case sessionOwnerUnverified
     case observationOnly
     case controlPathIncomplete
     case unknown(reasonID: String)
@@ -34,6 +35,7 @@ public enum BrowserCoverageNotice: Equatable, Hashable, Sendable {
         case .unsupportedVersion: "browser.coverage.unsupported_version"
         case .versionUnavailable: "browser.coverage.version_unavailable"
         case .controllerUnverified: "browser.coverage.controller_unverified"
+        case .sessionOwnerUnverified: "browser.coverage.session_owner_unverified"
         case .observationOnly: "browser.coverage.observation_only"
         case .controlPathIncomplete: "browser.coverage.control_path_incomplete"
         case .unknown: "browser.coverage.generic"

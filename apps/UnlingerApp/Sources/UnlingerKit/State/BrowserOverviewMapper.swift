@@ -176,6 +176,7 @@ public enum BrowserOverviewMapper {
         case "protection.browser_version_unsupported": .unsupportedVersion
         case "protection.browser_version_missing": .versionUnavailable
         case "protection.controller_version_unverified": .controllerUnverified
+        case "protection.ordinary_session_owner_unverified": .sessionOwnerUnverified
         case "protection.version_observational_only": .observationOnly
         case "protection.debug_peer_visibility_incomplete": .controlPathIncomplete
         default: .unknown(reasonID: reasonID)

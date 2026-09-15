@@ -20,6 +20,6 @@ pub use store::{
     ObservationRecord, ObservedIncidentIdentity, OrdinaryMutation, PreparedActionHandle,
     PreparedArtifactActionHandle, ProtectedIncidentSummary, ProtectionProjection,
     ProtectionReconciliation, PruneResult, RetentionPolicy, RetryBlockReconciliation,
-    StorageRecoveryOccurrence, StorageRecoveryReason, StoreAttentionProjection, StoreError,
-    TaskLease, TaskPhase, TaskStatus,
+    SessionOwnerLease, SessionOwnerStatus, StorageRecoveryOccurrence, StorageRecoveryReason,
+    StoreAttentionProjection, StoreError, TaskLease, TaskPhase, TaskStatus,
 };

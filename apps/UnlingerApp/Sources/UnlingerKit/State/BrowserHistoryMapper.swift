@@ -78,6 +78,11 @@ public enum BrowserHistoryMapper {
                 return (event, receipt)
             }
             .max { $0.0.occurredAtUnixMillis < $1.0.occurredAtUnixMillis }?.1
+        let withoutIntervention: Bool = if case .cleanup(let receipt) = latestEvent.payload {
+            receipt.endedWithoutIntervention
+        } else {
+            false
+        }
         let state = currentSession?.state ?? latestEvent.state
         let coverageNotice = compatibility?.reasonId.map(BrowserOverviewMapper.coverageNotice)
 
@@ -92,13 +97,17 @@ public enum BrowserHistoryMapper {
             observedVersion: currentSession?.observedVersion
                 ?? compatibility?.observedVersion,
             state: state,
-            stateKey: currentSession?.stateKey ?? BrowserOverviewMapper.stateKey(for: state),
+            stateKey: currentSession?.stateKey ?? (withoutIntervention
+                ? "browser.session.ended_without_intervention"
+                : BrowserOverviewMapper.stateKey(for: state)),
             reasonKey: currentSession?.reasonKey
-                ?? BrowserOverviewMapper.sessionReasonKey(
+                ?? (currentSession == nil && withoutIntervention
+                    ? "detail.cleanup.without_intervention"
+                    : BrowserOverviewMapper.sessionReasonKey(
                     state: state,
                     mode: mode,
                     coverageNotice: coverageNotice
-                ),
+                )),
             memberCount: currentSession?.memberCount
                 ?? latestObservation?.memberCount
                 ?? latestCleanup?.resources.before?.processCount,

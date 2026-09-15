@@ -2,7 +2,7 @@
 
 Unlinger source接受四条exact local wire：
 
-- `schema_version = 1`：Rust CLI、task ownership、diagnosis 与 service lifecycle/operator compatibility；
+- `schema_version = 1`：Rust CLI、task/session ownership、diagnosis 与 service lifecycle/operator compatibility；
 - `schema_version = 3`：legacy-compatible frontend endpoint；
 - `schema_version = 4`：transitional atomic browser-product endpoint；
 - `schema_version = 5`：current native App contract，增加impact、storage residue与observation span facts。
@@ -238,14 +238,14 @@ V1 may expose bounded internal diagnostic identities needed by CLI/service trans
 
 Current source accepts schemas 1, 3, 4 and 5. The source App emits schema v5 only and treats a v4-, v3-, or v1-only endpoint as incompatible rather than silently downgrading. Schema v4 preserves its prior atomic overview and response shapes; schema v3 preserves its existing commands; schema v1 remains operator-only and returns a trusted `unsupported_schema` envelope to an unsupported frontend request.
 
-The current task-lifetime backend uses SQLite v8 and serves the unchanged schema-v5 App, retaining v4/v3 compatibility and operator v1. SQLite and frontend protocol versions are distinct. [Current state](current-state.md) owns exact installed generation and rollback evidence.
+The source backend uses SQLite v10 (the unchanged reference installation uses v8) and serves the unchanged schema-v5 App, retaining v4/v3 compatibility and operator v1. SQLite v10 composes the v9 action-attribution migration with optional host session-owner leases. SQLite and frontend protocol versions are distinct. [Current state](current-state.md) owns exact installed generation and rollback evidence.
 
 The service retains the prior snapshot and exact generation identity after candidate readiness, blocks mode/install/uninstall mutations during the lease, and exposes explicit report-only restart, accept and rollback commands. A first install can roll back to the absence of a prior service; an upgrade restores the exact prior generation/database. Readiness, acceptance and enforcement are separate durable states.
 
 ## Verification anchors
 
 - [`crates/unlinger-protocol/src/lib.rs`](../crates/unlinger-protocol/src/lib.rs): v5 DTOs/commands, v4/v3 compatibility responses, receipts, envelopes and fixture decoders;
-- [`crates/unlinger-daemon/src/store.rs`](../crates/unlinger-daemon/src/store.rs): SQLite v8 migration/task ownership, observation spans, independent impact authority, storage residue, event tokens, namespace/receipt/revision transactions;
+- [`crates/unlinger-daemon/src/store.rs`](../crates/unlinger-daemon/src/store.rs): SQLite v10 session-owner leases, v9 attribution repair and v8 task ownership, observation spans, independent impact authority, storage residue, event tokens, namespace/receipt/revision transactions;
 - [`crates/unlinger-daemon/src/public_action_policy.rs`](../crates/unlinger-daemon/src/public_action_policy.rs): shared policy matrix;
 - [`crates/unlinger-daemon/tests/history_store.rs`](../crates/unlinger-daemon/tests/history_store.rs): migration, atomicity, namespace, replay and recovery tests;
 - [`crates/unlinger-daemon/tests/ipc_roundtrip.rs`](../crates/unlinger-daemon/tests/ipc_roundtrip.rs): v1/v2/v3/v4/v5 routing, atomic browser projection, impact/residue/span compatibility, exact settlement identity, lifecycle serialization and raw-socket behavior;
@@ -260,4 +260,45 @@ Changing wire shape, requiredness, limits, error discriminators, readiness/fresh
 
 Source schema v1 adds `task_reserve {task_id}`, `task_activate {task_id, capability, owner_pid}`, `task_finish {task_id, capability}` and read-only `task_status {task_id}`. These commands do not exist in frontend schemas v3/v4/v5 and never arm or change service mode. Reserve/activate require a healthy ready daemon and authenticated local socket peer PID (`LOCAL_PEERPID`) in addition to the existing same-UID check. Activation requires the registrar's exact current child; finish checks native owner absence. Registry transitions are durable and conditional, released tasks cannot reactivate, and one timed-out mutation is never resent.
 
-`task_lease` contains the fresh opaque task/session selector and a private capability; only the registering CLI receives it. `task_status` returns task/session selector, phase, optional release reason and bound incident IDs. It does not return capability, command, workspace, native owner identity or a synthetic cleaned state. Existing incident receipt/impact routes remain the cleanup result authority. SQLite v8 adds the two task tables transactionally without changing existing v7 impact/history authority. See [TASKS.md](TASKS.md).
+`task_lease` contains the fresh opaque task/session selector and a private capability; only the registering CLI receives it. `task_status` returns task/session selector, phase, optional release reason and bound incident IDs. It does not return capability, command, workspace, native owner identity or a synthetic cleaned state. Existing incident receipt/impact routes remain the cleanup result authority. SQLite v8 added the two task tables transactionally; source v10 retains them without changing their meaning. See [TASKS.md](TASKS.md).
+
+## Optional host session-owner commands
+
+Source operator schema v1 also adds:
+
+```text
+session_owner_declare {
+  session_name,
+  registry_namespace,
+  controller_version
+}
+session_owner_activate { lease_id, capability, owner_pid }
+session_owner_release { lease_id, capability }
+session_owner_status { lease_id }
+```
+
+This is an adapter primitive for an already-existing ordinary Playwright CLI session, not a frontend command, browser launcher, signal request or manual “clean now” action. `registry_namespace` is the exact 16-lowercase-hex directory name from the controller-owned Playwright registry. The daemon derives a path-free selector from that namespace plus the unchanged ordinary session name; a workspace path and socket pathname never cross this IPC boundary. Task-owned `unlinger-<task-id>` selectors are rejected by this lane.
+
+Declare/activate require a healthy ready daemon and authenticated same-user peer. Declaration creates or idempotently rejoins only the current unreleased generation for the same registrar, session name and controller version. Activation additionally proves `owner_pid` is the registrar peer's exact current child. Release is immutable and succeeds only after native lookup proves that exact owner is gone; read failure remains unavailable, and one timed-out mutation is never resent. The engine binds only a controller with the exact selector, session name, controller version, UID, executable identity and birth inside the activation/release window.
+
+The source Playwright `0.6.0` pack permits this evidence only for ordinary `playwright-core` `1.62.1`. An unsupported version can be recorded but never clears `protection.controller_version_unverified`. An exact active lease yields `protection.session_owner_active`; an absent or mismatched lease yields `protection.ordinary_session_owner_unverified`; incomplete visibility or live clients retain their own protection. A released binding supplies abandonment evidence only. Every browser/profile/age/cooling/identity/mode/journal/revival gate still applies.
+
+The CLI exposes one coherent adapter path, `unlinger session run --session <name> --registry-namespace <16-hex> --controller-version <version> -- COMMAND...`, plus read-only `session status`. The same CLI process declares the lease, starts a gated exact child with the unchanged `PLAYWRIGHT_CLI_SESSION`, activates it before allowing exec, waits for the actual owner to exit and requests immutable release. Direct split lifecycle commands stay on operator IPC for an in-process host adapter; they are not exposed as a misleading multi-process shell workflow. No supported Codex adapter currently drives this lifecycle automatically, and a new lease generation does not adopt a controller born before that generation's activation. Those cases remain protected.
+
+SQLite v10 stores the private lease capability, selector fingerprint, unchanged session name, exact controller version, registrar/owner identities, timestamps and bound controller identities. Status omits capability and native owner/controller identity. Records are retained for at least 14 days after release and pruned only after complete exact-identity coverage proves the selector/controller absent. Frontend v3/v4/v5 commands and DTOs exclude every session-owner payload.
+
+
+## No-intervention completion
+
+Frontend wire versions remain v5/v4/v3. A process absence result still has
+`process_outcome: cleared`; absence alone does not authorize an impact claim.
+The reason `cleanup.tree_gone_without_signal` identifies a completion without a
+delivered signal or artifact action. Such a receipt has no estimated reclaimed
+memory, is excluded from `proved_reclaim_count` and `recent_settlement`, and is
+rendered as ended without intervention by the candidate App. Retained legacy
+no-signal receipts receive this projection without rewriting their raw events.
+
+An empty `browser_overview` has phase `unknown` when classification coverage is
+incomplete. Complete empty observations remain `clear`, and known positive
+sessions retain their existing phase. No new lifecycle command, automatic retry,
+cleanup eligibility, or public raw-process data is introduced.

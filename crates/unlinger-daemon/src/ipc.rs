@@ -285,6 +285,28 @@ pub enum IpcCommand {
     TaskStatus {
         task_id: String,
     },
+    /// Declare durable host ownership of an already-existing ordinary
+    /// Playwright CLI session. The namespace is Playwright's path-free,
+    /// 16-hex registry directory name; no workspace or socket path crosses IPC.
+    SessionOwnerDeclare {
+        session_name: String,
+        registry_namespace: String,
+        controller_version: String,
+    },
+    /// Bind the declaring host's exact child as the live session owner.
+    SessionOwnerActivate {
+        lease_id: String,
+        capability: String,
+        owner_pid: u32,
+    },
+    /// Release the session owner once its exact command owner is gone.
+    SessionOwnerRelease {
+        lease_id: String,
+        capability: String,
+    },
+    SessionOwnerStatus {
+        lease_id: String,
+    },
     History {
         limit: usize,
     },
@@ -335,6 +357,8 @@ pub enum IpcPayload {
     Status(DaemonStatus),
     TaskLease(crate::TaskLease),
     TaskStatus(crate::TaskStatus),
+    SessionOwnerLease(crate::SessionOwnerLease),
+    SessionOwnerStatus(crate::SessionOwnerStatus),
     History(Vec<HistoryEvent>),
     Incident(IncidentDetail),
     Pause {
@@ -426,6 +450,7 @@ pub(crate) struct RosterSnapshot {
     pub cycle_token: Option<String>,
     pub observed_at_unix_millis: Option<u64>,
     pub freshness: RosterFreshness,
+    pub classification_complete: bool,
     pub reports: Vec<IncidentReport>,
 }
 
@@ -440,6 +465,7 @@ struct RosterState {
     cycle_token: Option<String>,
     observed_at_unix_millis: Option<u64>,
     freshness: RosterFreshness,
+    classification_complete: bool,
     reports: Vec<IncidentReport>,
     active_cycle_token: Option<String>,
 }
@@ -450,6 +476,7 @@ impl Default for RosterState {
             cycle_token: None,
             observed_at_unix_millis: None,
             freshness: RosterFreshness::NeverObserved,
+            classification_complete: false,
             reports: Vec::new(),
             active_cycle_token: None,
         }
@@ -547,6 +574,7 @@ impl ControlPlane {
         cycle_token: &str,
         observed_at_unix_millis: u64,
         reports: Vec<IncidentReport>,
+        classification_complete: bool,
     ) -> Result<(), ControlError> {
         let mut roster = match self.roster.lock() {
             Ok(guard) => guard,
@@ -559,6 +587,8 @@ impl ControlPlane {
         }
         roster.cycle_token = Some(cycle_token.to_owned());
         roster.observed_at_unix_millis = Some(observed_at_unix_millis);
+        roster.classification_complete =
+            classification_complete && reports.len() <= MAX_ROSTER_ITEMS;
         roster.reports.clear();
         roster
             .reports
@@ -596,6 +626,7 @@ impl ControlPlane {
             cycle_token: roster.cycle_token.clone(),
             observed_at_unix_millis: roster.observed_at_unix_millis,
             freshness: roster.freshness,
+            classification_complete: roster.classification_complete,
             reports: roster.reports.clone(),
         }
     }
@@ -627,6 +658,7 @@ impl ControlPlane {
             cycle_token: roster_guard.cycle_token.clone(),
             observed_at_unix_millis: roster_guard.observed_at_unix_millis,
             freshness: roster_guard.freshness,
+            classification_complete: roster_guard.classification_complete,
             reports: roster_guard.reports.clone(),
         };
         drop(roster_guard);
@@ -1067,7 +1099,7 @@ impl ControlPlane {
             .map_err(|_| ControlError::Unavailable("daemon status lock is poisoned".to_owned()))
     }
 
-    fn handle_task_peer_at(
+    fn handle_owner_peer_at(
         &self,
         command: IpcCommand,
         peer_pid: u32,
@@ -1191,8 +1223,137 @@ impl ControlPlane {
                     .map(IpcPayload::TaskStatus)
                     .ok_or_else(|| ControlError::NotFound("task not found".to_owned()))
             }
+            IpcCommand::SessionOwnerDeclare {
+                session_name,
+                registry_namespace,
+                controller_version,
+            } => {
+                self.require_ready_for_ownership("session-owner declaration")?;
+                if !unlinger_core::valid_registry_namespace(&registry_namespace) {
+                    return Err(ControlError::InvalidArgument(
+                        "session-owner registry namespace must be 16 lowercase hex bytes"
+                            .to_owned(),
+                    ));
+                }
+                let selector_fingerprint = unlinger_core::ordinary_selector_fingerprint(
+                    &registry_namespace,
+                    &session_name,
+                );
+                self.store
+                    .declare_session_owner(
+                        &selector_fingerprint,
+                        &session_name,
+                        &controller_version,
+                        &registrar,
+                        now,
+                    )
+                    .map(IpcPayload::SessionOwnerLease)
+                    .map_err(map_store_error)
+            }
+            IpcCommand::SessionOwnerActivate {
+                lease_id,
+                capability,
+                owner_pid,
+            } => {
+                self.require_ready_for_ownership("session-owner activation")?;
+                let scope = self
+                    .store
+                    .authorize_session_owner(&lease_id, &capability)
+                    .map_err(map_store_error)?;
+                if scope.registrar != registrar {
+                    return Err(ControlError::Conflict(
+                        "session-owner activation belongs to its original registrar".to_owned(),
+                    ));
+                }
+                let owner = native
+                    .lookup(owner_pid)
+                    .map_err(|_| {
+                        ControlError::Unavailable("session owner identity unavailable".to_owned())
+                    })?
+                    .ok_or_else(|| ControlError::Conflict("session owner has exited".to_owned()))?;
+                if owner.parent_pid != peer_pid || owner.uid != registrar.uid {
+                    return Err(ControlError::Conflict(
+                        "session owner must be the registrar's exact child".to_owned(),
+                    ));
+                }
+                let identity = TaskOwnerIdentity::from_process(&owner).ok_or_else(|| {
+                    ControlError::InvalidArgument("invalid session owner identity".to_owned())
+                })?;
+                self.store
+                    .activate_session_owner(&lease_id, &identity, now)
+                    .map_err(map_store_error)?;
+                self.store
+                    .session_owner_status(&lease_id)
+                    .map_err(map_store_error)?
+                    .map(IpcPayload::SessionOwnerStatus)
+                    .ok_or_else(|| ControlError::NotFound("session owner not found".to_owned()))
+            }
+            IpcCommand::SessionOwnerRelease {
+                lease_id,
+                capability,
+            } => {
+                let scope = self
+                    .store
+                    .authorize_session_owner(&lease_id, &capability)
+                    .map_err(map_store_error)?;
+                if scope.released_at_us.is_none() {
+                    if let Some(owner) = &scope.owner {
+                        match native.lookup(owner.pid) {
+                            Ok(Some(process)) if owner.matches(&process) => {
+                                return Err(ControlError::Conflict(
+                                    "session owner is still running".to_owned(),
+                                ));
+                            }
+                            Err(_) => {
+                                return Err(ControlError::Unavailable(
+                                    "session owner absence is unproved".to_owned(),
+                                ));
+                            }
+                            _ => {}
+                        }
+                    }
+                    self.store
+                        .release_session_owner(
+                            &lease_id,
+                            now,
+                            if scope.owner.is_some() {
+                                "reported_exit"
+                            } else {
+                                "never_started"
+                            },
+                            scope.owner.as_ref(),
+                        )
+                        .map_err(map_store_error)?;
+                }
+                self.store
+                    .session_owner_status(&lease_id)
+                    .map_err(map_store_error)?
+                    .map(IpcPayload::SessionOwnerStatus)
+                    .ok_or_else(|| ControlError::NotFound("session owner not found".to_owned()))
+            }
+            IpcCommand::SessionOwnerStatus { lease_id } => self
+                .store
+                .session_owner_status(&lease_id)
+                .map_err(map_store_error)?
+                .map(IpcPayload::SessionOwnerStatus)
+                .ok_or_else(|| ControlError::NotFound("session owner not found".to_owned())),
             _ => self.handle_at(command, now),
         }
+    }
+
+    fn require_ready_for_ownership(&self, what: &str) -> Result<(), ControlError> {
+        let status = self.lock_status()?;
+        if !status.healthy || !status.ready || status.draining {
+            return Err(ControlError::Unavailable(format!(
+                "{what} requires a healthy ready daemon"
+            )));
+        }
+        if status.startup_state == StartupState::Failed {
+            return Err(ControlError::Unavailable(format!(
+                "{what} requires a healthy ready daemon"
+            )));
+        }
+        Ok(())
     }
 
     pub fn handle_at(
@@ -1210,8 +1371,12 @@ impl ControlPlane {
                 .ok_or_else(|| ControlError::NotFound("task not found".to_owned())),
             IpcCommand::TaskReserve { .. }
             | IpcCommand::TaskActivate { .. }
-            | IpcCommand::TaskFinish { .. } => Err(ControlError::Unavailable(
-                "task registration requires an authenticated local socket".to_owned(),
+            | IpcCommand::TaskFinish { .. }
+            | IpcCommand::SessionOwnerDeclare { .. }
+            | IpcCommand::SessionOwnerActivate { .. }
+            | IpcCommand::SessionOwnerRelease { .. }
+            | IpcCommand::SessionOwnerStatus { .. } => Err(ControlError::Unavailable(
+                "ownership registration requires an authenticated local socket".to_owned(),
             )),
             IpcCommand::History { limit } => {
                 if limit > MAX_HISTORY_LIMIT {
@@ -1522,6 +1687,172 @@ mod control_plane_tests {
             control.store().pause_until().expect("read durable pause"),
             Some(1_020)
         );
+    }
+
+    /// The operator routing itself (no socket) with an owned child: declare,
+    /// exact-child activation, refused live release, terminal release, and a
+    /// fresh generation for a later host turn.
+    #[test]
+    fn session_owner_operator_lane_requires_the_exact_child_and_terminates_releases() {
+        let temp = TempState::new();
+        let store = HistoryStore::open(temp.0.join("history.sqlite3")).expect("open history");
+        let control = ControlPlane::new(
+            store,
+            DaemonStatus::new(DaemonMode::ReportOnly, std::process::id()),
+        )
+        .expect("restore control state");
+        control.complete_successful_cycle(1).expect("ready");
+        let peer = std::process::id();
+        let registry_namespace = "0521184cff085302".to_owned();
+        let session_name = "default".to_owned();
+        let controller_version = "1.62.1".to_owned();
+        let declare = |session_name: String, registry_namespace: String| -> IpcCommand {
+            IpcCommand::SessionOwnerDeclare {
+                session_name,
+                registry_namespace,
+                controller_version: controller_version.clone(),
+            }
+        };
+
+        let IpcPayload::SessionOwnerLease(lease) = control
+            .handle_owner_peer_at(
+                declare(session_name.clone(), registry_namespace.clone()),
+                peer,
+                1_000,
+            )
+            .expect("declare session owner")
+        else {
+            panic!("session-owner declaration payload");
+        };
+        assert_eq!(lease.generation, 1);
+        assert_eq!(lease.session_name, "default");
+
+        // Malformed namespaces and task-shaped selectors are refused.
+        assert!(
+            control
+                .handle_owner_peer_at(
+                    declare(session_name.clone(), "not-a-namespace".to_owned()),
+                    peer,
+                    2_000,
+                )
+                .is_err()
+        );
+        assert!(
+            control
+                .handle_owner_peer_at(
+                    declare(
+                        "unlinger-0123456789abcdef0123456789abcdef".to_owned(),
+                        registry_namespace.clone(),
+                    ),
+                    peer,
+                    2_000,
+                )
+                .is_err()
+        );
+
+        // A live process that is not the registrar's exact child is refused.
+        assert!(
+            control
+                .handle_owner_peer_at(
+                    IpcCommand::SessionOwnerActivate {
+                        lease_id: lease.lease_id.clone(),
+                        capability: lease.capability.clone(),
+                        owner_pid: peer,
+                    },
+                    peer,
+                    3_000,
+                )
+                .is_err()
+        );
+
+        let mut child = std::process::Command::new("/bin/sleep")
+            .arg("60")
+            .spawn()
+            .expect("owned session-owner child");
+        let IpcPayload::SessionOwnerStatus(active) = control
+            .handle_owner_peer_at(
+                IpcCommand::SessionOwnerActivate {
+                    lease_id: lease.lease_id.clone(),
+                    capability: lease.capability.clone(),
+                    owner_pid: child.id(),
+                },
+                peer,
+                3_000,
+            )
+            .expect("activate session owner")
+        else {
+            panic!("session-owner activation payload");
+        };
+        assert_eq!(active.phase, crate::TaskPhase::Active);
+        assert!(!active.controller_bound);
+
+        assert!(
+            control
+                .handle_owner_peer_at(
+                    IpcCommand::SessionOwnerRelease {
+                        lease_id: lease.lease_id.clone(),
+                        capability: lease.capability.clone(),
+                    },
+                    peer,
+                    4_000,
+                )
+                .is_err(),
+            "a live exact owner cannot be released"
+        );
+        let _ = child.kill();
+        let _ = child.wait();
+
+        let IpcPayload::SessionOwnerStatus(released) = control
+            .handle_owner_peer_at(
+                IpcCommand::SessionOwnerRelease {
+                    lease_id: lease.lease_id.clone(),
+                    capability: lease.capability.clone(),
+                },
+                peer,
+                5_000,
+            )
+            .expect("release session owner")
+        else {
+            panic!("session-owner release payload");
+        };
+        assert_eq!(released.phase, crate::TaskPhase::Released);
+        assert_eq!(released.release_reason.as_deref(), Some("reported_exit"));
+
+        // Terminal: no re-activation, no wrong-capability release, and the next
+        // declaration over the same ordinary session is a fresh generation.
+        assert!(
+            control
+                .handle_owner_peer_at(
+                    IpcCommand::SessionOwnerActivate {
+                        lease_id: lease.lease_id.clone(),
+                        capability: lease.capability.clone(),
+                        owner_pid: peer,
+                    },
+                    peer,
+                    6_000,
+                )
+                .is_err()
+        );
+        assert!(
+            control
+                .handle_owner_peer_at(
+                    IpcCommand::SessionOwnerRelease {
+                        lease_id: lease.lease_id.clone(),
+                        capability: "0".repeat(32),
+                    },
+                    peer,
+                    6_000,
+                )
+                .is_err()
+        );
+        let IpcPayload::SessionOwnerLease(second) = control
+            .handle_owner_peer_at(declare(session_name, registry_namespace), peer, 7_000)
+            .expect("declare a fresh generation")
+        else {
+            panic!("second session-owner declaration payload");
+        };
+        assert_ne!(second.lease_id, lease.lease_id);
+        assert_eq!(second.generation, 2);
     }
 }
 
@@ -2218,8 +2549,12 @@ fn serve_connection(stream: &mut UnixStream, control: &ControlPlane) -> Result<(
             let result = match request.command {
                 command @ (IpcCommand::TaskReserve { .. }
                 | IpcCommand::TaskActivate { .. }
-                | IpcCommand::TaskFinish { .. }) => {
-                    peer_pid(stream).and_then(|pid| control.handle_task_peer_at(command, pid, now))
+                | IpcCommand::TaskFinish { .. }
+                | IpcCommand::SessionOwnerDeclare { .. }
+                | IpcCommand::SessionOwnerActivate { .. }
+                | IpcCommand::SessionOwnerRelease { .. }
+                | IpcCommand::SessionOwnerStatus { .. }) => {
+                    peer_pid(stream).and_then(|pid| control.handle_owner_peer_at(command, pid, now))
                 }
                 command => control.handle_at(command, now),
             };

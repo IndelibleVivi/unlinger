@@ -875,7 +875,7 @@ fn frontend_schema_v4_browser_overview_is_atomic_typed_and_public_safe() {
         reason_id: None,
     };
     control
-        .publish_roster(&cycle, 1_050, vec![report])
+        .publish_roster(&cycle, 1_050, vec![report], true)
         .expect("publish roster");
     control.finish_observation_cycle(&cycle, true);
     control
@@ -943,6 +943,7 @@ fn frontend_schema_v5_projects_impact_residue_and_observation_spans_without_chan
     let attempt = store
         .begin_cleanup_attempt(2_100, &report, "epoch-v5-impact")
         .expect("begin cleanup attempt");
+    journal_delivered_term(&store, &attempt, 2110);
     store
         .complete_cleanup_attempt(
             &attempt,
@@ -990,7 +991,7 @@ fn frontend_schema_v5_projects_impact_residue_and_observation_spans_without_chan
     let control = ControlPlane::new(store, status).expect("restore v5 projection");
     let cycle = control.begin_observation_cycle(3_000).expect("begin cycle");
     control
-        .publish_roster(&cycle, 3_050, Vec::new())
+        .publish_roster(&cycle, 3_050, Vec::new(), true)
         .expect("publish empty current roster");
     control.finish_observation_cycle(&cycle, true);
     control
@@ -1092,6 +1093,7 @@ fn schema_v5_browser_overview_joins_the_exact_recent_settlement_by_event_identit
     let attempt = store
         .begin_cleanup_attempt(2_000, &report, "epoch-v5-settlement")
         .expect("begin settlement attempt");
+    journal_delivered_term(&store, &attempt, 2000);
     store
         .complete_cleanup_attempt(
             &attempt,
@@ -1128,7 +1130,7 @@ fn schema_v5_browser_overview_joins_the_exact_recent_settlement_by_event_identit
     let control = ControlPlane::new(store, status).expect("restore settlement projection");
     let cycle = control.begin_observation_cycle(3_000).expect("begin cycle");
     control
-        .publish_roster(&cycle, 3_050, Vec::new())
+        .publish_roster(&cycle, 3_050, Vec::new(), true)
         .expect("publish empty current roster");
     control.finish_observation_cycle(&cycle, true);
     control
@@ -1269,6 +1271,7 @@ fn frontend_schema_v3_observation_roster_is_public_redacted_and_fresh() {
                 "inc-public-roster",
                 "tracking-private-roster",
             )],
+            true,
         )
         .expect("publish observation roster");
     control.finish_observation_cycle(&cycle_token, true);
@@ -1345,7 +1348,7 @@ fn frontend_schema_v3_observation_roster_is_bounded() {
         .begin_observation_cycle(100)
         .expect("begin observation cycle");
     control
-        .publish_roster(&cycle_token, 101, reports)
+        .publish_roster(&cycle_token, 101, reports, true)
         .expect("publish observation roster");
     control.finish_observation_cycle(&cycle_token, true);
     let _server = IpcServer::start(&socket, control).expect("start IPC server");
@@ -1799,6 +1802,7 @@ fn malformed_history_projection_cannot_erase_independent_impact_or_durable_pause
     let attempt = store
         .begin_cleanup_attempt(1_000, &report, "epoch-malformed")
         .expect("begin cleared fixture attempt");
+    journal_delivered_term(&store, &attempt, 1_000);
     store
         .complete_cleanup_attempt(
             &attempt,
@@ -1846,5 +1850,112 @@ fn malformed_history_projection_cannot_erase_independent_impact_or_durable_pause
     assert_eq!(
         reopened.pause_until().expect("read preserved owner pause"),
         Some(88_000)
+    );
+}
+
+fn journal_delivered_term(
+    store: &HistoryStore,
+    attempt: &unlinger_daemon::CleanupAttemptHandle,
+    now: u64,
+) {
+    let intent = unlinger_core::CleanupActionIntent {
+        stage: unlinger_core::CleanupStage::PrimaryTerm,
+        pid: 4242,
+        identity_fingerprint: "identity-redacted".to_owned(),
+        signal: unlinger_core::CleanupSignal::Term,
+    };
+    let prepared = store
+        .prepare_cleanup_action(attempt, 0, now, &intent)
+        .unwrap();
+    store
+        .complete_cleanup_action(&prepared, now, unlinger_core::SignalDisposition::Delivered)
+        .unwrap();
+}
+
+#[test]
+fn empty_roster_requires_complete_observation_and_known_sessions_remain_visible() {
+    let temp = TempState::new();
+    let socket = temp.directory.join("overview.sock");
+    let mut status = DaemonStatus::new(DaemonMode::ReportOnly, 42);
+    status.healthy = true;
+    status.ready = true;
+    status.startup_state = StartupState::ReadyReportOnly;
+    let control = ControlPlane::new(
+        HistoryStore::open(temp.directory.join("history.sqlite3")).unwrap(),
+        status,
+    )
+    .unwrap();
+    let _server = IpcServer::start(&socket, control.clone()).unwrap();
+    for (complete, reports, expected) in [
+        (false, Vec::new(), "unknown"),
+        (true, Vec::new(), "clear"),
+        (
+            false,
+            vec![confirmed_report("known", "tracking")],
+            "confirmed",
+        ),
+    ] {
+        let cycle = control.begin_observation_cycle(1_000).unwrap();
+        control
+            .publish_roster(&cycle, 1_050, reports, complete)
+            .unwrap();
+        control.finish_observation_cycle(&cycle, true);
+        control
+            .update_status(|status| status.scan_in_progress = false)
+            .unwrap();
+        let response = raw_request(
+            &socket,
+            r#"{"schema_version":5,"request_id":90,"command":{"command":"browser_overview"}}"#,
+        );
+        assert_eq!(response["payload"]["data"]["phase"], expected);
+    }
+}
+
+#[test]
+fn no_intervention_receipt_has_no_reclaim_settlement_or_memory_claim_over_ipc() {
+    let temp = TempState::new();
+    let socket = temp.directory.join("attribution.sock");
+    let store = HistoryStore::open(temp.directory.join("history.sqlite3")).unwrap();
+    let report = confirmed_report("no-intervention", "synthetic-tracking");
+    let attempt = store
+        .begin_cleanup_attempt(1_000, &report, "epoch-test")
+        .unwrap();
+    store
+        .complete_cleanup_attempt(
+            &attempt,
+            1_010,
+            &CleanupReceipt {
+                incident_id: report.incident_id,
+                state: IncidentState::Cleared,
+                reason_id: Some("cleanup.tree_gone_no_revival".to_owned()),
+                actions: Vec::new(),
+                artifact_actions: Vec::new(),
+                survivor_pids: Vec::new(),
+                revival_checks_completed: 2,
+                resources: CleanupResources {
+                    estimated_reclaimed_memory_bytes: Some(8_192),
+                    ..Default::default()
+                },
+            },
+        )
+        .unwrap();
+    let control = ControlPlane::new(store, DaemonStatus::new(DaemonMode::ReportOnly, 42)).unwrap();
+    let _server = IpcServer::start(&socket, control).unwrap();
+    let history = raw_request(
+        &socket,
+        r#"{"schema_version":5,"request_id":91,"command":{"command":"history","limit":10}}"#,
+    );
+    let receipt = &history["payload"]["data"][0]["payload"]["cleanup"];
+    assert_eq!(receipt["process_outcome"], "cleared");
+    assert_eq!(receipt["reason_id"], "cleanup.tree_gone_without_signal");
+    assert!(receipt["resources"]["estimated_reclaimed_memory_bytes"].is_null());
+    let overview = raw_request(
+        &socket,
+        r#"{"schema_version":5,"request_id":92,"command":{"command":"browser_overview"}}"#,
+    );
+    assert!(overview["payload"]["data"]["recent_settlement"].is_null());
+    assert_eq!(
+        overview["payload"]["data"]["impact"]["proved_reclaim_count"],
+        0
     );
 }

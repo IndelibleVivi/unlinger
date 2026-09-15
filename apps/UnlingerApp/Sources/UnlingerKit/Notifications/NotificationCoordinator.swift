@@ -248,7 +248,8 @@ public actor NotificationCoordinator: NotificationCoordinating {
     ) -> [String: NotificationCandidate] {
         var candidates: [String: NotificationCandidate] = [:]
         for event in history {
-            guard case .cleanup(let cleanup) = event.payload else { continue }
+            guard case .cleanup(let cleanup) = event.payload,
+                  !cleanup.endedWithoutIntervention else { continue }
             let attentionEligible = cleanup.overallOutcome == .failed
                 || cleanup.overallOutcome == .revived
                 || cleanup.processOutcome == .deliveryUnknown

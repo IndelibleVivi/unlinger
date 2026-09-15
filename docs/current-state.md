@@ -1,6 +1,58 @@
 # Current state
 
-**Updated:** 2026-09-08. **Programme:** 0.1. **Reader posture:** experimental developer source preview; not a signed/notarized App release or multi-day reliability claim.
+**Updated:** 2026-09-15. **Programme:** 0.1. **Reader posture:** experimental developer source preview; not a signed/notarized App release or multi-day reliability claim.
+
+## Current source candidate (2026-09-15)
+
+The working-tree candidate based on `9da14b7` composes bounded FD-list sampling,
+explicit no-intervention completion, action-attributed impact accounting and
+honest empty-observation/connection-failure presentation with optional exact
+host ownership of an existing ordinary Playwright CLI session. It introduces
+SQLite v10 and source Playwright pack `0.6.0`; frontend schemas v5/v4/v3 and
+operator v1 remain version-compatible. This candidate has not replaced,
+migrated, restarted, armed, or observed the reference installation. The
+reference generation 23 / SQLite v8 / Playwright-0.5.0 statements below remain
+installed evidence, not acceptance of the candidate.
+
+Schema-v9 migration archives the old cumulative impact row and leaves raw action
+and event records intact. Proved-reclaim totals are rebuilt only from retained
+cleared attempts with a durable delivered signal; pruned legacy contributions
+are not presented as newly proved and force partial-history labeling. Future
+pruning preserves the corrected cumulative totals. Schema v10 then adds private
+session-owner lease/controller tables without changing that impact authority. A
+pre-v10 binary needs its pre-upgrade database backup; do not point it at a v10
+database.
+
+The source Playwright `0.6.0` pack retains task-owned CLI
+`1.63.0-alpha-2026-08-31` and exactly allowlists ordinary host-owned CLI
+`1.62.1`. The optional lane derives a path-free selector from the controller's
+16-hex registry namespace plus unchanged session name, requires same-user peer
+and exact-child owner activation, binds only the exact controller/version/UID
+inside that lifetime window, and treats release only as abandonment evidence.
+Active, missing, reused, unsupported or incomplete ownership remains protected.
+The App maps the ordinary missing-owner reason to explicit user copy.
+
+Local inspection of the evaluated `1.62.1` runtime found a detached controller
+with one-shot clients and no idle timer. PPID 1, registry age and a temporarily
+idle socket therefore cannot safely distinguish abandonment from a live task
+that may call again. No supported Codex/other-host adapter currently drives the
+new lifecycle automatically, and a fresh owner generation deliberately does not
+adopt an older long-lived controller. The source primitive is consequently a
+foundation, not Phase-2 ambient completion or daily dogfood acceptance.
+
+Focused candidate regressions cover bounded descriptor saturation/error
+handling, owned native FD/socket sampling, no-signal completion through
+executor/store/IPC, transactional v8→v9→v10 migration, path-free ordinary
+session discovery, lease generations, exact owner/controller/version/session
+binding, unsupported-version and active-client protections, operator/CLI
+framing, App copy and notification suppression. The full workspace format,
+strict clippy, test and release-build gates pass; the source-only doctor is
+healthy and the dry-run scan remained nonmutating. The native App passed 86
+Swift tests, its bundle verifier's 9 regression tests, release bundling, two
+isolated report-only socket passes (7 + 7), and a 467-probe Accessibility/RSS
+run with zero probe failures and 30,000 KiB final RSS. These are source and
+isolated-fixture results. No new live-browser, installed-service, ambient,
+multi-day, or release acceptance is claimed.
 
 ## Source, remote and installed state
 
@@ -10,6 +62,7 @@
 | Subsequent test correction | `f22e08eb3410050b380eaee7b84c4ccda2a3ad1a`: bounded post-release offline-lock tests; production locking/timeouts unchanged |
 | Baseline remote verification | [CI 34163955192](https://github.com/IndelibleVivi/unlinger/actions/runs/34163955192) passed for `b70bc94`; [CI 34165331792](https://github.com/IndelibleVivi/unlinger/actions/runs/34165331792) passed for `f22e08e`, including default-parallel Rust tests, release build, Swift tests and App bundling |
 | Current reader preparation | Published source-preview candidate `de1a9c3`: bilingual reader guides, licensed material scopes, current architecture and safe demo teardown; [exact CI 34170593229](https://github.com/IndelibleVivi/unlinger/actions/runs/34170593229) passed all steps |
+| Current source candidate | Uncommitted SQLite v10 / Playwright `0.6.0` composition described above; full local source/App gates passed; not installed or activated |
 | Maintainer's reference service | Accepted generation 23 from `b70bc94`, healthy `ReadyEnforce`, no pending candidate lease; this is one reference installation, not a generation number users should copy |
 | Reference protocols/persistence | Operator v1, frontend v5/v4/v3, SQLite v8; historical v2 rejected |
 | Reference App | Unchanged ad-hoc-signed schema-v5 App assembled from `016ca58`; neither Developer ID signed nor notarized |
@@ -43,11 +96,11 @@ The publication candidate passed fresh local formatting, strict workspace clippy
 ## Known limits and verification gaps
 
 - The original generation-17 terminal SQLite disk-I/O failure cause remains unproved. Exact-instance containment/recovery and later transactional replacement succeeded; a later healthy database check does not establish the original cause.
-- The new command wrapper does not integrate every Codex App host or browser tool automatically. Exact CLI/browser compatibility, inherited session, lifetime/client proof and all ordinary gates remain required. Unregistered or unverified controllers stay protected.
+- The command wrapper does not integrate every Codex App host or browser tool automatically. The source v10 optional session-owner primitive also has no supported automatic Codex adapter yet. Exact CLI/browser compatibility, lifetime/client proof and all ordinary gates remain required; unregistered, active-owner, reused, unsupported or unverified controllers stay protected.
 - Chrome clone observation now accepts the actual `.app.bundle` shape and no-follow framework links. A real observation matched one clone and 1,475,187,528 regular-file logical bytes; live references were observed and deletion remains unavailable.
 - All artifact admission is disabled. The dormant DAP engine still has a quarantine-after-crash recovery gap and a final pathname-swap TOCTOU. Native pathname-reference tests also intermittently returned no reference for an owned open ordinary or `O_EVTONLY` descriptor under parallel execution; exact serial tests passed, and the cause is unresolved. The active process path does not use that query. [Safety](SAFETY.md) owns these boundaries.
 - The old zero-deadline offline-lock test failed because a concurrent fork can inherit an `O_CLOEXEC` descriptor until exec. A deterministic owned-child probe established that cause; `f22e08e` retains held-lock denial and gives post-release acquisition its existing bounded wait. The final exact-head CI passed. A later local full workspace run reproduced the separate dormant native-query failures above; no assertions were weakened.
-- The latest fixture Accessibility/RSS attempt could not acquire its target window and **did not pass**. Trusted desktop Accessibility separately read the actual installed App. Historical repaired-App evidence includes ten minutes/1,398 tree reads and a later bounded v5 deployment observation; those do not establish multi-day App behavior, packaged notifications or every menu organizer/display arrangement.
+- The current source fixture passed 467 Accessibility-tree probes with zero read failures and an external 30,000 KiB final RSS sample. It did not contact or replace the installed App/service. Historical installed-App evidence includes ten minutes/1,398 tree reads and a later bounded v5 deployment observation; neither source nor installed points establish multi-day App behavior, packaged notifications or every menu organizer/display arrangement.
 - No Intel/universal verification, signed/notarized distribution, automatic update path or public release is claimed. Recognition of agent-browser/Puppeteer is not controlled field acceptance.
 
 ## Publication preparation

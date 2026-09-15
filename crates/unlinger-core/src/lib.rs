@@ -36,4 +36,8 @@ pub use storage_residue::{
     StorageResidueKind, StorageResidueObservation, StorageResidueReferenceCheck,
     StorageResidueStatus,
 };
-pub use task::{TaskControllerBinding, TaskOwnerIdentity, task_id_from_session, valid_task_id};
+pub use task::{
+    SessionOwnerBinding, TaskControllerBinding, TaskOwnerIdentity, ordinary_selector_fingerprint,
+    session_name_from_id, task_id_from_session, valid_ordinary_session_name,
+    valid_registry_namespace, valid_task_id,
+};

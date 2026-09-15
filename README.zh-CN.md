@@ -12,7 +12,8 @@ Unlinger 在 macOS 上观察浏览器自动化留下的会话，并清理其中�
 
 - **看见遗留会话及其原因。** 原生进程快照、版本兼容性、保护原因和脱敏的本地历史。
 - **跟踪一个命令的浏览器生命周期。** `unlinger task run -- COMMAND` 注册实际 command owner；兼容的 Playwright CLI 会话在任务结束后进入候选判断。任务结束本身不授权清理。
-- **看见真实清理成果。** 完成后的 receipt 决定清理会话数、进程数和估算内存。重复观察会合并，不会计成清理成绩。
+- **准确解释普通 Playwright 为什么受保护。** 源码能识别已评估的 `playwright-core` `1.62.1` daemon 形态；如果宿主没有提供精确生命周期证据，App 会明确说明并保留会话不动。Operator schema v1 与 `unlinger session` 已提供 adapter primitive，但目前还没有 Codex adapter 自动驱动它。
+- **看见真实清理成果。** 完成后的 receipt 结合已送达信号的耐久记录，决定清理会话数、进程数和估算内存。未发送信号就结束的会话单独显示为“已结束，未介入”。重复观察会合并，不会计成清理成绩。
 - **观察磁盘残留。** 展示 Chrome code-sign clone 数量及文件逻辑大小。目前不能清理磁盘：启用的策略不会删除 profile、目录或 runtime artifact。
 
 | 范围 | 当前边界 |
@@ -20,6 +21,7 @@ Unlinger 在 macOS 上观察浏览器自动化留下的会话，并清理其中�
 | 平台 | macOS 14+；Apple silicon 已验证，Intel/universal 未验证 |
 | 浏览器 | Chrome for Testing 精确版本 `151.0.7922.34` 或 `152.0.7977.42` |
 | 命令生命周期接入 | `playwright-core` `1.63.0-alpha-2026-08-31` 中的 Playwright CLI，完整继承 Unlinger 发出的 session |
+| 可选现有会话接入 | 普通 `playwright-core` `1.62.1`，且必须有精确 host owner lease；源码 primitive 与测试已存在，自动 host adapter 与 field evidence 尚无 |
 | 其他可识别家族 | agent-browser、Puppeteer；自动清理仅考虑无 controller 且通过所有条件的进程树，这两个家族尚无受控实机清理证据 |
 | 始终保护 | 普通 Chrome、有界面/手动或附着的会话、标准/共享/持久 profile、未验证的 controller、身份不完整的进程 |
 
@@ -27,7 +29,7 @@ Unlinger 在 macOS 上观察浏览器自动化留下的会话，并清理其中�
 
 ## 不安装服务，先试一次
 
-需要 Rust **1.98.0**、macOS command-line developer tools 和 Git。构建 App 还需要 **Swift 6.0+**；App bundle 脚本使用 `rg`（ripgrep）。
+需要 Rust **1.98.0**、macOS command-line developer tools 和 Git。构建 App 还需要 **Swift 6.0+**；App bundle 验证使用 Python 3，无需 ripgrep。
 
 ```bash
 git clone https://github.com/IndelibleVivi/unlinger.git
@@ -46,7 +48,7 @@ cargo build --locked --release --workspace
 
 ![Unlinger 进程清理架构](docs/architecture.svg)
 
-daemon 负责分类、持久化任务生命周期以及清理授权。它核对精确进程身份、浏览器版本、所有权、活跃客户端和 profile 保护，再检查存活时间、稳定性与遗弃等待期。真正执行还需要明确启用 enforcement。每次信号发送都先写 journal、重新验证；确认进程消失并经过 revival 检查后，才形成最终 receipt。App 通过 daemon 提供的一份一致快照展示结果。
+daemon 负责分类、持久化 task/optional-host 生命周期证据以及清理授权。它核对精确进程身份、浏览器与 controller 版本、所有权、活跃客户端和 profile 保护，再检查存活时间、稳定性与遗弃等待期。普通 detached Playwright controller 没有精确 host lifetime 时仍受保护；存活时间、PPID 1 或暂时没有 socket client 都不能替代任务意图。真正执行还需要明确启用 enforcement。每次信号发送都先写 journal、重新验证；确认进程消失并经过 revival 检查后，才形成最终 receipt。App 通过 daemon 提供的一份一致快照展示结果。
 
 [架构说明](docs/ARCHITECTURE.md) 提供中英说明、图中组件的源码依据和可编辑图源。
 
@@ -72,6 +74,7 @@ App 连接另行安装的 daemon；没有 daemon 时会显示 unavailable。构�
 | --- | --- |
 | 试用、安装、退出和卸载 | [开始使用](docs/GETTING_STARTED.md) |
 | 如何接入自己的脚本 | [Task-owned sessions](docs/TASKS.md) |
+| 宿主如何提供精确生命周期证据 | [Operator IPC](docs/IPC.md#optional-host-session-owner-commands) |
 | 为什么会话受到保护 | [支持范围](docs/SUPPORT.md)、[规则](docs/SIGNATURES.md)、[安全模型](docs/SAFETY.md) |
 | 谁拥有状态和执行权限 | [架构](docs/ARCHITECTURE.md)、[IPC](docs/IPC.md)、[App contract](apps/UnlingerApp/Contract/README.md) |
 | 实际验证到哪一步 | [当前状态](docs/current-state.md)、[验收层级](docs/PRE_V0_1_ACCEPTANCE.md)、[Field Lab](docs/FIELDLAB.md) |

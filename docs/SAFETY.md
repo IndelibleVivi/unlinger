@@ -26,6 +26,8 @@ Pressure, CPU, RSS, age, orphan PPID, names, and flags may affect scan urgency o
 
 Task ownership follows [TASKS.md](TASKS.md). The daemon verifies the exact peer-owned gated child before activation, tracks PID/birth/UID across exec, and releases only on native owner absence. Wrapper death alone is insufficient. A stale reserved-state observation cannot release a concurrently activated task. Release is immutable; new session-name reuse after its birth cutoff stays protected. Native client visibility, named Unix connections and surviving non-browser task work are rechecked before signal delivery. Verified same-bundle/version Crashpad helpers are excluded only from active-work blocking, not admitted as additional signal targets. Task release does not change mode, arm an epoch, reset a protection or increment impact.
 
+An ordinary Playwright CLI controller is more ambiguous: in the evaluated `1.62.1` runtime, the detached daemon persists between one-shot clients, so PPID 1, an old registry timestamp, temporary socket idleness or a 90-second quiet interval cannot distinguish abandonment from a live task that may call again. Source therefore keeps such a controller protected unless an optional host adapter supplies a durable exact owner lifecycle. The source `0.6.0` Playwright pack additionally requires exact controller version `1.62.1`; a lease and process merely agreeing with each other is insufficient. Selector fingerprint, unchanged session name, version, UID, exact executable/birth identity and activation/release window must all match. Active owner, live client, incomplete visibility, controller reuse, a new lease over an older controller, unsupported version, absent adapter or any mismatch preserves protection. Released ownership is abandonment evidence only and never a signal target, mode change, cooling shortcut or cleanup result. Controllerless exact orphan handling remains independent of host integration.
+
 ## Frozen execution
 
 The cleanup engine freezes exact targets and evidence from a CONFIRMED report. Before each signal stage it captures a fresh native snapshot, rebuilds classification, verifies that the incident has not acquired a protection or new member, and resolves every surviving target by PID, start microseconds, executable device, and executable inode. It durably commits a PREPARED action before every possible signal delivery. A restart converts any prepared-but-unfinished delivery into `delivery_unknown`, blocks automatic retry and managed arming, and never resends it without an explicit incident retry authorization.
@@ -42,7 +44,7 @@ SIGTERM/SIGINT request a graceful daemon shutdown. A requested shutdown prevents
 
 Pause/resume, named retry and exact protection changes are evaluated through one shared public-action policy. For schema-v3/v4/v5 frontend mutations, the durable state change, typed mutation receipt and durable cleanup-policy revision advance in one immediate SQLite transaction while the ControlPlane lifecycle/status gate is held; the in-memory revision is only a post-commit mirror. Exact receipt replay occurs before current lifecycle policy and never advances state or revision again. Transaction failure advances nothing. Schema-v1 CLI/service compatibility remains separate.
 
-Source SQLite v8 treats cleanup impact as independent authority rather than reconstructing it from bounded observation history. A terminal cleanup and its impact row commit atomically; recovery completes the same invariant. Only measurement-complete proved reclaim contributes memory totals, and an exact cleanup event token resolves recent settlement even when a later failed cleanup exists. Equivalent observations coalesce into bounded spans, but neither observation age nor count retention may evict the lifetime aggregate or cleanup detail before its separate minimum window.
+Source SQLite v10 treats cleanup impact as independent authority rather than reconstructing it from bounded observation history. It retains the v9 action-attribution correction, v8 task ownership and v7 impact/span invariants, then adds private optional session-owner leases without changing cleanup-result authority. A terminal cleanup and its impact row commit atomically; recovery completes the same invariant. Only measurement-complete proved reclaim contributes memory totals, and an exact cleanup event token resolves recent settlement even when a later failed cleanup exists. Equivalent observations coalesce into bounded spans, but neither observation age nor count retention may evict the lifetime aggregate or cleanup detail before its separate minimum window.
 
 The App writes namespace, mutation UUID and canonical intent to an owner-private crash-durable journal before any socket byte. Any post-send untrusted response remains delivery-uncertain; App restart and “check again” use only read-only mutation status and never resend the original command. A receipt can be absent conclusively only while the same receipt-authority namespace remains current. Authority loss retains the unresolved lock. A UI capability or visual dismissal never authorizes or erases a mutation.
 
@@ -62,10 +64,40 @@ Two artifact P2s remain open and are not hidden by the fail-closed source tests 
 
 These paths have synthetic/owned-child verification, historical owner-approved full-timing Chrome-for-Testing enforcement results, and an opt-in fast Field Lab result. The harness admits exact identities only from its unique test profile tree and rejects every out-of-scope signal before the macOS adapter.
 
-The ordinary daemon default remains report-only. The maintainer's accepted reference installation uses the process-only task-lifetime policy: Playwright `0.5.0`, other packs `0.4.0`, SQLite v8 and frontend schema v5. [Current state](current-state.md) owns the exact generation, activation and controlled-cleanup evidence. These controlled cases do not establish multi-day safety, an ordinary ambient eligible cleanup, broad family/version support or release readiness.
+The ordinary daemon default remains report-only. The current source candidate is Playwright `0.6.0`, other packs `0.4.0`, SQLite v10 and frontend schema v5; it is not installed. The maintainer's accepted reference installation remains the process-only task-lifetime policy: Playwright `0.5.0`, other packs `0.4.0`, SQLite v8 and frontend schema v5. [Current state](current-state.md) owns the exact generation, activation and controlled-cleanup evidence. These controlled cases do not establish multi-day safety, an ordinary ambient eligible cleanup, broad family/version support or release readiness.
 
 A candidate retains rollback material until acceptance. `DatabaseBackedUp` is a conservative restore boundary; durable `RollbackInProgress` makes physical restoration replayable across transaction-owned selection states. `AcceptanceInProgress` recovers to the prior state; only durable `Accepted` retires the lease. Each replacement needs its own applicable install/restart/rollback evidence.
 
 ### Native artifact-reference verification gap
 
 On 2026-09-08, parallel native tests intermittently returned no pathname reference despite an owned open ordinary or `O_EVTONLY` descriptor. The same exact tests passed serially; the cause is unresolved. Current packs disable all artifact admission, and process cleanup does not call this pathname query. Resolve this discrepancy before treating the dormant artifact engine as deletion-ready; the existing quarantine/crash and final-path-swap residuals remain separate.
+
+
+## Observation and attribution candidate (2026-09-09)
+
+The FD-count read from process metadata is only a sizing hint. The native
+sampler retries a saturated descriptor list with bounded additional capacity;
+errors, repeated saturation, and the capacity ceiling retain incomplete
+visibility. An unsaturated enumeration is a bounded point observation, not an
+atomic guarantee against later connection or process-identity changes. Existing
+per-signal fresh snapshots, identity checks, arming, and client protections stay
+in place; no browser versions or artifact admission flags are expanded.
+
+A complete empty classification can support a clear overview. Missing process,
+argument, or classification identity facts produce an unknown empty overview;
+a known positive report is still shown. Unrelated socket visibility alone does
+not turn an otherwise complete empty classification into a global failure.
+
+`cleanup.tree_gone_without_signal` means the process tree was confirmed absent
+without a delivered Unlinger signal. Another actor may have ended it; no natural
+exit cause is asserted. It remains a terminal absence record, contributes no
+reclaimed-session/process/memory impact, and sends no reclaim notification in
+the candidate App. Signal attribution is a necessary condition for reclaim
+accounting, not proof of exclusive causation. Memory impact remains an RSS-based
+estimate, not a physical-memory measurement.
+
+SQLite v9 preserves the original aggregate in `impact_attribution_legacy`, then
+rebuilds the public proved-reclaim contribution from retained durable action
+evidence in the same transaction. Incomplete retained history is labeled partial;
+raw receipts, task authority, pause and protection are not reset. Managed upgrade
+and report-only rollback must retain their exact prior-schema backup contract.

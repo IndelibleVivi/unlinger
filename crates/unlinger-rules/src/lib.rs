@@ -30,6 +30,8 @@ pub struct SignaturePack {
     pub supported_versions: String,
     #[serde(default)]
     pub task_controller_version: Option<String>,
+    #[serde(default)]
+    pub session_owner_controller_version: Option<String>,
     pub controller_markers: Vec<String>,
     pub framework_markers: Vec<String>,
     pub ephemeral_profile_markers: Vec<String>,
@@ -88,6 +90,20 @@ impl SignaturePack {
                 "{} is missing a required field or marker family",
                 self.id
             )));
+        }
+        for controller_version in [
+            self.task_controller_version.as_deref(),
+            self.session_owner_controller_version.as_deref(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            if controller_version.trim().is_empty() {
+                return Err(RuleError::InvalidPack(format!(
+                    "{} contains an empty controller version",
+                    self.id
+                )));
+            }
         }
         for marker in self
             .controller_markers
@@ -298,7 +314,7 @@ fn browser_product(bundle_id: &str) -> BrowserProduct {
 fn browser_compatibility(
     browser_roots: &[&ProcessRecord],
     version_gate: Option<BrowserVersionGate>,
-    has_controller: bool,
+    unverified_controller_reason: Option<&'static str>,
     control_path_incomplete: bool,
 ) -> BrowserCompatibility {
     let facts = browser_roots
@@ -343,11 +359,11 @@ fn browser_compatibility(
             Some("protection.version_observational_only"),
         ),
         Some(BrowserVersionGate::ExactSupported | BrowserVersionGate::RangeSupported)
-            if has_controller =>
+            if unverified_controller_reason.is_some() =>
         {
             (
                 BrowserCompatibilityDecision::Protected,
-                Some("protection.controller_version_unverified"),
+                unverified_controller_reason,
             )
         }
         Some(BrowserVersionGate::ExactSupported | BrowserVersionGate::RangeSupported)
@@ -380,6 +396,49 @@ fn policy_bundle_id(policy: &VersionPolicy) -> Option<&str> {
         VersionPolicy::ExactAllowlist { bundle_id, .. }
         | VersionPolicy::BoundedRange { bundle_id, .. } => Some(bundle_id),
     }
+}
+
+/// A recognized Playwright CLI controller that is not using an opaque
+/// `unlinger-<id>` task/session-owner selector.
+fn ordinary_cli_session(controller: &ProcessRecord) -> bool {
+    controller
+        .runtime
+        .playwright_cli
+        .as_ref()
+        .is_some_and(|cli| unlinger_core::task_id_from_session(&cli.session_name).is_none())
+}
+
+fn ordinary_controller_version_supported(pack: &SignaturePack, controller: &ProcessRecord) -> bool {
+    controller
+        .runtime
+        .playwright_cli
+        .as_ref()
+        .is_some_and(|cli| {
+            pack.session_owner_controller_version.as_deref() == Some(cli.version.as_str())
+        })
+}
+
+/// The typed reason a `has_controller` session cannot be trusted for
+/// automatic action, or `None` when an exact binding covers this controller.
+fn unverified_controller_reason(
+    has_controller: bool,
+    has_task_binding: bool,
+    has_session_owner: bool,
+    controller: &ProcessRecord,
+    pack: &SignaturePack,
+) -> Option<&'static str> {
+    if !has_controller || has_task_binding || has_session_owner {
+        return None;
+    }
+    Some(
+        if ordinary_cli_session(controller)
+            && ordinary_controller_version_supported(pack, controller)
+        {
+            "protection.ordinary_session_owner_unverified"
+        } else {
+            "protection.controller_version_unverified"
+        },
+    )
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -543,6 +602,9 @@ pub struct AnalyzerContext {
     pub self_pid: Option<u32>,
     pub ancestor_pids: BTreeSet<u32>,
     pub task_controllers: Vec<unlinger_core::TaskControllerBinding>,
+    /// Durable host-declared ownership of ordinary Playwright CLI sessions.
+    /// Absence is the normal, protected state.
+    pub session_owners: Vec<unlinger_core::SessionOwnerBinding>,
 }
 
 #[derive(Clone, Debug)]
@@ -889,6 +951,9 @@ impl Analyzer {
         let owned_task = (candidate.pack.id == "playwright")
             .then(|| self.owned_task_controller(root, candidate.pack))
             .flatten();
+        let session_owner = (candidate.pack.id == "playwright" && owned_task.is_none())
+            .then(|| self.bound_session_owner(root, candidate.pack))
+            .flatten();
         let task_released = owned_task.is_some_and(|binding| binding.released);
         if let Some(binding) = owned_task {
             evidence.push(item(
@@ -926,7 +991,51 @@ impl Analyzer {
                 protection.insert("protection.task_client_active".to_owned());
             }
         } else if has_controller {
-            protection.insert("protection.controller_version_unverified".to_owned());
+            if let Some(binding) = session_owner {
+                evidence.push(item(
+                    "provenance.session_owner_registered",
+                    EvidenceFamily::AutomationProvenance,
+                    Some(root.pid()),
+                ));
+                if !binding.released {
+                    protection.insert("protection.session_owner_active".to_owned());
+                }
+                let cli = root
+                    .runtime
+                    .playwright_cli
+                    .as_ref()
+                    .expect("verified session owner");
+                if cli.persistent {
+                    protection.insert("protection.persistent_or_unknown_profile".to_owned());
+                }
+                if cli.attached {
+                    protection.insert("protection.attached_debug_peer".to_owned());
+                }
+                if !root.runtime.descriptor_facts_complete
+                    || graph
+                        .processes()
+                        .any(|process| !process.runtime.task_session_facts_complete)
+                {
+                    protection.insert("protection.session_owner_visibility_incomplete".to_owned());
+                }
+                if !root
+                    .runtime
+                    .connected_named_unix_socket_fingerprints
+                    .is_empty()
+                    || self.ordinary_session_has_live_work(graph, binding)
+                {
+                    protection.insert("protection.session_owner_client_active".to_owned());
+                }
+            } else if ordinary_cli_session(root)
+                && ordinary_controller_version_supported(candidate.pack, root)
+            {
+                // A compatible ordinary Playwright CLI controller is exactly
+                // recognized and still refused: without an exact host-declared
+                // owner lease there is no live-owner/abandonment evidence.
+                protection.insert("protection.ordinary_session_owner_unverified".to_owned());
+            } else {
+                protection.insert("protection.controller_version_unverified".to_owned());
+            }
         }
         match version_gate {
             Some(BrowserVersionGate::ExactSupported | BrowserVersionGate::RangeSupported) => {}
@@ -1041,7 +1150,12 @@ impl Analyzer {
         let framework_anchor = has_controller || framework_argument || ephemeral_profile;
         let strong_provenance = framework_anchor && provenance_categories >= 3;
 
-        let controller_parent_live = !task_released
+        let verified_owner_release = owned_task
+            .map(|binding| binding.released)
+            .or_else(|| session_owner.map(|binding| binding.released));
+        let owner_released = verified_owner_release == Some(true);
+
+        let controller_parent_live = !owner_released
             && candidate.controller_pid.is_some_and(|pid| {
                 graph.get(pid).is_some_and(|controller| {
                     controller.parent_pid > 1 && graph.get(controller.parent_pid).is_some()
@@ -1052,19 +1166,26 @@ impl Analyzer {
                 .get(pid)
                 .is_some_and(|controller| controller.parent_pid == 1)
         });
-        let owner_missing = if owned_task.is_some() {
-            task_released
-        } else {
-            controller_reparented
-                || (candidate.controller_pid.is_none()
-                    && has_browser_roots
-                    && browser_roots.iter().all(|browser| {
-                        browser.parent_pid == 1 || graph.get(browser.parent_pid).is_none()
-                    }))
+        let owner_missing = match verified_owner_release {
+            Some(released) => released,
+            None => {
+                controller_reparented
+                    || (candidate.controller_pid.is_none()
+                        && has_browser_roots
+                        && browser_roots.iter().all(|browser| {
+                            browser.parent_pid == 1 || graph.get(browser.parent_pid).is_none()
+                        }))
+            }
         };
         if task_released {
             evidence.push(item(
                 "abandonment.task_released",
+                EvidenceFamily::Abandonment,
+                Some(root.pid()),
+            ));
+        } else if session_owner.is_some_and(|binding| binding.released) {
+            evidence.push(item(
+                "abandonment.session_owner_released",
                 EvidenceFamily::Abandonment,
                 Some(root.pid()),
             ));
@@ -1179,7 +1300,13 @@ impl Analyzer {
         let browser_compatibility = browser_compatibility(
             &browser_roots,
             version_gate,
-            has_controller && owned_task.is_none(),
+            unverified_controller_reason(
+                has_controller,
+                owned_task.is_some(),
+                session_owner.is_some(),
+                root,
+                candidate.pack,
+            ),
             control_path_incomplete,
         );
 
@@ -1229,10 +1356,48 @@ impl Analyzer {
         })
     }
 
+    /// Exact host-declared ownership for an ordinary Playwright CLI session.
+    ///
+    /// The lease binds one ordinary selector fingerprint to one exact
+    /// controller identity and one controller version. Missing, mismatched,
+    /// cross-workspace, cross-version or unreadable facts simply do not bind,
+    /// so the session stays protected. The task-owned `unlinger-<id>` lane is
+    /// never matched here.
+    fn bound_session_owner(
+        &self,
+        process: &ProcessRecord,
+        pack: &SignaturePack,
+    ) -> Option<&unlinger_core::SessionOwnerBinding> {
+        if pack.id != "playwright" || self.context.session_owners.is_empty() {
+            return None;
+        }
+        let cli = process.runtime.playwright_cli.as_ref()?;
+        if unlinger_core::task_id_from_session(&cli.session_name).is_some() {
+            return None;
+        }
+        if pack.session_owner_controller_version.as_deref() != Some(cli.version.as_str()) {
+            return None;
+        }
+        let selector_fingerprint = cli.selector_fingerprint.as_deref()?;
+        self.context.session_owners.iter().find(|binding| {
+            binding.selector_fingerprint == selector_fingerprint
+                && binding.session_name == cli.session_name
+                && binding.controller_version == cli.version
+                && binding.controller.exact_match(&process.identity)
+        })
+    }
+
     fn task_has_live_work(&self, graph: &ProcessGraph, task_id: &str) -> bool {
+        self.session_has_live_work(graph, task_id)
+    }
+
+    /// True when any process outside the bound task session still carries the
+    /// task selector. The bound controller and its own descendants are the
+    /// session under test, not independent work.
+    fn session_has_live_work(&self, graph: &ProcessGraph, session_id: &str) -> bool {
         let mut browser_members = BTreeSet::new();
         for binding in &self.context.task_controllers {
-            if binding.task_id == task_id
+            if binding.task_id == session_id
                 && graph
                     .get(binding.controller.pid)
                     .is_some_and(|process| binding.controller.exact_match(&process.identity))
@@ -1241,8 +1406,53 @@ impl Analyzer {
                 browser_members.insert(binding.controller.pid);
             }
         }
+        self.any_external_session_work(graph, &browser_members, |process| {
+            process
+                .runtime
+                .task_session_name
+                .as_deref()
+                .and_then(unlinger_core::task_id_from_session)
+                == Some(session_id)
+                || ["--session", "-s"].into_iter().any(|flag| {
+                    flag_value(process, flag)
+                        .as_deref()
+                        .and_then(unlinger_core::task_id_from_session)
+                        == Some(session_id)
+                })
+        })
+    }
+
+    /// Ordinary sessions do not get an issued selector, so the only
+    /// client-intent facts available are an explicit `-s/--session` argument
+    /// and the controller's own live named-socket connections.
+    fn ordinary_session_has_live_work(
+        &self,
+        graph: &ProcessGraph,
+        binding: &unlinger_core::SessionOwnerBinding,
+    ) -> bool {
+        let mut browser_members = BTreeSet::new();
+        if graph
+            .get(binding.controller.pid)
+            .is_some_and(|process| binding.controller.exact_match(&process.identity))
+        {
+            browser_members.extend(graph.descendant_pids(binding.controller.pid));
+            browser_members.insert(binding.controller.pid);
+        }
+        self.any_external_session_work(graph, &browser_members, |process| {
+            ["--session", "-s"].into_iter().any(|flag| {
+                flag_value(process, flag).as_deref() == Some(binding.session_name.as_str())
+            })
+        })
+    }
+
+    fn any_external_session_work(
+        &self,
+        graph: &ProcessGraph,
+        session_members: &BTreeSet<u32>,
+        carries_selector: impl Fn(&ProcessRecord) -> bool,
+    ) -> bool {
         graph.processes().any(|process| {
-            if browser_members.contains(&process.pid()) {
+            if session_members.contains(&process.pid()) {
                 return false;
             }
             if process.executable_basename() == "chrome_crashpad_handler"
@@ -1254,28 +1464,17 @@ impl Analyzer {
                     .is_some_and(|bundle| {
                         bundle.bundle_id == "com.google.chrome.for.testing"
                             && graph.processes().any(|browser| {
-                                browser_members.contains(&browser.pid())
+                                session_members.contains(&browser.pid())
                                     && browser.runtime.app_bundle.as_ref() == Some(bundle)
                             })
                     })
             {
                 // These helpers detach by design and exit with their browser.
-                // This exception only avoids counting them as active task work;
-                // it never adds them to a cleanup plan or signal target set.
+                // This exception only avoids counting them as active work; it
+                // never adds them to a cleanup plan or signal target set.
                 return false;
             }
-            process
-                .runtime
-                .task_session_name
-                .as_deref()
-                .and_then(unlinger_core::task_id_from_session)
-                == Some(task_id)
-                || ["--session", "-s"].into_iter().any(|flag| {
-                    flag_value(process, flag)
-                        .as_deref()
-                        .and_then(unlinger_core::task_id_from_session)
-                        == Some(task_id)
-                })
+            carries_selector(process)
         })
     }
 }
@@ -1802,6 +2001,8 @@ mod tests {
         controller_present: bool,
         #[serde(default)]
         task_controller_version: Option<String>,
+        #[serde(default)]
+        session_owner_controller_version: Option<String>,
     }
 
     #[derive(Debug, Deserialize)]
@@ -1981,6 +2182,29 @@ mod tests {
         process
     }
 
+    /// An ordinary (host-named) Playwright CLI daemon with its exact transient
+    /// CLI facts, as the macOS backend would report them.
+    fn ordinary_cli_session(
+        snapshot: &mut Snapshot,
+        session: &str,
+        registry_namespace: &str,
+        version: &str,
+    ) {
+        for process in snapshot.processes.iter_mut() {
+            process.runtime.task_session_facts_complete = true;
+        }
+        snapshot.processes[0].runtime.playwright_cli = Some(unlinger_core::PlaywrightCliRuntime {
+            session_name: session.to_owned(),
+            version: version.to_owned(),
+            persistent: false,
+            attached: false,
+            selector_fingerprint: Some(unlinger_core::ordinary_selector_fingerprint(
+                registry_namespace,
+                session,
+            )),
+        });
+    }
+
     fn ffmpeg(pid: u32, ppid: u32, pgid: u32) -> FixtureProcess {
         fixture_process(
             pid,
@@ -2009,7 +2233,7 @@ mod tests {
             pack.schema_version == 2
                 && pack.version
                     == if pack.id == "playwright" {
-                        "0.5.0"
+                        "0.6.0"
                     } else {
                         "0.4.0"
                     }
@@ -2078,6 +2302,12 @@ mod tests {
             assert_eq!(
                 family.automatic_process_eligibility.task_controller_version,
                 pack.task_controller_version
+            );
+            assert_eq!(
+                family
+                    .automatic_process_eligibility
+                    .session_owner_controller_version,
+                pack.session_owner_controller_version
             );
             assert!(family.always_protected.iter().any(|shape| shape
                 == if pack.task_controller_version.is_some() {
@@ -2704,6 +2934,7 @@ mod tests {
             version: "1.63.0-alpha-2026-08-31".to_owned(),
             persistent: false,
             attached: false,
+            selector_fingerprint: None,
         });
         let binding = unlinger_core::TaskControllerBinding {
             task_id: id.to_owned(),
@@ -2812,6 +3043,331 @@ mod tests {
                 "{blocked}"
             );
         }
+    }
+
+    #[test]
+    fn ordinary_cli_session_is_recognized_and_never_confirms_without_a_lease() {
+        let controller = playwright_controller(910, 1, 910);
+        let browser = cft_browser(
+            911,
+            910,
+            910,
+            "--user-data-dir=/private/tmp/playwright_chromiumdev_profile-ordinary",
+        );
+        let mut first_snapshot = snapshot(&[controller, browser], 120_000);
+        ordinary_cli_session(&mut first_snapshot, "default", "0521184cff085302", "1.62.1");
+        let analyzer = analyzer();
+        let report = analyzer.observe(&first_snapshot).unwrap().remove(0);
+
+        assert_eq!(report.state, IncidentState::Protected);
+        assert!(
+            report
+                .evidence
+                .iter()
+                .any(|item| item.id == "protection.ordinary_session_owner_unverified")
+        );
+        assert!(
+            !report
+                .evidence
+                .iter()
+                .any(|item| item.id == "protection.controller_version_unverified")
+        );
+        assert_eq!(
+            report.browser_compatibility.reason_id.as_deref(),
+            Some("protection.ordinary_session_owner_unverified")
+        );
+
+        let mut second_snapshot = first_snapshot.clone();
+        second_snapshot.observed_at_unix_millis = 135_000;
+        let second = analyzer.observe(&second_snapshot).unwrap();
+        let keys = second
+            .iter()
+            .map(|report| report.tracking_key.clone())
+            .collect::<BTreeSet<_>>();
+        assert!(
+            analyzer
+                .reconcile_with_abandonment(&[report], &second, &keys)
+                .iter()
+                .all(|report| report.state != IncidentState::Confirmed)
+        );
+    }
+
+    #[test]
+    fn exact_session_owner_lease_controls_release_version_and_identity() {
+        let registry_namespace = "0521184cff085302";
+        let controller = playwright_controller(920, 1, 920);
+        let browser = cft_browser(
+            921,
+            920,
+            920,
+            "--user-data-dir=/private/tmp/playwright_chromiumdev_profile-leased",
+        );
+        let mut snap = snapshot(&[controller, browser], 120_000);
+        ordinary_cli_session(&mut snap, "default", registry_namespace, "1.62.1");
+        let selector = unlinger_core::ordinary_selector_fingerprint(registry_namespace, "default");
+        let controller_identity = snap.processes[0].identity.clone();
+        let binding = |released: bool, version: &str, identity: &unlinger_core::ProcessIdentity| {
+            unlinger_core::SessionOwnerBinding {
+                lease_id: "0123456789abcdef0123456789abcdef".to_owned(),
+                selector_fingerprint: selector.clone(),
+                session_name: "default".to_owned(),
+                controller: identity.clone(),
+                controller_version: version.to_owned(),
+                released,
+            }
+        };
+        let leased = |owners: Vec<unlinger_core::SessionOwnerBinding>| {
+            Analyzer::new(
+                RuleSet::embedded().unwrap(),
+                AnalyzerContext {
+                    session_owners: owners,
+                    ..AnalyzerContext::default()
+                },
+            )
+        };
+
+        // A live leased owner protects; only an exact released lease supplies
+        // abandonment evidence.
+        let active = leased(vec![binding(false, "1.62.1", &controller_identity)]);
+        let report = active.observe(&snap).unwrap().remove(0);
+        assert_eq!(report.state, IncidentState::Protected);
+        assert!(
+            report
+                .evidence
+                .iter()
+                .any(|item| item.id == "protection.session_owner_active")
+        );
+        assert!(
+            report
+                .evidence
+                .iter()
+                .any(|item| item.id == "provenance.session_owner_registered")
+        );
+
+        let released = leased(vec![binding(true, "1.62.1", &controller_identity)]);
+        let first = released.observe(&snap).unwrap().remove(0);
+        assert_eq!(first.state, IncidentState::Cooling);
+        assert!(
+            first
+                .evidence
+                .iter()
+                .any(|item| item.id == "abandonment.session_owner_released")
+        );
+        assert_eq!(
+            released
+                .reconcile_with_abandonment(
+                    std::slice::from_ref(&first),
+                    std::slice::from_ref(&first),
+                    &BTreeSet::from([first.tracking_key.clone()]),
+                )
+                .first()
+                .map(|report| report.state),
+            Some(IncidentState::Confirmed)
+        );
+
+        // Cross-version, cross-session, changed controller identity, live
+        // client work and unreadable visibility all fail closed.
+        let mut wrong_version = snap.processes[0].identity.clone();
+        wrong_version.started_at_unix_micros += 1;
+        for (label, owners, mutate) in [
+            (
+                "version",
+                vec![binding(
+                    true,
+                    "1.63.0-alpha-2026-08-31",
+                    &controller_identity,
+                )],
+                None,
+            ),
+            (
+                "identity",
+                vec![binding(true, "1.62.1", &wrong_version)],
+                None,
+            ),
+            (
+                "cross-workspace",
+                vec![unlinger_core::SessionOwnerBinding {
+                    lease_id: "ffffffffffffffffffffffffffffffff".to_owned(),
+                    selector_fingerprint: unlinger_core::ordinary_selector_fingerprint(
+                        "625daa9ea0d6cbcf",
+                        "default",
+                    ),
+                    session_name: "default".to_owned(),
+                    controller: controller_identity.clone(),
+                    controller_version: "1.62.1".to_owned(),
+                    released: true,
+                }],
+                None,
+            ),
+            (
+                "session-name",
+                vec![unlinger_core::SessionOwnerBinding {
+                    lease_id: "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee".to_owned(),
+                    selector_fingerprint: selector.clone(),
+                    session_name: "other".to_owned(),
+                    controller: controller_identity.clone(),
+                    controller_version: "1.62.1".to_owned(),
+                    released: true,
+                }],
+                None,
+            ),
+            (
+                "client",
+                vec![binding(true, "1.62.1", &controller_identity)],
+                Some("client"),
+            ),
+            (
+                "visibility",
+                vec![binding(true, "1.62.1", &controller_identity)],
+                Some("visibility"),
+            ),
+        ] {
+            let mut altered = snap.clone();
+            match mutate {
+                Some("client") => {
+                    altered.processes[0]
+                        .runtime
+                        .connected_named_unix_socket_fingerprints =
+                        vec!["external-client".to_owned()];
+                }
+                Some("visibility") => {
+                    altered.processes[1].runtime.task_session_facts_complete = false
+                }
+                _ => {}
+            }
+            let report = leased(owners).observe(&altered).unwrap().remove(0);
+            assert_eq!(report.state, IncidentState::Protected, "{label}");
+        }
+    }
+
+    #[test]
+    fn unsupported_ordinary_controller_version_stays_protected_even_with_exact_lease() {
+        let registry_namespace = "0521184cff085302";
+        let controller = playwright_controller(925, 1, 925);
+        let browser = cft_browser(
+            926,
+            925,
+            925,
+            "--user-data-dir=/private/tmp/playwright_chromiumdev_profile-unsupported-owner",
+        );
+        let mut snap = snapshot(&[controller, browser], 120_000);
+        ordinary_cli_session(&mut snap, "default", registry_namespace, "1.64.0");
+        let report = Analyzer::new(
+            RuleSet::embedded().unwrap(),
+            AnalyzerContext {
+                session_owners: vec![unlinger_core::SessionOwnerBinding {
+                    lease_id: "fedcba9876543210fedcba9876543210".to_owned(),
+                    selector_fingerprint: unlinger_core::ordinary_selector_fingerprint(
+                        registry_namespace,
+                        "default",
+                    ),
+                    session_name: "default".to_owned(),
+                    controller: snap.processes[0].identity.clone(),
+                    controller_version: "1.64.0".to_owned(),
+                    released: true,
+                }],
+                ..AnalyzerContext::default()
+            },
+        )
+        .observe(&snap)
+        .unwrap()
+        .remove(0);
+
+        assert_eq!(report.state, IncidentState::Protected);
+        assert!(
+            report
+                .evidence
+                .iter()
+                .any(|item| item.id == "protection.controller_version_unverified")
+        );
+        assert_eq!(
+            report.browser_compatibility.reason_id.as_deref(),
+            Some("protection.controller_version_unverified")
+        );
+    }
+
+    #[test]
+    fn a_lease_for_another_workspace_or_the_task_lane_never_adopts_a_session() {
+        let controller = playwright_controller(930, 1, 930);
+        let browser = cft_browser(
+            931,
+            930,
+            930,
+            "--user-data-dir=/private/tmp/playwright_chromiumdev_profile-workspace-a",
+        );
+        let mut snap = snapshot(&[controller, browser], 120_000);
+        ordinary_cli_session(&mut snap, "default", "0521184cff085302", "1.62.1");
+        let controller_identity = snap.processes[0].identity.clone();
+
+        // The same ordinary session name in a second workspace is a different
+        // selector, so its released lease cannot supply abandonment here.
+        let other_workspace = unlinger_core::SessionOwnerBinding {
+            lease_id: "ffffffffffffffffffffffffffffffff".to_owned(),
+            selector_fingerprint: unlinger_core::ordinary_selector_fingerprint(
+                "625daa9ea0d6cbcf",
+                "default",
+            ),
+            session_name: "default".to_owned(),
+            controller: controller_identity.clone(),
+            controller_version: "1.62.1".to_owned(),
+            released: true,
+        };
+        let report = Analyzer::new(
+            RuleSet::embedded().unwrap(),
+            AnalyzerContext {
+                session_owners: vec![other_workspace],
+                ..AnalyzerContext::default()
+            },
+        )
+        .observe(&snap)
+        .unwrap()
+        .remove(0);
+        assert_eq!(report.state, IncidentState::Protected);
+        assert!(
+            report
+                .evidence
+                .iter()
+                .any(|item| item.id == "protection.ordinary_session_owner_unverified")
+        );
+
+        // A task-owned controller is matched only by the task lane; a
+        // session-owner lease for the same fingerprint shape never applies.
+        let task_id = "0123456789abcdef0123456789abcdef";
+        let mut task_snap = snap.clone();
+        ordinary_cli_session(
+            &mut task_snap,
+            &format!("unlinger-{task_id}"),
+            "0521184cff085302",
+            "1.62.1",
+        );
+        let task_selector = unlinger_core::ordinary_selector_fingerprint(
+            "0521184cff085302",
+            &format!("unlinger-{task_id}"),
+        );
+        let report = Analyzer::new(
+            RuleSet::embedded().unwrap(),
+            AnalyzerContext {
+                session_owners: vec![unlinger_core::SessionOwnerBinding {
+                    lease_id: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned(),
+                    selector_fingerprint: task_selector,
+                    session_name: format!("unlinger-{task_id}"),
+                    controller: task_snap.processes[0].identity.clone(),
+                    controller_version: "1.62.1".to_owned(),
+                    released: true,
+                }],
+                ..AnalyzerContext::default()
+            },
+        )
+        .observe(&task_snap)
+        .unwrap()
+        .remove(0);
+        assert_eq!(report.state, IncidentState::Protected);
+        assert!(
+            report
+                .evidence
+                .iter()
+                .any(|item| item.id == "protection.controller_version_unverified")
+        );
     }
 
     #[test]

@@ -380,8 +380,12 @@ impl<R: CleanupRuntime> ReconciliationEngine<R> {
         self.control
             .store()
             .record_observation_batch(observed_at_unix_millis, &incidents)?;
-        self.control
-            .publish_roster(cycle_token, observed_at_unix_millis, incidents.clone())?;
+        self.control.publish_roster(
+            cycle_token,
+            observed_at_unix_millis,
+            incidents.clone(),
+            latest_snapshot.proves_complete_classification_coverage(),
+        )?;
 
         let status = self.control.status_at(now_unix_millis)?;
         let paused = status
@@ -535,22 +539,28 @@ impl<R: CleanupRuntime> ReconciliationEngine<R> {
                 self_pid: self.self_pid,
                 ancestor_pids,
                 task_controllers: self.control.store().task_controller_bindings()?,
+                session_owners: self.control.store().session_owner_bindings()?,
             },
         ))
     }
 
     fn refresh_task_ownership(&mut self, snapshot: &Snapshot) -> Result<(), EngineError> {
+        self.release_absent_task_owners()?;
+        self.control.store().bind_task_controllers(snapshot)?;
+        self.release_absent_session_owners()?;
+        self.control
+            .store()
+            .bind_session_owner_controllers(snapshot)?;
+        Ok(())
+    }
+
+    fn release_absent_task_owners(&mut self) -> Result<(), EngineError> {
         for scope in self.control.store().task_scopes()? {
             if scope.released_at_us.is_some() {
                 continue;
             }
             let owner = scope.owner.as_ref().unwrap_or(&scope.registrar);
-            let absent = match self.runtime.lookup_process(owner.pid) {
-                Ok(None) => true,
-                Ok(Some(process)) => !owner.matches(&process),
-                Err(_) => false,
-            };
-            if absent {
+            if self.owner_is_absent(owner)? {
                 self.control.store().release_task(
                     &scope.task_id,
                     self.runtime.clock_sample()?.wall_unix_millis,
@@ -563,8 +573,43 @@ impl<R: CleanupRuntime> ReconciliationEngine<R> {
                 )?;
             }
         }
-        self.control.store().bind_task_controllers(snapshot)?;
         Ok(())
+    }
+
+    /// A host-declared session owner is released only on exact native absence.
+    /// A read failure leaves the lease active, so a partial snapshot can never
+    /// manufacture abandonment evidence for a live detached controller.
+    fn release_absent_session_owners(&mut self) -> Result<(), EngineError> {
+        for scope in self.control.store().session_owner_scopes()? {
+            if scope.released_at_us.is_some() {
+                continue;
+            }
+            let owner = scope.owner.as_ref().unwrap_or(&scope.registrar);
+            if self.owner_is_absent(owner)? {
+                self.control.store().release_session_owner(
+                    &scope.lease_id,
+                    self.runtime.clock_sample()?.wall_unix_millis,
+                    if scope.owner.is_some() {
+                        "owner_disappeared"
+                    } else {
+                        "never_started"
+                    },
+                    scope.owner.as_ref(),
+                )?;
+            }
+        }
+        Ok(())
+    }
+
+    fn owner_is_absent(
+        &mut self,
+        owner: &unlinger_core::TaskOwnerIdentity,
+    ) -> Result<bool, EngineError> {
+        Ok(match self.runtime.lookup_process(owner.pid) {
+            Ok(None) => true,
+            Ok(Some(process)) => !owner.matches(&process),
+            Err(_) => false,
+        })
     }
 }
 

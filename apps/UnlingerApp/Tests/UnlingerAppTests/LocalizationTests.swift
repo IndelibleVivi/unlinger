@@ -20,7 +20,8 @@ struct LocalizationTests {
             "browser.session.reason.protected_generic", "browser.session.reason.ambiguous_generic",
             "browser.coverage.unsupported_product", "browser.coverage.unsupported_version",
             "browser.coverage.version_unavailable", "browser.coverage.mixed_versions",
-            "browser.coverage.controller_unverified", "browser.coverage.observation_only",
+            "browser.coverage.controller_unverified", "browser.coverage.session_owner_unverified",
+            "browser.coverage.observation_only",
             "browser.coverage.control_path_incomplete",
             "browser.settlement.cleared", "browser.settlement.residue",
             "browser.settlement.revived", "browser.settlement.failed",
@@ -33,11 +34,21 @@ struct LocalizationTests {
             "cap.action.not_paused", "cap.action.no_blocked_cleanup",
             "cap.action.already_protected", "cap.action.not_protected", "cap.generic",
             "mutation.uncertain.title", "mutation.uncertain.body",
-            "unavailable.body"
+            "unavailable.body", "browser.session.ended_without_intervention",
+            "outcome.ended_without_intervention", "detail.cleanup.without_intervention"
         ]
         for key in keys {
             #expect(L10n.text(key) != key, "missing localization for \(key)")
         }
+    }
+
+    @Test("ordinary Playwright ownership gaps have explicit safe copy")
+    func ordinarySessionOwnershipCopy() {
+        let notice = BrowserOverviewMapper.coverageNotice(
+            "protection.ordinary_session_owner_unverified"
+        )
+        #expect(notice == .sessionOwnerUnverified)
+        #expect(notice.copyKey == "browser.coverage.session_owner_unverified")
     }
 
     @Test("language override resolves the chosen bundle immediately")
@@ -49,6 +60,21 @@ struct LocalizationTests {
         #expect(L10n.text("browser.overview.clear") == "未发现受支持的浏览器遗留")
         settings.preference = .en
         #expect(L10n.text("browser.overview.clear") == "No supported browser leftovers found")
+    }
+
+    @Test("connection failure does not claim that the service stopped")
+    func unavailableDoesNotClaimStopped() {
+        let settings = LanguageSettings.shared
+        let original = settings.preference
+        defer { settings.preference = original }
+        settings.preference = .en
+        let english = L10n.text("unavailable.body")
+        #expect(english.contains("may still be running"))
+        #expect(!english.contains("no observation is taking place"))
+        settings.preference = .zhHans
+        let chinese = L10n.text("unavailable.body")
+        #expect(chinese.contains("后台可能仍在观察或自动清理"))
+        #expect(!chinese.contains("当前没有在进行任何观察"))
     }
 
     @Test("zh-Hans translations resolve")

@@ -53,7 +53,8 @@
           "152.0.7977.42"
         ],
         "controller_present": true,
-        "task_controller_version": "1.63.0-alpha-2026-08-31"
+        "task_controller_version": "1.63.0-alpha-2026-08-31",
+        "session_owner_controller_version": "1.62.1"
       },
       "always_protected": [
         "unregistered_or_unverified_controller",

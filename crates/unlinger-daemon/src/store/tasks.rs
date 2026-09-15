@@ -97,6 +97,7 @@ mod tests {
                     version: "1.63.0-alpha-2026-08-31".to_owned(),
                     persistent: false,
                     attached: false,
+                    selector_fingerprint: None,
                 }),
                 ..Default::default()
             },
@@ -210,14 +211,18 @@ mod tests {
         let connection = temp.store.connection().unwrap();
         connection
             .execute_batch(
-                "DROP TABLE task_controllers; DROP TABLE task_scopes; PRAGMA user_version=7;",
+                "DROP TABLE session_owner_controllers;
+                 DROP TABLE session_owner_leases;
+                 DROP TABLE task_controllers;
+                 DROP TABLE task_scopes;
+                 PRAGMA user_version=7;",
             )
             .unwrap();
         drop(connection);
         let migrated = HistoryStore::open(temp.store.path()).unwrap();
         assert_eq!(migrated.pause_until().unwrap(), Some(900_000));
         assert!(migrated.task_scopes().unwrap().is_empty());
-        assert_eq!(HistoryStore::schema_version(), 8);
+        assert_eq!(HistoryStore::schema_version(), 10);
     }
 }
 
@@ -259,6 +264,9 @@ impl HistoryStore {
         }
         let mut connection = self.connection()?;
         let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        // The lanes are structurally disjoint: the task lane owns the issued
+        // `unlinger-<task_id>` selector, while the session-owner lane refuses
+        // any name in that shape.
         let existing: Option<(String, String)> = tx
             .query_row(
                 "SELECT capability, registrar_json FROM task_scopes WHERE task_id = ?1",

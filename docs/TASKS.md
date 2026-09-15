@@ -12,7 +12,9 @@ Use the CLI from the accepted installed generation (or its explicit full path). 
 
 The command can make several Playwright CLI calls and can use several workspaces. All calls must inherit `PLAYWRIGHT_CLI_SESSION`; do not override it with `-s`, `--session`, or a different environment value. Each `task run` creates a fresh session. Existing sessions and unrelated agents are not adopted retroactively. The native App continues to show the resulting browser state and actual terminal cleanup impact through schema v5.
 
-The source Playwright pack `0.5.0` verifies `playwright-core` **`1.63.0-alpha-2026-08-31`**, its actual `cliDaemon.js` process, matching owner-private session metadata and the controller's exact listening Unix socket. Browser admission remains Chrome for Testing **`151.0.7922.34` or `152.0.7977.42`**, isolated, ephemeral and headless. Persistent, attached, headed/manual, standard-profile, unknown-version and unregistered sessions remain protected. Isolated full-timing task tests cover both exact CfT versions; these controlled points do not establish multi-day dogfood. See [current installed truth](current-state.md) before assuming a built CLI has been activated.
+The source Playwright pack `0.6.0` retains task-owned `playwright-core` **`1.63.0-alpha-2026-08-31`**, its actual `cliDaemon.js` process, matching owner-private session metadata and the controller's exact listening Unix socket. Browser admission remains Chrome for Testing **`151.0.7922.34` or `152.0.7977.42`**, isolated, ephemeral and headless. Persistent, attached, headed/manual, standard-profile, unknown-version and unregistered sessions remain protected. Isolated full-timing task tests cover both exact CfT versions; these controlled points do not establish multi-day dogfood. See [current installed truth](current-state.md) before assuming a built CLI has been activated.
+
+Pack `0.6.0` also contains a separate optional host-owned lane for an existing ordinary Playwright CLI `1.62.1` session. It does not adopt or alter `unlinger task run` selectors and is not a second way to claim a task-owned command. Its operator contract and current lack of an automatic host adapter are documented in [IPC](IPC.md#optional-host-session-owner-commands).
 
 A task script can use an existing compatible Playwright CLI with an explicit local configuration:
 
@@ -57,4 +59,4 @@ UNLINGER_FIELDLAB_CFT_APP="/path/to/Google Chrome for Testing.app" \
   task_owned_playwright_cli_reclaims_only_its_finished_session -- --ignored --nocapture
 ```
 
-This is a command-lifetime integration. It does not automatically add lifetime support to every Codex App task or every browser tool. Host-specific multi-call integrations and disk-residue deletion remain separate incomplete parts of the product.
+This is a command-lifetime integration. It does not automatically add lifetime support to every Codex App task or every browser tool. Source now has the exact optional owner primitive needed by a compatible host adapter, but no supported Codex adapter drives it automatically. Host-specific multi-call integration, installed ambient evidence and disk-residue deletion remain separate incomplete parts of the product.
