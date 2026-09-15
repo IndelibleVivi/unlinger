@@ -2,17 +2,17 @@
 
 **Updated:** 2026-09-15. **Programme:** 0.1. **Reader posture:** experimental developer source preview; not a signed/notarized App release or multi-day reliability claim.
 
-## Current source candidate (2026-09-15)
+## Current installed candidate (2026-09-15)
 
-Source candidate implementation `e26297b` based on `9da14b7` composes bounded FD-list sampling,
+Implementation `e26297b` based on `9da14b7` composes bounded FD-list sampling,
 explicit no-intervention completion, action-attributed impact accounting and
 honest empty-observation/connection-failure presentation with optional exact
-host ownership of an existing ordinary Playwright CLI session. It introduces
-SQLite v10 and source Playwright pack `0.6.0`; frontend schemas v5/v4/v3 and
-operator v1 remain version-compatible. This candidate has not replaced,
-migrated, restarted, armed, or observed the reference installation. The
-reference generation 23 / SQLite v8 / Playwright-0.5.0 statements below remain
-installed evidence, not acceptance of the candidate.
+host ownership of an existing ordinary Playwright CLI session. On 2026-09-15
+the owner authorized direct private dogfood installation. The exact source
+candidate is now accepted and active as generation 25 with SQLite v10 and
+Playwright pack `0.6.0`; frontend schemas v5/v4/v3 and operator v1 remain
+version-compatible. Generation 23 / SQLite v8 / Playwright-0.5.0 evidence below
+is historical rollback and controlled-cleanup evidence, not current runtime truth.
 
 Schema-v9 migration archives the old cumulative impact row and leaves raw action
 and event records intact. Proved-reclaim totals are rebuilt only from retained
@@ -23,7 +23,7 @@ session-owner lease/controller tables without changing that impact authority. A
 pre-v10 binary needs its pre-upgrade database backup; do not point it at a v10
 database.
 
-The source Playwright `0.6.0` pack retains task-owned CLI
+The installed Playwright `0.6.0` pack retains task-owned CLI
 `1.63.0-alpha-2026-08-31` and exactly allowlists ordinary host-owned CLI
 `1.62.1`. The optional lane derives a path-free selector from the controller's
 16-hex registry namespace plus unchanged session name, requires same-user peer
@@ -37,8 +37,9 @@ with one-shot clients and no idle timer. PPID 1, registry age and a temporarily
 idle socket therefore cannot safely distinguish abandonment from a live task
 that may call again. No supported Codex/other-host adapter currently drives the
 new lifecycle automatically, and a fresh owner generation deliberately does not
-adopt an older long-lived controller. The source primitive is consequently a
-foundation, not Phase-2 ambient completion or daily dogfood acceptance.
+adopt an older long-lived controller. The installed primitive is consequently
+a foundation, not Phase-2 ambient completion or zero-touch daily dogfood
+acceptance.
 
 Focused candidate regressions cover bounded descriptor saturation/error
 handling, owned native FD/socket sampling, no-signal completion through
@@ -50,26 +51,62 @@ strict clippy, test and release-build gates pass; the source-only doctor is
 healthy and the dry-run scan remained nonmutating. The native App passed 86
 Swift tests, its bundle verifier's 9 regression tests, release bundling, two
 isolated report-only socket passes (7 + 7), and a 467-probe Accessibility/RSS
-run with zero probe failures and 30,000 KiB final RSS. These are source and
-isolated-fixture results. No new live-browser, installed-service, ambient,
-multi-day, or release acceptance is claimed.
+run with zero probe failures and 30,000 KiB final RSS. Those remain source and
+isolated-fixture results. The installed transaction and App/socket evidence is
+recorded below; no live-browser cleanup, ordinary ambient eligible incident,
+multi-day, installed Accessibility/RSS, packaged-notification, or release
+acceptance is claimed.
 
 ## Source, remote and installed state
 
 | Surface | Observed truth |
 | --- | --- |
-| Runtime implementation | `b70bc94b3d0aba4cac2db1bbe924c2666ac725b8`: task lifetime plus inherited-descriptor launch fix |
+| Runtime implementation | `e26297b`: SQLite v10 / Playwright `0.6.0` composition described above; integrated on `main` by tree-identical ancestry merge `d2a685b` |
 | Subsequent test correction | `f22e08eb3410050b380eaee7b84c4ccda2a3ad1a`: bounded post-release offline-lock tests; production locking/timeouts unchanged |
 | Baseline remote verification | [CI 34163955192](https://github.com/IndelibleVivi/unlinger/actions/runs/34163955192) passed for `b70bc94`; [CI 34165331792](https://github.com/IndelibleVivi/unlinger/actions/runs/34165331792) passed for `f22e08e`, including default-parallel Rust tests, release build, Swift tests and App bundling |
 | Current reader preparation | Published source-preview candidate `de1a9c3`: bilingual reader guides, licensed material scopes, current architecture and safe demo teardown; [exact CI 34170593229](https://github.com/IndelibleVivi/unlinger/actions/runs/34170593229) passed all steps |
-| Current source candidate | `e26297b`: SQLite v10 / Playwright `0.6.0` composition described above; integrated on `main` by tree-identical ancestry merge `d2a685b`; full local gates and [exact-source CI 34968538132](https://github.com/IndelibleVivi/unlinger/actions/runs/34968538132) passed; not installed or activated |
-| Maintainer's reference service | Accepted generation 23 from `b70bc94`, healthy `ReadyEnforce`, no pending candidate lease; this is one reference installation, not a generation number users should copy |
-| Reference protocols/persistence | Operator v1, frontend v5/v4/v3, SQLite v8; historical v2 rejected |
-| Reference App | Unchanged ad-hoc-signed schema-v5 App assembled from `016ca58`; neither Developer ID signed nor notarized |
-| Policy | Playwright `0.5.0`, agent-browser/Puppeteer `0.4.0`; process-only; every artifact flag false |
+| Current source verification | Full local gates, [exact-source CI 34968538132](https://github.com/IndelibleVivi/unlinger/actions/runs/34968538132), and [current-head CI 34968967500](https://github.com/IndelibleVivi/unlinger/actions/runs/34968967500) passed |
+| Maintainer's reference service | Accepted generation 25 from `e26297b`, healthy and quiescent `ReadyEnforce`, generation/epoch-bound with no pending candidate lease; this is one reference installation, not a generation number users should copy |
+| Reference protocols/persistence | Operator v1, frontend v5/v4/v3, SQLite v10; historical v2 rejected |
+| Reference App | Matching ad-hoc-signed schema-v5 App from `e26297b`, installed and running; neither Developer ID signed nor notarized; prior `016ca58` bundle retained as a recoverable local sibling |
+| Policy | Playwright `0.6.0`, agent-browser/Puppeteer `0.4.0`; process-only; every artifact flag false |
 | Publication | [Repository public](https://github.com/IndelibleVivi/unlinger); source-available under SUL-1.0 + CC BY-NC-SA 4.0; anonymous API and reader/license/diagram access verified; no GitHub Release |
 
-The source daemon defaults to report-only. The reference service's explicit activation is separate from that default and from building the source. Public reader preparation does not replace or restart that service/App.
+The source daemon still defaults to report-only. The reference service's explicit
+generation-25 activation is separate from that default, from building the source,
+and from repository publication.
+
+## Current installed transaction evidence
+
+The generation-23 baseline was healthy, quiescent `ReadyEnforce` on SQLite v8.
+Generation 24 installed the exact candidate at the report-only floor, migrated
+the live database to v10, matched both installed binaries to the release build,
+passed seven schema-v5 live-socket tests before and after an exact report-only
+restart, and retained its rollback lease and database backup. The matching App
+bundle replaced the canonical App only after the prior `016ca58` bundle was
+preserved as a recoverable sibling; strict signature/plist/resource verification,
+recursive bundle equality, exact launch from the canonical bundle and continued
+process presence across the daemon restart passed.
+
+The mandatory rollback then restored generation 23 to healthy, quiescent,
+unarmed `ReadyReportOnly`; its old daemon reopened the restored SQLite v8
+database and the matching App passed all seven live-socket tests against it. A
+fresh generation 25 repeated the v10 migration, binary match, report-only
+restart and seven-plus-seven App/socket checks. The owner then accepted the
+candidate, retiring the rollback lease, and explicitly armed generation 25. The
+owner's ordinary PATH symlink now resolves to generation 25 and exposes the new
+`session` surface.
+
+A later full observation cycle remained healthy and quiescent `ReadyEnforce`
+with SQLite v10, exact PID/generation/binary identity, armed generation 25,
+event source healthy, zero recovered cleanup attempts, zero attention and no
+scan or cleanup in progress. The installed App remained running. A fresh
+browser overview saw two ordinary Playwright/Google Chrome `152.0.7977.83`
+sessions and correctly protected both as `browser_product_unsupported`; this is
+installed observation, not an eligible cleanup or host-adapter proof. Storage
+residue remained observe-only with `automatic_cleanup_eligible = false`. Fresh
+visual UI, packaged-notification and installed Accessibility/RSS acceptance were
+not performed.
 
 ## Current controlled evidence
 
