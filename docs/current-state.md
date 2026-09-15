@@ -62,7 +62,7 @@ multi-day, or release acceptance is claimed.
 | Subsequent test correction | `f22e08eb3410050b380eaee7b84c4ccda2a3ad1a`: bounded post-release offline-lock tests; production locking/timeouts unchanged |
 | Baseline remote verification | [CI 34163955192](https://github.com/IndelibleVivi/unlinger/actions/runs/34163955192) passed for `b70bc94`; [CI 34165331792](https://github.com/IndelibleVivi/unlinger/actions/runs/34165331792) passed for `f22e08e`, including default-parallel Rust tests, release build, Swift tests and App bundling |
 | Current reader preparation | Published source-preview candidate `de1a9c3`: bilingual reader guides, licensed material scopes, current architecture and safe demo teardown; [exact CI 34170593229](https://github.com/IndelibleVivi/unlinger/actions/runs/34170593229) passed all steps |
-| Current source candidate | `e26297b`: SQLite v10 / Playwright `0.6.0` composition described above; full local source/App gates passed; not installed or activated |
+| Current source candidate | `e26297b`: SQLite v10 / Playwright `0.6.0` composition described above; integrated on `main` by tree-identical ancestry merge `d2a685b`; full local gates and [exact-source CI 34968538132](https://github.com/IndelibleVivi/unlinger/actions/runs/34968538132) passed; not installed or activated |
 | Maintainer's reference service | Accepted generation 23 from `b70bc94`, healthy `ReadyEnforce`, no pending candidate lease; this is one reference installation, not a generation number users should copy |
 | Reference protocols/persistence | Operator v1, frontend v5/v4/v3, SQLite v8; historical v2 rejected |
 | Reference App | Unchanged ad-hoc-signed schema-v5 App assembled from `016ca58`; neither Developer ID signed nor notarized |
