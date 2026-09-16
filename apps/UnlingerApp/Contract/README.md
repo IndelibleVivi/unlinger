@@ -11,7 +11,7 @@
 - `schema_version: 2`：保留在[`v2/`](v2/)作为历史审计证据；当前server在dispatch前以schema-v1 framing返回typed `unsupported_schema`；
 - source App只发送v5，不会silent downgrade到v4/v3或改走v1 mutation/lifecycle path。
 
-安装中的accepted generation 30提供schema-v5 App endpoint并保留v4/v3 compatibility、operator v1与SQLite v10；当前是healthy `ReadyEnforce`且没有pending lease。Matching `c17e60f` v5 App已经安装。Generation 29完成install/restart并真实rollback到generation 27，同exact artifact才鲜重安装、accept并独立arm为generation 30。App不能借用历史field evidence，也只能投影backend current truth，不能自行赋予或扩大signal/file-deletion authority。
+安装中的accepted generation 34提供schema-v5 App endpoint并保留v4/v3 compatibility、operator v1与SQLite v10；当前是healthy `ReadyEnforce`且没有pending lease。Matching `c17e60f` v5 App已经安装。Generation 33完成install/restart并真实rollback到generation 32，同exact artifact才鲜重安装、accept并独立arm为generation 34。随后一个bounded clone field result移除八份stale candidates并保留一份live referenced candidate。App只能投影backend current truth，不能借该结果自行赋予或扩大signal/file-deletion authority。
 
 ## Transport and trust
 

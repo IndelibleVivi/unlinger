@@ -2,7 +2,7 @@
 
 This view answers one question: **how does a finished browser task or exact Chrome clone residue become an observed cleanup result, and which component is allowed to act?** It describes current source paths on one macOS user account. Installation transactions and protocol compatibility are explained below rather than mixed into the primary flow.
 
-本图回答：**一个结束的浏览器任务或精确 Chrome clone 残留，如何成为真实清理结果；谁有权执行？** 范围是单个 macOS 用户下的当前源码路径。图不表示该新增存储清理已经安装、启用或通过长期验证。
+本图回答：**一个结束的浏览器任务或精确 Chrome clone 残留，如何成为真实清理结果；谁有权执行？** 范围是单个 macOS 用户下的当前源码路径。存储清理已经安装并有一个有边界的实机结果；图不表示 multi-day 或广泛环境验证。
 
 ![Unlinger process-only flow](architecture.svg)
 
@@ -20,7 +20,7 @@ Editable source: [architecture.mmd](architecture.mmd). The SVG is a rendered exp
 
 The Chrome clone path is separate from process runtime artifacts and has its own explicit deletion edge. It does not enable any artifact-pack flag or reuse DAP authority. Every runtime-artifact admission flag remains false. The dormant DAP engine is outside the active diagram and retains the unresolved risks in [SAFETY.md](SAFETY.md).
 
-Chrome clone 的磁盘状态单独进入状态库；源码逐个保留 candidate identity，对每个 candidate 独立评估稳定性与 live reference，只删除 scanner 再次确认的 eligible 子集。一份正在使用的 clone 会受保护，但不阻塞其他已稳定且无人引用的 clone。逻辑字节不是保证可释放的 APFS 空间；profile、浏览器数据和 runtime artifact 仍无自动删除入口。已安装 generation 30 是 healthy `ReadyEnforce`，含 aggregate candidate-reference gate；这条逐候选 source refinement 尚未安装。
+Chrome clone 的磁盘状态单独进入状态库；源码逐个保留 candidate identity，对每个 candidate 独立评估稳定性与 live reference，只删除 scanner 再次确认的 eligible 子集。一份正在使用的 clone 会受保护，但不阻塞其他已稳定且无人引用的 clone。逻辑字节不是保证可释放的 APFS 空间；profile、浏览器数据和 runtime artifact 仍无自动删除入口。已安装 generation 34 是 healthy `ReadyEnforce`，含 `.app.bundle`-aware per-candidate gate；一个 production-timing 实机点在普通 Chrome 持续开启时移除了八份 stale clone 并保留一份 live clone。
 
 ## Ownership and evidence map
 

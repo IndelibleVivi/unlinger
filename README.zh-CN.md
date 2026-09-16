@@ -14,7 +14,7 @@ Unlinger 在 macOS 上观察浏览器自动化留下的会话，并清理其中�
 - **跟踪一个命令的浏览器生命周期。** `unlinger task run -- COMMAND` 注册实际 command owner；兼容的 Playwright CLI 会话在任务结束后进入候选判断。任务结束本身不授权清理。
 - **准确解释普通 Playwright 为什么受保护。** 源码能识别已评估的 `playwright-core` `1.62.1` daemon 形态；如果宿主没有提供精确生命周期证据，App 会明确说明并保留会话不动。Operator schema v1 与 `unlinger session` 已提供 adapter primitive，但目前还没有 Codex adapter 自动驱动它。
 - **看见真实清理成果。** 完成后的 receipt 结合已送达信号的耐久记录，决定清理会话数、进程数和估算内存。未发送信号就结束的会话单独显示为“已结束，未介入”。重复观察会合并，不会计成清理成绩。
-- **观察并安全清理一个精确的磁盘残留家族。** 展示 Chrome code-sign clone 数量及文件逻辑大小。源码 daemon 在默认 report-only 模式下保持不动；有效 enforce 模式会逐个判断精确候选，只移除连续两次观察未变、且没有 executable、绝对 argv 或匹配 cleanup-helper 引用的候选。正在被使用的一份 clone 会继续受保护，但不会阻塞同组中已经稳定且无人引用的旧 clone。运行在候选目录外的普通 Chrome 及 Chrome Helper 也不会阻止 stale clone 清理。profile、浏览器数据和 runtime artifact 不属于这条路径。这个逐候选源码行为尚未安装或完成实机验证。
+- **观察并安全清理一个精确的磁盘残留家族。** 展示 Chrome code-sign clone 数量及文件逻辑大小。源码 daemon 在默认 report-only 模式下保持不动；有效 enforce 模式会逐个判断精确候选，只移除连续两次观察未变、且没有 executable、绝对 argv 或匹配 cleanup-helper 引用的候选。正在被使用的一份 clone 会继续受保护，但不会阻塞同组中已经稳定且无人引用的旧 clone。运行在候选目录外的普通 Chrome 及 Chrome Helper 也不会阻止 stale clone 清理。profile、浏览器数据和 runtime artifact 不属于这条路径。参考安装已有一个有边界的实机结果：普通 Chrome 全程保持开启，八份稳定旧 clone 被移除，正在使用的一份继续受保护。这不是 multi-day 证据，逻辑字节也不等于保证释放的 APFS 物理空间。
 
 | 范围 | 当前边界 |
 | --- | --- |
