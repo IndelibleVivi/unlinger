@@ -479,12 +479,7 @@ fn process_gates(
     let Some(snapshot) = snapshot else {
         return vec![ProcessGate::Incomplete; candidates.len()];
     };
-    if !snapshot.proves_complete_classification_coverage()
-        || snapshot
-            .processes
-            .iter()
-            .any(|process| may_be_chrome_process(process) && process.runtime.app_bundle.is_none())
-    {
+    if !snapshot.proves_complete_classification_coverage() {
         return vec![ProcessGate::Incomplete; candidates.len()];
     }
     let Ok(canonical_root) = root.canonicalize() else {
@@ -493,10 +488,23 @@ fn process_gates(
     let mut gates = vec![ProcessGate::Clear; candidates.len()];
 
     for process in &snapshot.processes {
+        let mut executable_candidate_reference = false;
         for (candidate, gate) in candidates.iter().zip(&mut gates) {
             if process_references_candidate_path(process, root, &canonical_root, candidate) {
                 *gate = ProcessGate::CandidatePathReferenced;
             }
+            if process_executable_references_candidate(process, root, &canonical_root, candidate) {
+                executable_candidate_reference = true;
+            }
+        }
+        if may_be_chrome_process(process)
+            && process.runtime.app_bundle.is_none()
+            && !missing_bundle_is_accounted_for_by_live_clone_main(
+                process,
+                executable_candidate_reference,
+            )
+        {
+            return vec![ProcessGate::Incomplete; candidates.len()];
         }
         match clone_cleanup_helper_suffix(process) {
             Some(Ok(suffix)) => {
@@ -571,6 +579,34 @@ fn process_references_candidate_path(
                     .into_iter()
                     .any(|candidate_root| path.starts_with(candidate_root.join(name)))
             })
+        })
+}
+
+fn process_executable_references_candidate(
+    process: &ProcessRecord,
+    root: &Path,
+    canonical_root: &Path,
+    candidate: &CloneCandidateIdentity,
+) -> bool {
+    process.executable_path.as_deref().is_some_and(|path| {
+        candidate.name.to_str().is_ok_and(|name| {
+            [root, canonical_root]
+                .into_iter()
+                .any(|candidate_root| Path::new(path).starts_with(candidate_root.join(name)))
+        })
+    })
+}
+
+fn missing_bundle_is_accounted_for_by_live_clone_main(
+    process: &ProcessRecord,
+    executable_candidate_reference: bool,
+) -> bool {
+    executable_candidate_reference
+        && process.executable_basename() == "Google Chrome"
+        && !process.arguments.as_ref().is_some_and(|arguments| {
+            arguments
+                .iter()
+                .any(|argument| argument == CLONE_CLEANUP_TYPE_ARGUMENT)
         })
 }
 
@@ -1009,9 +1045,10 @@ mod tests {
         let stale_candidate = add_clone(&root, "D4e5F6");
         let mut live_chrome =
             chrome_process(vec!["Google Chrome"], CHROME_BUNDLE_ID, "Google Chrome");
+        live_chrome.runtime.app_bundle = None;
         live_chrome.executable_path = Some(
             live_candidate
-                .join("Google Chrome.app/Contents/MacOS/Google Chrome")
+                .join("Google Chrome.app.bundle/Contents/MacOS/Google Chrome")
                 .to_string_lossy()
                 .into_owned(),
         );
@@ -1503,6 +1540,44 @@ mod tests {
             );
             assert!(!observation.automatic_cleanup_eligible);
         }
+    }
+
+    #[test]
+    fn missing_bundle_cleanup_helper_blocks_every_candidate_even_inside_a_clone() {
+        let temp = TempDirectory::new();
+        let root = clone_root(&temp);
+        let helper_candidate = add_clone(&root, "A1b2C3");
+        let other_candidate = add_clone(&root, "D4e5F6");
+        let mut helper = chrome_process(
+            vec![
+                "Google Chrome Helper",
+                CLONE_CLEANUP_TYPE_ARGUMENT,
+                "--unique-temp-dir-suffix=D4e5F6",
+            ],
+            CHROME_HELPER_BUNDLE_ID_PREFIX,
+            "Google Chrome Helper",
+        );
+        helper.runtime.app_bundle = None;
+        helper.executable_path = Some(
+            helper_candidate
+                .join("Google Chrome.app.bundle/Contents/MacOS/Google Chrome Helper")
+                .to_string_lossy()
+                .into_owned(),
+        );
+        let snapshot = complete_snapshot(vec![helper]);
+        let mut cleanup = ChromeCloneCleanup::new();
+
+        let _ = cleanup.reconcile_root(&root, 1, Some(&snapshot), ChromeCloneCleanupMode::Enforce);
+        let observation =
+            cleanup.reconcile_root(&root, 2, Some(&snapshot), ChromeCloneCleanupMode::Enforce);
+
+        assert!(helper_candidate.exists());
+        assert!(other_candidate.exists());
+        assert_eq!(
+            observation.reference_check,
+            StorageResidueReferenceCheck::Incomplete
+        );
+        assert!(!observation.automatic_cleanup_eligible);
     }
 
     #[test]
