@@ -14,6 +14,7 @@ const CLONE_PREFIX: &str = "code_sign_clone.";
 const CHROME_BUNDLE_ID: &str = "com.google.Chrome";
 const CHROME_HELPER_BUNDLE_ID_PREFIX: &str = "com.google.Chrome.helper";
 const CLONE_CLEANUP_TYPE_ARGUMENT: &str = "--type=code-sign-clone-cleanup";
+const CLONE_CLEANUP_SUFFIX_ARGUMENT_PREFIX: &str = "--unique-temp-dir-suffix=";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ChromeCloneCleanupMode {
@@ -126,7 +127,7 @@ impl ChromeCloneCleanup {
         let stable = self.previous_candidates.as_ref() == Some(&identities);
         self.previous_candidates = Some(identities.clone());
 
-        let process_gate = process_gate(snapshot);
+        let process_gate = process_gate(snapshot, root, &identities);
         let mut observation = scan.observation.clone();
         apply_process_gate(&mut observation, process_gate);
         if !stable {
@@ -389,7 +390,7 @@ fn scan_from_observation(observation: StorageResidueObservation) -> CloneScan {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ProcessGate {
     Clear,
-    ChromeProcessActive,
+    CandidatePathReferenced,
     CleanupHelperActive,
     Incomplete,
 }
@@ -398,7 +399,7 @@ impl ProcessGate {
     fn reference_check(self) -> StorageResidueReferenceCheck {
         match self {
             Self::Clear => StorageResidueReferenceCheck::CompleteNoReferences,
-            Self::ChromeProcessActive | Self::CleanupHelperActive => {
+            Self::CandidatePathReferenced | Self::CleanupHelperActive => {
                 StorageResidueReferenceCheck::Referenced
             }
             Self::Incomplete => StorageResidueReferenceCheck::Incomplete,
@@ -407,9 +408,9 @@ impl ProcessGate {
 
     fn reason_ids(self) -> Vec<String> {
         match self {
-            Self::Clear => vec!["storage_residue.no_live_chrome_references".to_owned()],
-            Self::ChromeProcessActive => {
-                vec!["storage_residue.chrome_process_active".to_owned()]
+            Self::Clear => vec!["storage_residue.no_live_clone_references".to_owned()],
+            Self::CandidatePathReferenced => {
+                vec!["storage_residue.clone_candidate_path_referenced".to_owned()]
             }
             Self::CleanupHelperActive => {
                 vec!["storage_residue.clone_cleanup_helper_active".to_owned()]
@@ -429,20 +430,33 @@ fn apply_process_gate(observation: &mut StorageResidueObservation, process_gate:
     observation.reason_ids.extend(process_gate.reason_ids());
 }
 
-fn process_gate(snapshot: Option<&Snapshot>) -> ProcessGate {
+fn process_gate(
+    snapshot: Option<&Snapshot>,
+    root: &Path,
+    candidates: &[CloneCandidateIdentity],
+) -> ProcessGate {
     let Some(snapshot) = snapshot else {
         return ProcessGate::Incomplete;
     };
-    if snapshot.processes.iter().any(is_clone_cleanup_helper) {
-        return ProcessGate::CleanupHelperActive;
+    let canonical_root = root.canonicalize().ok();
+
+    for process in &snapshot.processes {
+        if process_references_candidate_path(process, root, canonical_root.as_deref(), candidates) {
+            return ProcessGate::CandidatePathReferenced;
+        }
+        match clone_cleanup_helper_suffix(process) {
+            Some(Ok(suffix))
+                if candidates
+                    .iter()
+                    .any(|candidate| candidate.suffix() == Some(suffix)) =>
+            {
+                return ProcessGate::CleanupHelperActive;
+            }
+            Some(Ok(_)) | None => {}
+            Some(Err(())) => return ProcessGate::Incomplete,
+        }
     }
-    if snapshot
-        .processes
-        .iter()
-        .any(is_bundle_confirmed_chrome_process)
-    {
-        return ProcessGate::ChromeProcessActive;
-    }
+
     if !snapshot.proves_complete_classification_coverage()
         || snapshot
             .processes
@@ -465,18 +479,54 @@ fn is_bundle_confirmed_chrome_process(process: &ProcessRecord) -> bool {
 }
 
 fn is_clone_cleanup_helper(process: &ProcessRecord) -> bool {
-    let bundle_is_chrome = process.runtime.app_bundle.as_ref().is_some_and(|bundle| {
-        bundle.bundle_id == CHROME_BUNDLE_ID
-            || bundle.bundle_id == CHROME_HELPER_BUNDLE_ID_PREFIX
-            || bundle
-                .bundle_id
-                .starts_with(&format!("{CHROME_HELPER_BUNDLE_ID_PREFIX}."))
-    });
-    bundle_is_chrome
+    is_bundle_confirmed_chrome_process(process)
         && process.arguments.as_ref().is_some_and(|arguments| {
             arguments
                 .iter()
                 .any(|argument| argument == CLONE_CLEANUP_TYPE_ARGUMENT)
+        })
+}
+
+fn clone_cleanup_helper_suffix(process: &ProcessRecord) -> Option<Result<&str, ()>> {
+    if !is_clone_cleanup_helper(process) {
+        return None;
+    }
+    let mut suffixes = process
+        .arguments
+        .as_ref()
+        .into_iter()
+        .flatten()
+        .filter_map(|argument| argument.strip_prefix(CLONE_CLEANUP_SUFFIX_ARGUMENT_PREFIX));
+    let Some(suffix) = suffixes.next() else {
+        return Some(Err(()));
+    };
+    if suffixes.next().is_some() || !valid_clone_suffix(suffix) {
+        return Some(Err(()));
+    }
+    Some(Ok(suffix))
+}
+
+fn process_references_candidate_path(
+    process: &ProcessRecord,
+    root: &Path,
+    canonical_root: Option<&Path>,
+    candidates: &[CloneCandidateIdentity],
+) -> bool {
+    process
+        .executable_path
+        .iter()
+        .chain(process.arguments.as_ref().into_iter().flatten())
+        .map(Path::new)
+        .filter(|path| path.is_absolute())
+        .any(|path| {
+            candidates.iter().any(|candidate| {
+                candidate.name.to_str().is_ok_and(|name| {
+                    [Some(root), canonical_root]
+                        .into_iter()
+                        .flatten()
+                        .any(|candidate_root| path.starts_with(candidate_root.join(name)))
+                })
+            })
         })
 }
 
@@ -494,6 +544,12 @@ fn may_be_chrome_process(process: &ProcessRecord) -> bool {
 fn valid_clone_name(name: &str) -> bool {
     name.strip_prefix(CLONE_PREFIX)
         .is_some_and(valid_clone_suffix)
+}
+
+impl CloneCandidateIdentity {
+    fn suffix(&self) -> Option<&str> {
+        self.name.to_str().ok()?.strip_prefix(CLONE_PREFIX)
+    }
 }
 
 fn valid_clone_suffix(suffix: &str) -> bool {
@@ -790,6 +846,21 @@ mod tests {
         }
     }
 
+    fn assert_cleanup_blocked(
+        root: &Path,
+        candidate: &Path,
+        snapshot: &Snapshot,
+        reference_check: StorageResidueReferenceCheck,
+    ) {
+        let mut cleanup = ChromeCloneCleanup::new();
+        let _ = cleanup.reconcile_root(root, 1, Some(snapshot), ChromeCloneCleanupMode::Enforce);
+        let observation =
+            cleanup.reconcile_root(root, 2, Some(snapshot), ChromeCloneCleanupMode::Enforce);
+        assert!(candidate.exists());
+        assert!(!observation.automatic_cleanup_eligible);
+        assert_eq!(observation.reference_check, reference_check);
+    }
+
     #[test]
     fn report_only_never_mutates_even_after_stable_observation() {
         let temp = TempDirectory::new();
@@ -971,18 +1042,50 @@ mod tests {
     }
 
     #[test]
-    fn live_chrome_helper_and_incomplete_process_observation_block_cleanup() {
-        let blockers = [
-            complete_snapshot(vec![chrome_process(
-                vec!["Google Chrome"],
-                CHROME_BUNDLE_ID,
-                "Google Chrome",
-            )]),
-            complete_snapshot(vec![chrome_process(
+    fn ordinary_chrome_and_helpers_do_not_block_unreferenced_candidate_cleanup() {
+        let snapshot = complete_snapshot(vec![
+            chrome_process(vec!["Google Chrome"], CHROME_BUNDLE_ID, "Google Chrome"),
+            chrome_process(
                 vec!["Google Chrome Helper", "--type=renderer"],
                 CHROME_HELPER_BUNDLE_ID_PREFIX,
                 "Google Chrome Helper",
-            )]),
+            ),
+            chrome_process(
+                vec!["Google Chrome Helper", "--type=gpu-process"],
+                CHROME_HELPER_BUNDLE_ID_PREFIX,
+                "Google Chrome Helper",
+            ),
+            chrome_process(
+                vec!["Google Chrome Helper", "--type=utility"],
+                CHROME_HELPER_BUNDLE_ID_PREFIX,
+                "Google Chrome Helper",
+            ),
+        ]);
+        let temp = TempDirectory::new();
+        let root = clone_root(&temp);
+        let candidate = add_clone(&root, "A1b2C3");
+        let mut cleanup = ChromeCloneCleanup::new();
+
+        let _ = cleanup.reconcile_root(&root, 1, Some(&snapshot), ChromeCloneCleanupMode::Enforce);
+        let observation =
+            cleanup.reconcile_root(&root, 2, Some(&snapshot), ChromeCloneCleanupMode::Enforce);
+
+        assert!(!candidate.exists());
+        assert_eq!(observation.status, StorageResidueStatus::Clear);
+    }
+
+    #[test]
+    fn exact_candidate_references_and_incomplete_process_facts_block_cleanup() {
+        let chrome_without_bundle = {
+            let mut process = chrome_process(
+                vec!["Google Chrome Helper", "--type=renderer"],
+                CHROME_HELPER_BUNDLE_ID_PREFIX,
+                "Google Chrome Helper",
+            );
+            process.runtime.app_bundle = None;
+            process
+        };
+        let blockers = [
             complete_snapshot(vec![chrome_process(
                 vec![
                     "Google Chrome Helper",
@@ -997,6 +1100,7 @@ mod tests {
                 CHROME_HELPER_BUNDLE_ID_PREFIX,
                 "Google Chrome Helper",
             )]),
+            complete_snapshot(vec![chrome_without_bundle]),
             Snapshot {
                 observed_at_unix_millis: 1,
                 current_uid: unsafe { libc::geteuid() },
@@ -1013,14 +1117,84 @@ mod tests {
             let temp = TempDirectory::new();
             let root = clone_root(&temp);
             let candidate = add_clone(&root, "A1b2C3");
-            let mut cleanup = ChromeCloneCleanup::new();
-            let _ =
-                cleanup.reconcile_root(&root, 1, Some(blocker), ChromeCloneCleanupMode::Enforce);
-            let observation =
-                cleanup.reconcile_root(&root, 2, Some(blocker), ChromeCloneCleanupMode::Enforce);
-            assert!(candidate.exists(), "blocker {index} must preserve fixture");
-            assert!(!observation.automatic_cleanup_eligible);
+            assert_cleanup_blocked(
+                &root,
+                &candidate,
+                blocker,
+                if index == 0 {
+                    StorageResidueReferenceCheck::Referenced
+                } else {
+                    StorageResidueReferenceCheck::Incomplete
+                },
+            );
         }
+
+        let temp = TempDirectory::new();
+        let root = clone_root(&temp);
+        let candidate = add_clone(&root, "A1b2C3");
+        let mut executable_reference = chrome_process(
+            vec!["Google Chrome Helper", "--type=renderer"],
+            CHROME_HELPER_BUNDLE_ID_PREFIX,
+            "Google Chrome Helper",
+        );
+        executable_reference.executable_path = Some(
+            candidate
+                .join("Google Chrome.app/Contents/MacOS/Google Chrome")
+                .to_string_lossy()
+                .into_owned(),
+        );
+        assert_cleanup_blocked(
+            &root,
+            &candidate,
+            &complete_snapshot(vec![executable_reference]),
+            StorageResidueReferenceCheck::Referenced,
+        );
+
+        let temp = TempDirectory::new();
+        let root = clone_root(&temp);
+        let candidate = add_clone(&root, "A1b2C3");
+        let mut argument_reference = chrome_process(
+            vec!["Google Chrome Helper", "--type=utility"],
+            CHROME_HELPER_BUNDLE_ID_PREFIX,
+            "Google Chrome Helper",
+        );
+        argument_reference.name = "fixture-worker".to_owned();
+        argument_reference.executable_path = Some("/usr/bin/fixture-worker".to_owned());
+        argument_reference.runtime.app_bundle = None;
+        argument_reference.arguments = Some(vec![
+            "fixture-worker".to_owned(),
+            candidate.join("payload").to_string_lossy().into_owned(),
+        ]);
+        assert_cleanup_blocked(
+            &root,
+            &candidate,
+            &complete_snapshot(vec![argument_reference]),
+            StorageResidueReferenceCheck::Referenced,
+        );
+    }
+
+    #[test]
+    fn unrelated_clone_cleanup_suffix_does_not_block_candidate_set() {
+        let snapshot = complete_snapshot(vec![chrome_process(
+            vec![
+                "Google Chrome Helper",
+                CLONE_CLEANUP_TYPE_ARGUMENT,
+                "--unique-temp-dir-suffix=D4e5F6",
+            ],
+            CHROME_HELPER_BUNDLE_ID_PREFIX,
+            "Google Chrome Helper",
+        )]);
+        let temp = TempDirectory::new();
+        let root = clone_root(&temp);
+        let candidate = add_clone(&root, "A1b2C3");
+        let mut cleanup = ChromeCloneCleanup::new();
+
+        let _ = cleanup.reconcile_root(&root, 1, Some(&snapshot), ChromeCloneCleanupMode::Enforce);
+        let observation =
+            cleanup.reconcile_root(&root, 2, Some(&snapshot), ChromeCloneCleanupMode::Enforce);
+
+        assert!(!candidate.exists());
+        assert_eq!(observation.status, StorageResidueStatus::Clear);
     }
 
     struct FailingRemover;

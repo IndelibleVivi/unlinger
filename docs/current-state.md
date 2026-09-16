@@ -8,9 +8,13 @@ Current source now treats the exact current-user Chrome `code_sign_clone`
 family as a default enforce-mode cleanup target while preserving the ordinary
 daemon default of report-only. It retains one previous exact candidate identity
 set in memory, requires the same set at the next 15-minute storage observation,
-and uses the canonical native process snapshot to block on any bundle-confirmed
-Google Chrome or Chrome Helper process, including the clone-cleanup helper, or incomplete
-process coverage. Only a healthy, ready, unpaused, non-draining enforce daemon
+and uses the canonical native process snapshot to block only candidate-level
+references: a process executable or absolute argv path inside a candidate, or a
+bundle-confirmed clone-cleanup Helper whose exact suffix matches that candidate.
+Ordinary Chrome main, renderer, GPU and utility processes outside the candidate
+set, and a valid unrelated cleanup suffix, do not block. Incomplete process
+coverage, insufficient Chrome-looking facts, and missing/malformed/ambiguous
+cleanup-helper suffixes still fail closed. Only a healthy, ready, unpaused, non-draining enforce daemon
 may mutate. Deletion stays descriptor-relative beneath the scanner-validated
 candidate, never follows symlinks, and is followed immediately by a rescan whose
 actual result becomes the persisted/public typed observation. Raw root and
@@ -18,17 +22,17 @@ candidate paths remain absent from SQLite, IPC, diagnostics and logs.
 
 Temp-fixture coverage proves report-only non-mutation, first-observation
 cooling, second-stable-observation cleanup, candidate-change reset, ordinary
-Chrome/helper/incomplete-coverage blocking, symlink/unexpected-shape refusal,
-and truthful failed-removal rescan. Focused macOS/daemon suites, strict workspace
-clippy, the full Rust workspace suite and release build, all 86 Swift tests,
-source App bundling, source-only doctor and dry-run scan pass. Source commit
-`372828b` is pushed to `origin/main`; backend CI run `35099066804` passed its
-macOS fmt, clippy, workspace-test, release-build, isolated-demo, fail-closed
-bundle, native-frontend and App-bundle jobs. This remains source behavior only.
-It has not replaced or restarted the installed daemon or App, has no installed
-cleanup receipt, and has not deleted a real Chrome clone. Accepted generation
-25 and the installed `628d822` App therefore retain their prior observe-only
-clone behavior and evidence below.
+Chrome/helper non-blocking, exact suffix and candidate-path reference blocking,
+unrelated-suffix non-blocking, incomplete-coverage blocking, symlink/unexpected-shape refusal,
+and truthful failed-removal rescan. For this correction, the complete
+`unlinger-macos` test package, focused daemon storage-residue tests, workspace
+format check and strict `unlinger-macos`/`unlinger-daemon` all-target clippy pass
+locally. The earlier global-absence implementation at source commit `372828b`
+remains the last pushed full-workspace/CI evidence and must not be borrowed for
+this corrected gate. The candidate-reference correction has not replaced or
+restarted the installed daemon or App, has no installed cleanup receipt, and
+has not deleted a real Chrome clone. Installed verification remains a separate
+gate.
 
 ## Installed App memory hardening candidate (2026-09-16)
 
