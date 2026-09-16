@@ -13,7 +13,7 @@ use unlinger_daemon::{
     ControlPlane, DaemonInstanceLock, DaemonMode, DaemonStatus, EngineConfig, HistoryStore,
     IpcServer, LocalPaths, ReconciliationEngine,
 };
-use unlinger_macos::{MacosRuntime, observe_chrome_code_sign_clones};
+use unlinger_macos::{ChromeCloneCleanup, ChromeCloneCleanupMode, MacosRuntime, MacosSnapshotter};
 use unlinger_rules::RuleSet;
 
 static SHUTDOWN_REQUESTED: AtomicBool = AtomicBool::new(false);
@@ -134,6 +134,9 @@ fn run(arguments: Arguments) -> Result<(), Box<dyn Error>> {
     );
     let mut last_cycle_error = None;
     let mut last_storage_residue_error = None;
+    let mut last_storage_residue_attempt_at = None;
+    let storage_snapshotter = MacosSnapshotter::new();
+    let mut chrome_clone_cleanup = ChromeCloneCleanup::new();
     let mut scheduler = (!arguments.once)
         .then(|| ReconciliationScheduler::start(Duration::from_secs(arguments.interval_seconds)));
     if let Some(scheduler) = scheduler.as_mut()
@@ -146,12 +149,38 @@ fn run(arguments: Arguments) -> Result<(), Box<dyn Error>> {
         let now = now_unix_millis()?;
         match control.store().latest_storage_residue_observation() {
             Ok(previous)
-                if previous.as_ref().is_none_or(|observation| {
-                    now.saturating_sub(observation.observed_at_unix_millis)
-                        >= STORAGE_RESIDUE_OBSERVATION_INTERVAL_MILLIS
-                }) =>
+                if storage_residue_observation_due(
+                    now,
+                    previous
+                        .as_ref()
+                        .map(|observation| observation.observed_at_unix_millis),
+                    last_storage_residue_attempt_at,
+                ) =>
             {
-                let residue = observe_chrome_code_sign_clones(now);
+                // An observation attempt consumes this cadence even if its
+                // eventual SQLite write fails. A store failure must never
+                // collapse the two-observation stability window.
+                last_storage_residue_attempt_at = Some(now);
+                let process_snapshot = storage_snapshotter.capture().ok();
+                let cleanup_mode = match control.storage_cleanup_state_at(now) {
+                    Ok((DaemonMode::Enforce, true)) => ChromeCloneCleanupMode::Enforce,
+                    Ok((DaemonMode::ReportOnly, true)) => ChromeCloneCleanupMode::ReportOnly,
+                    Ok(_) | Err(_) => ChromeCloneCleanupMode::LifecycleBlocked,
+                };
+                let residue = chrome_clone_cleanup.reconcile(
+                    now,
+                    process_snapshot.as_ref(),
+                    cleanup_mode,
+                    |action| {
+                        if shutdown_requested() {
+                            return None;
+                        }
+                        control
+                            .run_storage_cleanup_if_ready_enforce(now, action)
+                            .ok()
+                            .flatten()
+                    },
+                );
                 match control.store().record_storage_residue_observation(&residue) {
                     Ok(()) => last_storage_residue_error = None,
                     Err(error) => {
@@ -326,6 +355,21 @@ fn should_log_cycle_error(last_error: &mut Option<String>, message: &str) -> boo
     should_log
 }
 
+fn storage_residue_observation_due(
+    now_unix_millis: u64,
+    persisted_observation_at: Option<u64>,
+    last_attempt_at: Option<u64>,
+) -> bool {
+    persisted_observation_at
+        .into_iter()
+        .chain(last_attempt_at)
+        .max()
+        .is_none_or(|last_observed_at| {
+            now_unix_millis.saturating_sub(last_observed_at)
+                >= STORAGE_RESIDUE_OBSERVATION_INTERVAL_MILLIS
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use clap::Parser;
@@ -380,5 +424,27 @@ mod tests {
         assert!(parsed.managed);
         assert_eq!(parsed.activation_generation, Some(7));
         assert!(!parsed.enforce);
+    }
+
+    #[test]
+    fn storage_residue_attempts_keep_the_full_observation_interval_after_store_failure() {
+        let interval = super::STORAGE_RESIDUE_OBSERVATION_INTERVAL_MILLIS;
+
+        assert!(super::storage_residue_observation_due(100, None, None));
+        assert!(!super::storage_residue_observation_due(
+            100 + interval - 1,
+            None,
+            Some(100)
+        ));
+        assert!(super::storage_residue_observation_due(
+            100 + interval,
+            None,
+            Some(100)
+        ));
+        assert!(!super::storage_residue_observation_due(
+            200 + interval - 1,
+            Some(200),
+            Some(100)
+        ));
     }
 }

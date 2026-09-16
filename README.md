@@ -14,7 +14,7 @@ Unlinger observes abandoned browser-automation sessions on macOS and can reclaim
 - **Track a command's browser lifetime.** `unlinger task run -- COMMAND` registers an exact command owner. Its compatible Playwright CLI sessions become candidates after the task ends; release alone never authorizes cleanup.
 - **Explain ordinary Playwright protection precisely.** Source recognizes the evaluated `playwright-core` `1.62.1` daemon shape. Without exact lifetime evidence from a supported host adapter, the App says that explicitly and leaves the session untouched. Operator schema v1 and `unlinger session` provide the adapter primitive; no Codex adapter drives it automatically yet.
 - **See actual process cleanup.** Completed receipts with a durable delivered signal drive reclaimed-session/process counts and estimated memory impact. A tree that ends without a signal remains visible as ended without intervention. Repeated observations are compressed; they are not counted as cleanup.
-- **Inspect disk residue.** Chrome code-sign clone count and logical size are visible. Disk cleanup is unavailable: the active policy deletes no profile, directory or runtime artifact.
+- **Inspect and safely clean one exact disk-residue family.** Chrome code-sign clone count and logical size are visible. The source daemon leaves them unchanged in its default report-only mode; valid enforce mode removes only a twice-stable exact candidate set after a complete native process snapshot proves that no bundle-confirmed Chrome or Chrome Helper process is live. Profiles, browser data and runtime artifacts remain outside this path. This source behavior is not installed or field-verified yet.
 
 | Surface | Current boundary |
 | --- | --- |
@@ -48,7 +48,7 @@ The [getting-started guide](docs/GETTING_STARTED.md) continues with an interacti
 
 ![Unlinger process-cleanup architecture](docs/architecture.svg)
 
-The daemon owns classification, durable task/optional-host lifetime evidence and cleanup authority. It checks exact process identity, browser and controller versions, ownership, active clients and profile protections, then requires the ordinary age/stability/abandonment gates. A detached ordinary Playwright controller with no exact host lifetime remains protected; age, PPID 1 and an idle socket do not substitute for intent. Enforcement also needs explicit mode authorization. Each signal is journalled and revalidated; a terminal receipt follows absence and revival checks. The App displays that result through one daemon-owned snapshot.
+The daemon owns classification, durable task/optional-host lifetime evidence and cleanup authority. It checks exact process identity, browser and controller versions, ownership, active clients and profile protections, then requires the ordinary age/stability/abandonment gates. A detached ordinary Playwright controller with no exact host lifetime remains protected; age, PPID 1 and an idle socket do not substitute for intent. Enforcement also needs explicit mode authorization. Each signal is journalled and revalidated; a terminal receipt follows absence and revival checks. Separately, the Chrome clone path uses two 15-minute storage observations, complete native Chrome/helper absence and no-follow descriptor-relative deletion followed by an immediate rescan. The App displays daemon-owned results and never initiates deletion.
 
 The [architecture guide](docs/ARCHITECTURE.md) explains these boundaries in English and Chinese and links the editable diagram source.
 

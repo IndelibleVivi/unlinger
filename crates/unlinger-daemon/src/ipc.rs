@@ -982,6 +982,39 @@ impl ControlPlane {
         self.status.lock().map_or(true, |status| status.draining)
     }
 
+    /// Runs one bounded storage mutation while the lifecycle/status gate is
+    /// held. This prevents pause, drain, failure, or mode transitions from
+    /// racing between final authorization and descriptor-relative deletion.
+    pub fn run_storage_cleanup_if_ready_enforce<T>(
+        &self,
+        now_unix_millis: u64,
+        action: impl FnOnce() -> T,
+    ) -> Result<Option<T>, ControlError> {
+        self.expire_pause(now_unix_millis)?;
+        let status = self.lock_status()?;
+        if !storage_cleanup_gate_open(&status) {
+            return Ok(None);
+        }
+        let result = action();
+        drop(status);
+        Ok(Some(result))
+    }
+
+    pub fn storage_cleanup_state_at(
+        &self,
+        now_unix_millis: u64,
+    ) -> Result<(DaemonMode, bool), ControlError> {
+        self.expire_pause(now_unix_millis)?;
+        self.lock_status().map(|status| {
+            let mode = status.effective_mode();
+            let lifecycle_ready = match mode {
+                DaemonMode::Enforce => storage_cleanup_gate_open(&status),
+                DaemonMode::ReportOnly => storage_cleanup_report_only_gate_open(&status),
+            };
+            (mode, lifecycle_ready)
+        })
+    }
+
     #[must_use]
     pub(crate) fn cleanup_policy_revision(&self) -> u64 {
         self.cleanup_policy_revision.load(Ordering::Acquire)
@@ -1612,6 +1645,97 @@ mod control_plane_tests {
     }
 
     #[test]
+    fn storage_cleanup_gate_requires_ready_unpaused_idle_enforce_state() {
+        let mut status = DaemonStatus::new(DaemonMode::Enforce, 42);
+        status.healthy = true;
+        status.ready = true;
+        status.startup_state = StartupState::ReadyEnforce;
+        status.set_effective_mode(DaemonMode::Enforce);
+        assert!(storage_cleanup_gate_open(&status));
+
+        for blocked in ["report_only", "paused", "draining", "scan", "cleanup"] {
+            let mut blocked_status = status.clone();
+            match blocked {
+                "report_only" => {
+                    blocked_status.startup_state = StartupState::ReadyReportOnly;
+                    blocked_status.set_effective_mode(DaemonMode::ReportOnly);
+                }
+                "paused" => blocked_status.paused_until_unix_millis = Some(11),
+                "draining" => blocked_status.draining = true,
+                "scan" => blocked_status.scan_in_progress = true,
+                "cleanup" => blocked_status.cleanup_in_progress = true,
+                _ => unreachable!(),
+            }
+            assert!(
+                !storage_cleanup_gate_open(&blocked_status),
+                "{blocked} must prevent clone mutation"
+            );
+        }
+    }
+
+    #[test]
+    fn storage_cleanup_gate_requires_ready_enforce_and_serializes_pause() {
+        let temp = TempState::new();
+        let store = HistoryStore::open(temp.0.join("history.sqlite3")).expect("open history");
+        let mut status = DaemonStatus::new(DaemonMode::Enforce, std::process::id());
+        status.healthy = true;
+        status.ready = true;
+        status.startup_state = StartupState::ReadyEnforce;
+        status.set_effective_mode(DaemonMode::Enforce);
+        let control = ControlPlane::new(store, status).expect("create control plane");
+
+        let action_entered = Arc::new(Barrier::new(2));
+        let allow_action = Arc::new(Barrier::new(2));
+        let cleanup_control = control.clone();
+        let action_entered_worker = Arc::clone(&action_entered);
+        let allow_action_worker = Arc::clone(&allow_action);
+        let cleanup = thread::spawn(move || {
+            cleanup_control.run_storage_cleanup_if_ready_enforce(10, || {
+                action_entered_worker.wait();
+                allow_action_worker.wait();
+                42
+            })
+        });
+        action_entered.wait();
+
+        let (pause_sent, pause_received) = mpsc::channel();
+        let pause_control = control.clone();
+        let pause = thread::spawn(move || {
+            let result = pause_control.handle_at(
+                IpcCommand::Pause {
+                    duration_millis: 1_000,
+                },
+                10,
+            );
+            pause_sent.send(result).expect("send pause result");
+        });
+        assert!(
+            pause_received
+                .recv_timeout(Duration::from_millis(50))
+                .is_err(),
+            "Pause must not commit between final storage authorization and mutation completion"
+        );
+
+        allow_action.wait();
+        assert_eq!(
+            cleanup.join().expect("join cleanup").expect("cleanup gate"),
+            Some(42)
+        );
+        pause_received
+            .recv_timeout(Duration::from_secs(1))
+            .expect("pause completes after cleanup")
+            .expect("pause succeeds");
+        pause.join().expect("join pause");
+
+        assert_eq!(
+            control
+                .run_storage_cleanup_if_ready_enforce(11, || 7)
+                .expect("paused gate"),
+            None
+        );
+    }
+
+    #[test]
     fn expired_pause_clear_and_new_pause_ack_are_serialized() {
         let temp = TempState::new();
         let store = HistoryStore::open(temp.0.join("history.sqlite3")).expect("open history");
@@ -2009,6 +2133,32 @@ fn signal_gate_matches(status: &DaemonStatus, enforcement_epoch: &str) -> bool {
         || (status.ready
             && status.activation_generation.is_some()
             && status.armed_generation == status.activation_generation)
+}
+
+fn storage_cleanup_gate_open(status: &DaemonStatus) -> bool {
+    status.healthy
+        && status.ready
+        && status.startup_state == StartupState::ReadyEnforce
+        && status.effective_mode() == DaemonMode::Enforce
+        && status.enforcement_epoch.is_some()
+        && (!status.managed
+            || (status.activation_generation.is_some()
+                && status.armed_generation == status.activation_generation))
+        && !status.draining
+        && !status.scan_in_progress
+        && !status.cleanup_in_progress
+        && status.paused_until_unix_millis.is_none()
+}
+
+fn storage_cleanup_report_only_gate_open(status: &DaemonStatus) -> bool {
+    status.healthy
+        && status.ready
+        && status.startup_state == StartupState::ReadyReportOnly
+        && status.effective_mode() == DaemonMode::ReportOnly
+        && !status.draining
+        && !status.scan_in_progress
+        && !status.cleanup_in_progress
+        && status.paused_until_unix_millis.is_none()
 }
 
 fn fresh_instance_id(pid: u32, now_unix_millis: u64) -> String {

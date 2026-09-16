@@ -28,7 +28,7 @@ Automatic process admission依然极窄：source只允许controllerless exact Ch
 - support catalog必须来自embedded rule authority并携带`support_revision`，Swift fixture/UI不得维护另一份hard-coded eligibility matrix；
 - recent settlement由daemon用exact cleanup `event_token`与更早的event identity生成；同毫秒事件仍按durable event order处理。缺失proof返回nil，不由App猜family/process/memory/artifact facts；
 - impact由独立durable authority提供tracking起点、历史完整度、terminal/proved counts、process count与measurement-complete memory total；UI不得从bounded history重新累计；
-- storage residue仅显示最新typed observation。Chrome code-sign clone logical bytes不是physical reclaim承诺，`automatic_cleanup_eligible`必须为false，App没有删除入口；
+- storage residue仅显示最新typed observation。Chrome code-sign clone logical bytes不是physical reclaim承诺；`automatic_cleanup_eligible`来自daemon当前稳定性、进程与lifecycle gate，可为true，但只表达backend状态。App没有删除入口、不能从该字段发起或授权清理；
 - `cleared_with_residue` 必须同时表达 process success与 artifact residue，不写成 process cleanup failed；
 - ambiguous count、CPU、RSS、age、pressure或 protected incident只提供低调信息，不产生 action或 notification authority；
 - incident detail优先复用 coherent current session，否则使用 retained detail里的最新 observation；若 detail没有 observation但 exact-token settlement join成立，则用该 settlement继续显示 browser family和已有 typed facts，缺失 estimate保持不显示。只有 trusted `not_found`显示不存在。Transport/store/protocol failure保留旧 detail并标 stale；旧 request结果不得覆盖新 request。

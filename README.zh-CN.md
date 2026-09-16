@@ -14,7 +14,7 @@ Unlinger 在 macOS 上观察浏览器自动化留下的会话，并清理其中�
 - **跟踪一个命令的浏览器生命周期。** `unlinger task run -- COMMAND` 注册实际 command owner；兼容的 Playwright CLI 会话在任务结束后进入候选判断。任务结束本身不授权清理。
 - **准确解释普通 Playwright 为什么受保护。** 源码能识别已评估的 `playwright-core` `1.62.1` daemon 形态；如果宿主没有提供精确生命周期证据，App 会明确说明并保留会话不动。Operator schema v1 与 `unlinger session` 已提供 adapter primitive，但目前还没有 Codex adapter 自动驱动它。
 - **看见真实清理成果。** 完成后的 receipt 结合已送达信号的耐久记录，决定清理会话数、进程数和估算内存。未发送信号就结束的会话单独显示为“已结束，未介入”。重复观察会合并，不会计成清理成绩。
-- **观察磁盘残留。** 展示 Chrome code-sign clone 数量及文件逻辑大小。目前不能清理磁盘：启用的策略不会删除 profile、目录或 runtime artifact。
+- **观察并安全清理一个精确的磁盘残留家族。** 展示 Chrome code-sign clone 数量及文件逻辑大小。源码 daemon 在默认 report-only 模式下保持不动；只有有效 enforce 模式、同一精确候选连续两次观察稳定，并且完整原生进程快照证明没有任何经 bundle 身份确认的 Chrome 或 Chrome Helper 进程存活时，才会移除候选。profile、浏览器数据和 runtime artifact 不属于这条路径。该源码行为尚未安装或完成实机验证。
 
 | 范围 | 当前边界 |
 | --- | --- |
@@ -48,7 +48,7 @@ cargo build --locked --release --workspace
 
 ![Unlinger 进程清理架构](docs/architecture.svg)
 
-daemon 负责分类、持久化 task/optional-host 生命周期证据以及清理授权。它核对精确进程身份、浏览器与 controller 版本、所有权、活跃客户端和 profile 保护，再检查存活时间、稳定性与遗弃等待期。普通 detached Playwright controller 没有精确 host lifetime 时仍受保护；存活时间、PPID 1 或暂时没有 socket client 都不能替代任务意图。真正执行还需要明确启用 enforcement。每次信号发送都先写 journal、重新验证；确认进程消失并经过 revival 检查后，才形成最终 receipt。App 通过 daemon 提供的一份一致快照展示结果。
+daemon 负责分类、持久化 task/optional-host 生命周期证据以及清理授权。它核对精确进程身份、浏览器与 controller 版本、所有权、活跃客户端和 profile 保护，再检查存活时间、稳定性与遗弃等待期。普通 detached Playwright controller 没有精确 host lifetime 时仍受保护；存活时间、PPID 1 或暂时没有 socket client 都不能替代任务意图。真正执行还需要明确启用 enforcement。每次信号发送都先写 journal、重新验证；确认进程消失并经过 revival 检查后，才形成最终 receipt。独立的 Chrome clone 路径要求两次相隔 15 分钟的存储观察、完整原生 Chrome/helper 缺席证明，并使用 no-follow descriptor-relative 删除后立即重新扫描。App 只展示 daemon-owned 结果，不发起删除。
 
 [架构说明](docs/ARCHITECTURE.md) 提供中英说明、图中组件的源码依据和可编辑图源。
 

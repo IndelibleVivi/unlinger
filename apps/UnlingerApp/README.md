@@ -7,10 +7,10 @@ The App owns no classification, cleanup policy, signal authorization, daemon ins
 ## Current behavior
 
 - strict schema-v5 status/history/browser-overview/detail/diagnostics DTOs, including exact readiness, observation freshness, cleanup impact, typed storage residue and server-owned observation spans, with no silent v4, v3 or v1 fallback;
-- one atomic daemon-owned `BrowserOverviewSnapshot` containing the authoritative product phase, current sessions, typed compatibility/coverage, saved protections, exact recent settlement, durable cleanup impact, observe-only storage residue and a rule-generated support catalog;
+- one atomic daemon-owned `BrowserOverviewSnapshot` containing the authoritative product phase, current sessions, typed compatibility/coverage, saved protections, exact recent settlement, durable cleanup impact, typed storage-residue status/eligibility and a rule-generated support catalog;
 - one pure `BrowserOverviewMapper` that only selects localized copy and display shapes from that snapshot; it does not rescan evidence, join history or recompute product state;
 - a separate `BrowserHistoryMapper` that exposes only terminal cleanup outcomes in the history index and consumes daemon-owned observation spans in detail; observation noise no longer becomes a repetitive history row;
-- a browser-first overview, product/version-aware current-session rows, typed coverage explanations, saved protections, exact recent settlement, durable lifetime cleanup impact, observe-only Chrome code-sign clone residue, cleanup-centric history and readable browser-context detail with named safety checks; the old process-tree status/roster presentation has been retired;
+- a browser-first overview, product/version-aware current-session rows, typed coverage explanations, saved protections, exact recent settlement, durable lifetime cleanup impact, daemon-owned Chrome code-sign clone residue/eligibility, cleanup-centric history and readable browser-context detail with named safety checks; the App displays enforce/report-only meaning but owns no storage deletion command; the old process-tree status/roster presentation has been retired;
 - capability-gated pause/resume/retry/protect/unprotect with namespace-aware durable receipts;
 - one global unresolved-mutation lock, crash/restart status-only reconciliation, and authority-loss truth;
 - single-flight/coalesced refreshes, polling-session generations, stale snapshot retention, and typed incident-detail failures;

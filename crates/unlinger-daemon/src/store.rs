@@ -667,11 +667,9 @@ impl HistoryStore {
         &self,
         observation: &StorageResidueObservation,
     ) -> Result<(), StoreError> {
-        if observation.kind != StorageResidueKind::ChromeCodeSignClone
-            || observation.automatic_cleanup_eligible
-        {
+        if observation.kind != StorageResidueKind::ChromeCodeSignClone {
             return Err(StoreError::Invalid(
-                "storage residue observations must remain typed and observe-only".to_owned(),
+                "storage residue observations must remain typed".to_owned(),
             ));
         }
         let payload_json = serde_json::to_string(observation)?;
@@ -720,10 +718,9 @@ impl HistoryStore {
                 parse_nonnegative_millis(observed_at, "storage residue observation timestamp")?;
             if observation.kind != StorageResidueKind::ChromeCodeSignClone
                 || observation.observed_at_unix_millis != indexed_at
-                || observation.automatic_cleanup_eligible
             {
                 return Err(StoreError::Corrupt(
-                    "storage residue index disagrees with its observe-only payload".to_owned(),
+                    "storage residue index disagrees with its typed payload".to_owned(),
                 ));
             }
             Ok(observation)

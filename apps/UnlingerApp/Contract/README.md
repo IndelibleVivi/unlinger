@@ -53,7 +53,7 @@ V5 `BrowserOverviewSnapshot`是current browser-first surface的唯一product tru
 - bounded current sessions及typed `product`、observed version、`automatic | observe_only | protected | unknown` compatibility、optional reason ID与capability；
 - typed coverage summaries、attention、saved protections与exact recent settlement；
 - independent impact tracking start/completeness、terminal/proved cleanup counts与measurement-complete aggregates；
-- typed latest Chrome code-sign clone residue observation，其logical size不是physical reclaim承诺且`automatic_cleanup_eligible`始终为false；
+- typed latest Chrome code-sign clone residue observation，其logical size不是physical reclaim承诺；`automatic_cleanup_eligible`是daemon-owned当前状态，可为true但不会给App增加删除command或authority；
 - 从embedded rule packs生成的family/product/admitted-version/automatic-action support catalog及`support_revision`。
 
 Daemon在同一个in-memory status+roster lock boundary内capture source facts，释放锁后完成public projection。Positive phase要求healthy/ready、current roster、no scan和相等的non-null observation time；任何不可信或不一致状态都fail closed为`unknown`。可信状态使用一份server truth table：attention → reclaiming → confirmed → verifying → active → protected → clear。

@@ -608,7 +608,7 @@ fn pause_deadline_survives_store_reopen_and_can_be_cleared() {
 }
 
 #[test]
-fn storage_residue_observation_is_durable_redacted_and_cannot_encode_cleanup_authority() {
+fn storage_residue_observation_is_durable_redacted_and_preserves_current_eligibility() {
     let database = TempDatabase::new();
     let store = HistoryStore::open(&database.0).expect("open store");
     let observation = StorageResidueObservation {
@@ -634,12 +634,18 @@ fn storage_residue_observation_is_durable_redacted_and_cannot_encode_cleanup_aut
             .expect("read residue observation"),
         Some(observation.clone())
     );
-    let mut forbidden = observation;
-    forbidden.automatic_cleanup_eligible = true;
-    assert!(matches!(
-        reopened.record_storage_residue_observation(&forbidden),
-        Err(StoreError::Invalid(_))
-    ));
+    let mut eligible = observation;
+    eligible.observed_at_unix_millis += 1;
+    eligible.automatic_cleanup_eligible = true;
+    reopened
+        .record_storage_residue_observation(&eligible)
+        .expect("record eligible residue observation");
+    assert_eq!(
+        reopened
+            .latest_storage_residue_observation()
+            .expect("read eligible residue observation"),
+        Some(eligible)
+    );
 }
 
 #[test]

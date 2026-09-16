@@ -1104,7 +1104,10 @@ pub use events::{EventMonitorError, MacosEventMonitor, MemoryPressureLevel, Runt
 pub use platform::{MacosRuntime, MacosSnapshotter, SnapshotError};
 
 #[cfg(target_os = "macos")]
-pub use storage_residue::{inspect_code_sign_clone_root, observe_chrome_code_sign_clones};
+pub use storage_residue::{
+    ChromeCloneCleanup, ChromeCloneCleanupMode, inspect_code_sign_clone_root,
+    observe_chrome_code_sign_clones,
+};
 
 #[cfg(not(target_os = "macos"))]
 compile_error!("unlinger-macos currently supports only macOS");

@@ -978,9 +978,9 @@ fn frontend_schema_v5_projects_impact_residue_and_observation_spans_without_chan
             candidate_count: 4,
             logical_bytes: 8 * 1024 * 1024,
             shape_complete: true,
-            reference_check: StorageResidueReferenceCheck::Incomplete,
-            automatic_cleanup_eligible: false,
-            reason_ids: vec!["storage_residue.observe_only".to_owned()],
+            reference_check: StorageResidueReferenceCheck::CompleteNoReferences,
+            automatic_cleanup_eligible: true,
+            reason_ids: vec!["storage_residue.cleanup_report_only".to_owned()],
         })
         .expect("record storage residue observation");
 
@@ -1018,7 +1018,7 @@ fn frontend_schema_v5_projects_impact_residue_and_observation_spans_without_chan
     );
     assert_eq!(
         v5["payload"]["data"]["storage_residue"]["automatic_cleanup_eligible"],
-        false
+        true
     );
 
     let v4 = raw_request(

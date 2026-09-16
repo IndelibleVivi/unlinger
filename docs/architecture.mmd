@@ -1,26 +1,32 @@
-%% Current process-only source; bilingual evidence map in ARCHITECTURE.md.
+%% Current source execution map; bilingual evidence map in ARCHITECTURE.md.
 %%{init: {"theme": "base", "fontFamily": "Arial, sans-serif", "themeVariables": {"fontFamily": "Arial, sans-serif", "fontSize": "16px", "primaryColor": "#eef3f7", "primaryTextColor": "#152d42", "primaryBorderColor": "#71899a", "lineColor": "#71899a", "clusterBkg": "#f8fafb", "clusterBorder": "#ccd7df"}, "flowchart": {"htmlLabels": false, "curve": "linear", "nodeSpacing": 25, "rankSpacing": 30, "subGraphTitleMargin": {"top": 8, "bottom": 18}}}}%%
 flowchart TB
   command["Command + Playwright CLI"]
   host["Optional host adapter<br/>exact owner lifecycle"]
   native["Native macOS observations<br/>process identity + version"]
-  residue["Chrome clone observer<br/>logical size; no deletion"]
+  residue["Exact Chrome clone scan<br/>no-follow shape + identity"]
   subgraph daemon["unlingerd · cleanup authority"]
     lifetime["Task + host-owner lifetime<br/>exact owner / controller binding"]
     gates["Classification + protection<br/>age, stability, abandonment"]
     plan["Revalidate frozen plan<br/>commit PREPARED before signal"]
     proof["Exact TERM / survivor KILL<br/>absence + revival checks"]
-    store[("SQLite v10<br/>ownership, observations, action journal<br/>terminal receipts + impact")]
+    residue_gate["Clone storage gate<br/>two observations + no Chrome/helper"]
+    residue_delete["Enforce-only clone removal<br/>descriptor-relative + immediate rescan"]
+    store[("SQLite v10<br/>ownership, typed observations, action journal<br/>terminal receipts + impact")]
     overview["Atomic browser overview<br/>schema v5"]
     lifetime -->|released, no active client| gates
     gates -->|report-only| store
     gates -->|enforce + valid authority| plan
     plan --> proof
     proof -->|proved result| store
+    residue_gate -->|report-only or blocked| store
+    residue_gate -->|ready enforce + stable| residue_delete
+    residue_delete -->|actual remaining state| store
     store --> overview
   end
   command -->|task run| lifetime
   host -->|optional lease| lifetime
   native --> gates
-  residue --> store
+  native -->|complete process absence proof| residue_gate
+  residue -->|typed scan + in-memory identities| residue_gate
   overview --> app["Native App / CLI<br/>state, explanations, actual impact"]

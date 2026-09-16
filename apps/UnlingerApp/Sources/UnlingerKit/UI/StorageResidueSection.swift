@@ -23,7 +23,13 @@ public struct StorageResidueSection: View {
                 )
                 .font(.caption)
                 .foregroundStyle(.secondary)
-                Text(L10n.text("browser.storage_residue.observe_only"))
+                Text(
+                    L10n.text(
+                        residue.automaticCleanupEligible
+                            ? "browser.storage_residue.eligible"
+                            : "browser.storage_residue.waiting"
+                    )
+                )
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
             case .unavailable:

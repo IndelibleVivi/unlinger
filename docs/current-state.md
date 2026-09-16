@@ -2,6 +2,32 @@
 
 **Updated:** 2026-09-16. **Programme:** 0.1. **Reader posture:** experimental developer source preview; not a signed/notarized App release or multi-day reliability claim.
 
+## Source-only Chrome clone automatic cleanup (2026-09-16)
+
+Current source now treats the exact current-user Chrome `code_sign_clone`
+family as a default enforce-mode cleanup target while preserving the ordinary
+daemon default of report-only. It retains one previous exact candidate identity
+set in memory, requires the same set at the next 15-minute storage observation,
+and uses the canonical native process snapshot to block on any bundle-confirmed
+Google Chrome or Chrome Helper process, including the clone-cleanup helper, or incomplete
+process coverage. Only a healthy, ready, unpaused, non-draining enforce daemon
+may mutate. Deletion stays descriptor-relative beneath the scanner-validated
+candidate, never follows symlinks, and is followed immediately by a rescan whose
+actual result becomes the persisted/public typed observation. Raw root and
+candidate paths remain absent from SQLite, IPC, diagnostics and logs.
+
+Temp-fixture coverage proves report-only non-mutation, first-observation
+cooling, second-stable-observation cleanup, candidate-change reset, ordinary
+Chrome/helper/incomplete-coverage blocking, symlink/unexpected-shape refusal,
+and truthful failed-removal rescan. Focused macOS/daemon suites, strict workspace
+clippy, the full Rust workspace suite and release build, all 86 Swift tests,
+source App bundling, source-only doctor and dry-run scan pass. This is source
+behavior only. It has not replaced or restarted the installed daemon or App,
+has no installed cleanup
+receipt, and has not deleted a real Chrome clone. Accepted generation 25 and
+the installed `628d822` App therefore retain their prior observe-only clone
+behavior and evidence below.
+
 ## Installed App memory hardening candidate (2026-09-16)
 
 The owner observed a recurrent installed-App memory event above 20 GB. The exact
