@@ -4,13 +4,7 @@ import Observation
 @Observable
 @MainActor
 public final class AppSettings {
-    public var notificationMode: NotificationMode {
-        didSet {
-            defaults.set(notificationMode.rawValue, forKey: Keys.notificationMode)
-            let coordinator = notificationCoordinator
-            Task { await coordinator?.setMode(notificationMode) }
-        }
-    }
+    public private(set) var notificationMode: NotificationMode
     public private(set) var notificationAuthorization: NotificationAuthorization
     public private(set) var launchAtLoginStatus: LoginItemStatus = .unknown
     public private(set) var launchAtLoginRequested: Bool
@@ -34,6 +28,14 @@ public final class AppSettings {
     public func attachNotificationCoordinator(_ coordinator: (any NotificationCoordinating)?) {
         notificationCoordinator = coordinator
         Task { await coordinator?.setMode(notificationMode) }
+    }
+
+    public func setNotificationMode(_ mode: NotificationMode) {
+        guard mode != notificationMode else { return }
+        notificationMode = mode
+        defaults.set(mode.rawValue, forKey: Keys.notificationMode)
+        let coordinator = notificationCoordinator
+        Task { await coordinator?.setMode(mode) }
     }
 
     public func prepareNotifications() async {

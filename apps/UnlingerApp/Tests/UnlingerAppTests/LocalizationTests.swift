@@ -1,6 +1,24 @@
 import Foundation
+import Observation
 import Testing
 @testable import UnlingerKit
+
+private final class LanguageObservationFlag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = false
+
+    func mark() {
+        lock.lock()
+        value = true
+        lock.unlock()
+    }
+
+    func read() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return value
+    }
+}
 
 @Suite("Localization")
 @MainActor
@@ -55,23 +73,40 @@ struct LocalizationTests {
     func languageOverride() {
         let settings = LanguageSettings.shared
         let original = settings.preference
-        defer { settings.preference = original }
-        settings.preference = .zhHans
+        defer { settings.setPreference(original) }
+        settings.setPreference(.zhHans)
         #expect(L10n.text("browser.overview.clear") == "未发现受支持的浏览器遗留")
-        settings.preference = .en
+        settings.setPreference(.en)
         #expect(L10n.text("browser.overview.clear") == "No supported browser leftovers found")
+    }
+
+    @Test("equal language preference does not republish observation state")
+    func equalLanguagePreferenceIsIdempotent() {
+        let settings = LanguageSettings.shared
+        let changed = LanguageObservationFlag()
+        withObservationTracking {
+            _ = settings.preference
+            _ = settings.bundle
+            _ = settings.locale
+        } onChange: {
+            changed.mark()
+        }
+
+        settings.setPreference(settings.preference)
+
+        #expect(!changed.read())
     }
 
     @Test("connection failure does not claim that the service stopped")
     func unavailableDoesNotClaimStopped() {
         let settings = LanguageSettings.shared
         let original = settings.preference
-        defer { settings.preference = original }
-        settings.preference = .en
+        defer { settings.setPreference(original) }
+        settings.setPreference(.en)
         let english = L10n.text("unavailable.body")
         #expect(english.contains("may still be running"))
         #expect(!english.contains("no observation is taking place"))
-        settings.preference = .zhHans
+        settings.setPreference(.zhHans)
         let chinese = L10n.text("unavailable.body")
         #expect(chinese.contains("后台可能仍在观察或自动清理"))
         #expect(!chinese.contains("当前没有在进行任何观察"))
@@ -104,14 +139,14 @@ struct LocalizationTests {
     func browserAccessibilityCopy() async throws {
         let settings = LanguageSettings.shared
         let original = settings.preference
-        defer { settings.preference = original }
+        defer { settings.setPreference(original) }
 
         let state = AppState(client: FixtureClient.scenario("browser-protected-unsupported"))
         await state.refresh()
         let overview = state.browserOverview
         let session = try #require(overview.sessions.first)
 
-        settings.preference = .en
+        settings.setPreference(.en)
         let englishOverview = BrowserProductCopy.overviewAccessibilityLabel(overview)
         let englishSession = BrowserProductCopy.sessionAccessibilityLabel(session)
         #expect(englishOverview.contains("Observe only"))
@@ -120,7 +155,7 @@ struct LocalizationTests {
         #expect(englishSession.contains("supported"))
         #expect(englishSession.contains("Chrome for Testing 151.0.7922.35"))
 
-        settings.preference = .zhHans
+        settings.setPreference(.zhHans)
         let chineseOverview = BrowserProductCopy.overviewAccessibilityLabel(overview)
         let chineseSession = BrowserProductCopy.sessionAccessibilityLabel(session)
         #expect(chineseOverview.contains("仅观察"))

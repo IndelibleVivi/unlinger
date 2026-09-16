@@ -25,6 +25,27 @@ private actor FakeLoginItemService: LoginItemServicing {
     }
 }
 
+private actor CountingNotificationCoordinator: NotificationCoordinating {
+    private var modes: [NotificationMode] = []
+
+    func modeCount() -> Int { modes.count }
+    func latestMode() -> NotificationMode? { modes.last }
+
+    func prepareAuthorization() async -> NotificationAuthorization { .authorized }
+
+    func setMode(_ mode: NotificationMode) async {
+        modes.append(mode)
+    }
+
+    func receiveTrustedRefresh(
+        status _: PublicStatus,
+        history _: [HistoryEvent],
+        atUnixMillis _: UInt64
+    ) async {}
+
+    func receiveUnavailable(atUnixMillis _: UInt64) async {}
+}
+
 @Suite("App settings")
 @MainActor
 struct SettingsTests {
@@ -71,12 +92,39 @@ struct SettingsTests {
             loginItemService: FakeLoginItemService()
         )
 
-        settings.notificationMode = .attentionAndReclaims
+        settings.setNotificationMode(.attentionAndReclaims)
 
         let restored = AppSettings(
             defaults: defaults,
             loginItemService: FakeLoginItemService()
         )
         #expect(restored.notificationMode == .attentionAndReclaims)
+    }
+
+    @Test("same notification mode does not republish preferences or coordinator work")
+    func notificationModeIsIdempotent() async throws {
+        let domain = "UnlingerAppTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: domain))
+        defer { defaults.removePersistentDomain(forName: domain) }
+        let coordinator = CountingNotificationCoordinator()
+        let settings = AppSettings(
+            defaults: defaults,
+            loginItemService: FakeLoginItemService()
+        )
+        settings.attachNotificationCoordinator(coordinator)
+        for _ in 0 ..< 1_000 where await coordinator.modeCount() < 1 {
+            await Task.yield()
+        }
+
+        settings.setNotificationMode(.attention)
+        for _ in 0 ..< 100 { await Task.yield() }
+        #expect(await coordinator.modeCount() == 1)
+
+        settings.setNotificationMode(.attentionAndReclaims)
+        for _ in 0 ..< 1_000 where await coordinator.modeCount() < 2 {
+            await Task.yield()
+        }
+        #expect(await coordinator.modeCount() == 2)
+        #expect(await coordinator.latestMode() == .attentionAndReclaims)
     }
 }

@@ -216,11 +216,26 @@ public final class AppState {
             guard !Task.isCancelled, epoch == refreshEpoch else { return }
             switch outcome {
             case .success(let snapshot):
-                status = snapshot.status
-                history = snapshot.history
-                browserSnapshot = snapshot.browser
-                connection = .live
-                rebuildBrowserPresentation()
+                var presentationChanged = false
+                if status != snapshot.status {
+                    status = snapshot.status
+                    presentationChanged = true
+                }
+                if history != snapshot.history {
+                    history = snapshot.history
+                    presentationChanged = true
+                }
+                if browserSnapshot != snapshot.browser {
+                    browserSnapshot = snapshot.browser
+                    presentationChanged = true
+                }
+                if connection != .live {
+                    connection = .live
+                    presentationChanged = true
+                }
+                if presentationChanged {
+                    rebuildBrowserPresentation()
+                }
                 lastRefreshAt = .now
                 await notificationCoordinator?.receiveTrustedRefresh(
                     status: snapshot.status,
@@ -231,16 +246,16 @@ public final class AppState {
                     await reconcile(pending, requestRefreshAfterResolution: false)
                 }
             case .failure(.incompatibleDaemon(let reason)):
-                connection = .incompatibleDaemon(reason)
+                updateConnection(.incompatibleDaemon(reason))
                 markBrowserSnapshotStaleAfterFailure()
             case .failure(.unavailable):
-                connection = .unavailable
+                updateConnection(.unavailable)
                 markBrowserSnapshotStaleAfterFailure()
                 await notificationCoordinator?.receiveUnavailable(
                     atUnixMillis: Date().unixMillis
                 )
             case .failure:
-                connection = .unavailable
+                updateConnection(.unavailable)
                 markBrowserSnapshotStaleAfterFailure()
             }
         } while refreshRequested && !Task.isCancelled && epoch == refreshEpoch
@@ -423,11 +438,13 @@ public final class AppState {
     }
 
     private func markBrowserSnapshotStaleAfterFailure() {
+        guard browserSnapshot?.freshness != .staleAfterFailure else { return }
         browserSnapshot?.freshness = .staleAfterFailure
         rebuildBrowserPresentation()
     }
 
     private func updateConnection(_ next: ConnectionState) {
+        guard connection != next else { return }
         connection = next
         rebuildBrowserPresentation()
     }

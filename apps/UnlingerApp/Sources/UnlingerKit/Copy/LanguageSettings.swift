@@ -26,21 +26,17 @@ public final class LanguageSettings {
         }
     }
 
-    public var preference: Preference {
-        didSet {
-            UserDefaults.standard.set(preference.rawValue, forKey: Self.defaultsKey)
-        }
-    }
+    public private(set) var preference: Preference
 
-    /// The bundle copy resolves from. Computed off `preference` so Observation
-    /// tracking flows through it.
-    public var bundle: Bundle {
-        Self.resolveBundle(for: preference)
-    }
+    /// Stable localization resources. Popup and Accessibility updates reuse
+    /// these objects until the user actually changes language.
+    public private(set) var bundle: Bundle
 
     /// Locale for formatted values that sit beside localized copy. Explicit
     /// language choices must not leave relative dates in the system language.
-    public var locale: Locale {
+    public private(set) var locale: Locale
+
+    private static func resolveLocale(for preference: Preference) -> Locale {
         switch preference {
         case .system: .autoupdatingCurrent
         case .en: Locale(identifier: "en")
@@ -52,7 +48,18 @@ public final class LanguageSettings {
 
     private init() {
         let stored = UserDefaults.standard.string(forKey: Self.defaultsKey)
-        preference = stored.flatMap(Preference.init(rawValue:)) ?? .system
+        let preference = stored.flatMap(Preference.init(rawValue:)) ?? .system
+        self.preference = preference
+        self.bundle = Self.resolveBundle(for: preference)
+        self.locale = Self.resolveLocale(for: preference)
+    }
+
+    public func setPreference(_ preference: Preference) {
+        guard preference != self.preference else { return }
+        self.preference = preference
+        bundle = Self.resolveBundle(for: preference)
+        locale = Self.resolveLocale(for: preference)
+        UserDefaults.standard.set(preference.rawValue, forKey: Self.defaultsKey)
     }
 
     private static func resolveBundle(for preference: Preference) -> Bundle {

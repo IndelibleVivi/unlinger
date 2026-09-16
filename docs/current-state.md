@@ -27,59 +27,59 @@ unrelated-suffix non-blocking, incomplete-coverage blocking, symlink/unexpected-
 and truthful failed-removal rescan. For this correction, the complete
 `unlinger-macos` test package, focused daemon storage-residue tests, workspace
 format check and strict `unlinger-macos`/`unlinger-daemon` all-target clippy pass
-locally. The earlier global-absence implementation at source commit `372828b`
-remains the last pushed full-workspace/CI evidence and must not be borrowed for
-this corrected gate. The candidate-reference correction has not replaced or
-restarted the installed daemon or App, has no installed cleanup receipt, and
-has not deleted a real Chrome clone. Installed verification remains a separate
-gate.
+locally. Exact source commit `516d483` then passed
+[CI 35106242999](https://github.com/IndelibleVivi/unlinger/actions/runs/35106242999).
+The installed generation 27 still uses the earlier global-Chrome blocking gate:
+with ordinary Chrome running it reports `chrome_process_active`, nine candidates
+and 13,273,958,043 logical bytes rather than deleting. The candidate-reference
+correction has not replaced or restarted that daemon, has no installed cleanup
+receipt, and has not deleted a real Chrome clone. Installed verification remains
+a separate gate.
 
-## Installed App memory hardening candidate (2026-09-16)
+## Installed App memory recurrence and source repair candidate (2026-09-16)
 
-The owner observed a recurrent installed-App memory event above 20 GB. The exact
-spike did not recur during bounded inspection, so its complete cause remains
-unproved and the event is treated as a release blocker rather than explained
-away by later low samples. The installed `e26297b` App stayed below 100 MiB in
-several exact-child runs after the event; a later idle capture reported a 29 MiB
-physical footprint, about 13 MiB of allocated malloc memory and a sub-megabyte
-AttributeGraph allocation. One Accessibility transport failure coincided with a
-later ScreenCaptureKit capture error and is not attributed to the App without
-stronger evidence.
+The owner observed the installed `628d822` App recur at about **19 GB**. A macOS
+CPU-resource diagnostic for that exact process captured **65% CPU** and footprint
+growth from **42.02 MiB to 2,023.98 MiB in 138 seconds** while the App was
+non-frontmost. Its dominant main-thread stack runs through SwiftUI/AttributeGraph,
+`PlatformViewRepresentableAdaptor.updateViewProvider`,
+`AppKitPopUpAdaptor.PlatformView.updateNSView`, popup item Accessibility-property
+application and attributed-text resolution/allocation. Unified logs show the
+owner's Force Quit ended that process with SIGTERM; this was not a daemon crash
+or jetsam. The generation-27 daemon remained small and healthy.
 
-Commit `628d822` removes one concrete unnecessary retention surface:
-`AppWindowController` still owns one reusable ordinary `NSWindow` from launch,
-but does not construct its SwiftUI/Accessibility hosting tree until first
-presentation. The first presentation constructs that tree exactly once. A
-focused lifecycle regression fails the old eager-host behavior; all **86 Swift
-tests** pass, release bundling passes, the history Accessibility/RSS gate passed
-**457 probes with zero failures** and 17.8 MiB final RSS, and a separate
-three-minute menu-only polling run passed **180 samples** with 61.4 MiB startup
-maximum, 12.4 MiB final RSS and only 448 KiB growth from its minimum. Exact-head
-[CI 35072613168](https://github.com/IndelibleVivi/unlinger/actions/runs/35072613168)
-then passed every job.
+The exact trigger is still intermittent. The old source did not reproduce the
+runaway in bounded fixture root/Settings lanes, accelerated polling lanes, or a
+15-minute real-daemon packaged run; those passing samples do not erase the
+captured failure. The confirmed failing boundary is repeated popup Accessibility
+materialization on the polling SwiftUI graph, not yet a uniquely reproduced
+whole-app root cause.
 
-The ad-hoc-signed bundle was installed at the canonical owner-local Applications
-path after recursive equality and strict signature/plist checks. The displaced
-`e26297b` bundle and earlier `016ca58` bundle remain separate recoverable
-siblings. The installed App passed 180 normal menu-only RSS samples with a 73.3
-MiB maximum and 11.6 MiB final value, then 120 visible-window samples between
-10.8 and 38.0 MiB with a 29.1 MiB final value. A trusted Accessibility read
-returned the live browser overview, cleanup-impact/residue cards and controls.
-The App was still running at 19.8 MiB after seven and a half minutes. The
-generation-25 daemon was not restarted or changed and remained healthy,
-quiescent `ReadyEnforce`. These are bounded installed-candidate results, not
-proof of the unique root cause, packaged-notification behavior or multi-day
-reliability; recurrence still blocks a private-v0.1 reliability claim.
+Current App source removes that captured private adaptor path from all three
+popup controls. Language, pause and notification selection now use one native
+`NSPopUpButton` representable whose item objects survive equal configuration;
+equal daemon refreshes and notification-mode writes are not republished,
+localization resources stay stable until an actual language change, and the
+ordinary window releases its SwiftUI/Accessibility host on close before
+rebuilding it on reopen with the persistent router. The old closed-host,
+equal-refresh and equal-setting paths fail the new focused regressions. The
+current candidate passes **91 Swift tests**, release bundling and **460** repeated
+fixture Accessibility-tree probes with zero failures, 22,208 KiB final RSS and
+101,744 KiB startup maximum. A separate packaged candidate then ran against the
+real generation-27 daemon for 900 one-second RSS samples, ending at 18,112 KiB
+with a 98,000 KiB maximum and never approaching its 384 MiB cutoff. Installation
+and multi-day acceptance remain separate facts; the canonical installed App is
+still `628d822` until the authorized recoverable replacement completes.
 
-## Current installed candidate (2026-09-15)
+## Installed v10 baseline (2026-09-15)
 
 Implementation `e26297b` based on `9da14b7` composes bounded FD-list sampling,
 explicit no-intervention completion, action-attributed impact accounting and
 honest empty-observation/connection-failure presentation with optional exact
 host ownership of an existing ordinary Playwright CLI session. On 2026-09-15
-the owner authorized direct private dogfood installation. The exact source
-candidate is now accepted and active as generation 25 with SQLite v10 and
-Playwright pack `0.6.0`; frontend schemas v5/v4/v3 and operator v1 remain
+the owner authorized direct private dogfood installation. That source was first
+accepted as generation 25 with SQLite v10 and remains in the current
+generation-27 lineage; frontend schemas v5/v4/v3 and operator v1 remain
 version-compatible. Generation 23 / SQLite v8 / Playwright-0.5.0 evidence below
 is historical rollback and controlled-cleanup evidence, not current runtime truth.
 
@@ -134,16 +134,16 @@ acceptance is claimed.
 | Subsequent test correction | `f22e08eb3410050b380eaee7b84c4ccda2a3ad1a`: bounded post-release offline-lock tests; production locking/timeouts unchanged |
 | Baseline remote verification | [CI 34163955192](https://github.com/IndelibleVivi/unlinger/actions/runs/34163955192) passed for `b70bc94`; [CI 34165331792](https://github.com/IndelibleVivi/unlinger/actions/runs/34165331792) passed for `f22e08e`, including default-parallel Rust tests, release build, Swift tests and App bundling |
 | Current reader preparation | Published source-preview candidate `de1a9c3`: bilingual reader guides, licensed material scopes, current architecture and safe demo teardown; [exact CI 34170593229](https://github.com/IndelibleVivi/unlinger/actions/runs/34170593229) passed all steps |
-| Current source verification | Full local gates, [exact-source CI 34968538132](https://github.com/IndelibleVivi/unlinger/actions/runs/34968538132), [current-head CI 34968967500](https://github.com/IndelibleVivi/unlinger/actions/runs/34968967500), and App-memory exact-head [CI 35072613168](https://github.com/IndelibleVivi/unlinger/actions/runs/35072613168) passed |
-| App memory hardening candidate | Installed `628d822` lazy ordinary-window host; 86 Swift tests, release bundle, 457-probe source Accessibility/RSS gate, 180 source menu-only samples, 180 installed menu-only samples, 120 installed visible-window samples and one trusted installed Accessibility read passed; exact 20-GB cause and multi-day acceptance remain open |
-| Maintainer's reference service | Accepted generation 25 from `e26297b`, healthy and quiescent `ReadyEnforce`, generation/epoch-bound with no pending candidate lease; this is one reference installation, not a generation number users should copy |
+| Current source verification | Chrome candidate-reference correction `516d483` passed [exact-head CI 35106242999](https://github.com/IndelibleVivi/unlinger/actions/runs/35106242999); the current App repair passes 91 Swift tests, release bundling, a 460-probe Accessibility/RSS lane and a 900-sample real-daemon packaged guard, with exact-head CI still pending |
+| App memory repair candidate | Source removes the captured SwiftUI popup Accessibility adaptor path, suppresses equal publications and releases the closed-window host; the exact intermittent trigger and multi-day acceptance remain open |
+| Maintainer's reference service | Accepted generation 27, healthy and quiescent `ReadyEnforce`, generation/epoch-bound with no pending candidate lease; it still uses the global-Chrome blocking clone gate and is one reference installation, not a generation number users should copy |
 | Reference protocols/persistence | Operator v1, frontend v5/v4/v3, SQLite v10; historical v2 rejected |
-| Reference App | Ad-hoc-signed schema-v5 App from `628d822`, installed and running; neither Developer ID signed nor notarized; displaced `e26297b` and earlier `016ca58` bundles retained as recoverable local siblings |
+| Reference App | Ad-hoc-signed schema-v5 App from `628d822`, installed after the owner Force Quit the 19-GB instance; neither Developer ID signed nor notarized; displaced `e26297b` and earlier `016ca58` bundles retained as recoverable local siblings; source repair is not installed |
 | Policy | Playwright `0.6.0`, agent-browser/Puppeteer `0.4.0`; process-only; every artifact flag false |
 | Publication | [Repository public](https://github.com/IndelibleVivi/unlinger); source-available under SUL-1.0 + CC BY-NC-SA 4.0; anonymous API and reader/license/diagram access verified; no GitHub Release |
 
 The source daemon still defaults to report-only. The reference service's explicit
-generation-25 activation is separate from that default, from building the source,
+generation-27 activation is separate from that default, from building the source,
 and from repository publication.
 
 ## Current installed transaction evidence
@@ -163,29 +163,31 @@ unarmed `ReadyReportOnly`; its old daemon reopened the restored SQLite v8
 database and the matching App passed all seven live-socket tests against it. A
 fresh generation 25 repeated the v10 migration, binary match, report-only
 restart and seven-plus-seven App/socket checks. The owner then accepted the
-candidate, retiring the rollback lease, and explicitly armed generation 25. The
-owner's ordinary PATH symlink now resolves to generation 25 and exposes the new
-`session` surface.
+candidate, retiring the rollback lease, and explicitly armed generation 25. At
+that stage the owner's ordinary PATH symlink resolved to generation 25 and
+exposed the new `session` surface; it now resolves to generation 27.
 
-The later App-only memory repair did not replace or restart that daemon. After
-exact-head CI passed, the canonical App was replaced recoverably with the
+The later first App-only memory repair did not replace or restart generation 25.
+After exact-head CI passed, the canonical App was replaced recoverably with the
 `628d822` bundle and the `e26297b` App was preserved beside the existing
 `016ca58` rollback bundle. Recursive bundle equality, strict signature/plist
 checks and an exact canonical launch passed. The installed App then completed
 180 menu-only and 120 visible-window RSS samples below the 384 MiB cutoff, and
 one trusted Accessibility read exposed the live schema-v5 overview and controls.
+The later 19-GB recurrence proves those bounded samples were not multi-day
+acceptance.
 
-A later full observation cycle remained healthy and quiescent `ReadyEnforce`
-with SQLite v10, exact PID/generation/binary identity, armed generation 25,
-event source healthy, zero recovered cleanup attempts, zero attention and no
-scan or cleanup in progress. The installed App remained running. A fresh
-browser overview saw two ordinary Playwright/Google Chrome `152.0.7977.83`
-sessions and correctly protected both as `browser_product_unsupported`; this is
-installed observation, not an eligible cleanup or host-adapter proof. Storage
-residue remained observe-only with `automatic_cleanup_eligible = false`. The
-later App-memory acceptance read those live impact/residue facts in the installed
-UI through Accessibility. Pixel-level visual QA, packaged-notification and
-multi-day App acceptance were not performed.
+The first Chrome-clone cleanup candidate was then installed as generation 26 at
+the report-only floor, exercised through the transactional replacement lane,
+and actually rolled back to healthy generation 25. Fresh generation 27 repeated
+the replacement and was accepted and armed. Current status readback is healthy,
+quiescent `ReadyEnforce` on SQLite v10 with exact PID/generation/binary identity,
+event source healthy, zero recovered cleanup attempts and zero attention. Its
+storage observation sees nine clone candidates and 13,273,958,043 logical bytes,
+but the pre-`516d483` global gate reports `chrome_process_active` while ordinary
+Chrome is open. This is installed safe refusal, not automatic-cleanup success.
+Pixel-level visual QA, packaged-notification and multi-day App acceptance remain
+unperformed.
 
 ## Current controlled evidence
 
@@ -213,10 +215,10 @@ The publication candidate passed fresh local formatting, strict workspace clippy
 
 - The original generation-17 terminal SQLite disk-I/O failure cause remains unproved. Exact-instance containment/recovery and later transactional replacement succeeded; a later healthy database check does not establish the original cause.
 - The command wrapper does not integrate every Codex App host or browser tool automatically. The source v10 optional session-owner primitive also has no supported automatic Codex adapter yet. Exact CLI/browser compatibility, lifetime/client proof and all ordinary gates remain required; unregistered, active-owner, reused, unsupported or unverified controllers stay protected.
-- Chrome clone observation now accepts the actual `.app.bundle` shape and no-follow framework links. A real observation matched one clone and 1,475,187,528 regular-file logical bytes; live references were observed and deletion remains unavailable.
+- Chrome clone observation now accepts the actual `.app.bundle` shape and no-follow framework links. Installed generation 27 observes nine candidates and 13,273,958,043 regular-file logical bytes but still blocks on any ordinary Chrome process. Source `516d483` narrows that gate to candidate-level references and is not yet installed or credited with a real cleanup.
 - All artifact admission is disabled. The dormant DAP engine still has a quarantine-after-crash recovery gap and a final pathname-swap TOCTOU. Native pathname-reference tests also intermittently returned no reference for an owned open ordinary or `O_EVTONLY` descriptor under parallel execution; exact serial tests passed, and the cause is unresolved. The active process path does not use that query. [Safety](SAFETY.md) owns these boundaries.
 - The old zero-deadline offline-lock test failed because a concurrent fork can inherit an `O_CLOEXEC` descriptor until exec. A deterministic owned-child probe established that cause; `f22e08e` retains held-lock denial and gives post-release acquisition its existing bounded wait. The final exact-head CI passed. A later local full workspace run reproduced the separate dormant native-query failures above; no assertions were weakened.
-- The current source fixture passed 457 Accessibility-tree probes with zero read failures and an external 18,256 KiB final RSS sample. The installed `628d822` App separately passed 300 RSS samples across hidden-menu and visible-window states plus one trusted Accessibility-tree read. Historical installed-App evidence includes ten minutes/1,398 tree reads and an earlier bounded v5 deployment observation; neither current nor historical points establish multi-day App behavior, packaged notifications or every menu organizer/display arrangement.
+- The current source fixture passed 460 Accessibility-tree probes with zero read failures and an external 22,208 KiB final RSS sample. The installed `628d822` App's earlier 300-sample/one-tree acceptance was superseded by the later 19-GB recurrence. The current native-popup candidate removes the captured failing adaptor boundary, but neither source checks nor historical points establish the exact intermittent trigger, multi-day App behavior, packaged notifications or every menu organizer/display arrangement.
 - No Intel/universal verification, signed/notarized distribution, automatic update path or public release is claimed. Recognition of agent-browser/Puppeteer is not controlled field acceptance.
 
 ## Publication preparation

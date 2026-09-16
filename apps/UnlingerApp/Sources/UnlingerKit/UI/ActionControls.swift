@@ -4,7 +4,6 @@ import SwiftUI
 /// capabilities. Also hosts the mutation-state banner so confirmation and
 /// delivery-uncertainty are visible wherever the action was started.
 public struct ActionControls: View {
-    @Environment(AppState.self) private var state
     let capabilities: GlobalCapabilities?
 
     static let pausePresets: [(key: String, millis: UInt64)] = [
@@ -18,58 +17,86 @@ public struct ActionControls: View {
     }
 
     public var body: some View {
+        let language = LanguageSettings.shared.preference
         VStack(alignment: .leading, spacing: 8) {
             Text(L10n.text("actions.hint"))
                 .font(.caption)
                 .foregroundStyle(.tertiary)
-            HStack(spacing: 12) {
-                pauseMenu
-                resumeButton
-                Spacer(minLength: 0)
-                languageMenu
-            }
+            ActionBarControls(capabilities: capabilities, language: language)
+                .equatable()
             MutationBanner()
+        }
+    }
+}
+
+private struct ActionBarControls: View, Equatable {
+    @Environment(AppState.self) private var state
+
+    let capabilities: GlobalCapabilities?
+    let language: LanguageSettings.Preference
+
+    nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.capabilities == rhs.capabilities && lhs.language == rhs.language
+    }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            pauseMenu
+            resumeButton
+            Spacer(minLength: 0)
+            languageMenu
         }
     }
 
     /// In-app UI language override. Not a backend capability — display only.
     private var languageMenu: some View {
-        Menu {
-            ForEach(LanguageSettings.Preference.allCases, id: \.self) { preference in
-                Button {
-                    LanguageSettings.shared.preference = preference
-                } label: {
-                    if LanguageSettings.shared.preference == preference {
-                        Label(L10n.text(preference.copyKey), systemImage: "checkmark")
-                    } else {
-                        Text(L10n.text(preference.copyKey))
-                    }
-                }
+        StablePopUpButton(
+            style: .action,
+            title: L10n.text("language.menu"),
+            systemImageName: "globe",
+            showsTitle: false,
+            accessibilityLabel: L10n.text("language.menu"),
+            toolTip: L10n.text("language.menu"),
+            items: LanguageSettings.Preference.allCases.map { preference in
+                StablePopUpItem(
+                    id: preference.rawValue,
+                    title: L10n.text(preference.copyKey),
+                    isMarked: language == preference
+                )
             }
-        } label: {
-            Label(L10n.text("language.menu"), systemImage: "globe")
-                .labelStyle(.iconOnly)
+        ) { identifier in
+            guard let preference = LanguageSettings.Preference(rawValue: identifier) else {
+                return
+            }
+            LanguageSettings.shared.setPreference(preference)
         }
-        .help(L10n.text("language.menu"))
+        .fixedSize()
     }
 
     private var pauseMenu: some View {
-        Menu {
-            ForEach(Self.pausePresets, id: \.millis) { preset in
-                Button(L10n.text(preset.key)) {
-                    let label = L10n.text(preset.key)
-                    Task {
-                        await state.perform(.pause(durationMillis: preset.millis, label: label))
-                    }
-                }
+        StablePopUpButton(
+            style: .action,
+            title: L10n.text("action.pause"),
+            accessibilityLabel: L10n.text("action.pause"),
+            toolTip: capabilities?.pause.available == false
+                ? CapabilityCopy.unavailableReason(capabilities?.pause.unavailableReasonId)
+                : "",
+            isEnabled: capabilities?.pause.available ?? false,
+            items: ActionControls.pausePresets.map { preset in
+                StablePopUpItem(id: String(preset.millis), title: L10n.text(preset.key))
             }
-        } label: {
-            Text(L10n.text("action.pause"))
+        ) { identifier in
+            guard let preset = ActionControls.pausePresets.first(where: {
+                String($0.millis) == identifier
+            }) else {
+                return
+            }
+            let label = L10n.text(preset.key)
+            Task {
+                await state.perform(.pause(durationMillis: preset.millis, label: label))
+            }
         }
-        .disabled(!(capabilities?.pause.available ?? false))
-        .help(capabilities?.pause.available == false
-              ? CapabilityCopy.unavailableReason(capabilities?.pause.unavailableReasonId)
-              : "")
+        .fixedSize()
     }
 
     private var resumeButton: some View {

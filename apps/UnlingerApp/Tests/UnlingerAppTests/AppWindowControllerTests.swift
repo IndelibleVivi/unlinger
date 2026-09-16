@@ -6,7 +6,7 @@ import Testing
 @Suite("App window controller")
 @MainActor
 struct AppWindowControllerTests {
-    @Test("materializes one reusable SwiftUI host only on first presentation")
+    @Test("materializes a SwiftUI host only while the reusable window is presented")
     func configuresWindow() {
         _ = NSApplication.shared
         var contentBuildCount = 0
@@ -29,6 +29,13 @@ struct AppWindowControllerTests {
         controller.prepareContentForPresentation()
         #expect(controller.isContentLoadedForTesting)
         #expect(contentBuildCount == 1)
+
+        controller.windowWillClose(Notification(name: NSWindow.willCloseNotification))
+        #expect(!controller.isContentLoadedForTesting)
+
+        controller.prepareContentForPresentation()
+        #expect(controller.isContentLoadedForTesting)
+        #expect(contentBuildCount == 2)
         #expect(AppWindowController.initialContentSize == AppSurfaceLayout.contentSize)
         #expect(MenuBarPopoverController.contentSize == AppSurfaceLayout.contentSize)
         #expect(MenuPopover.contentSize == AppSurfaceLayout.contentSize)

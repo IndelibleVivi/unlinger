@@ -3,13 +3,13 @@ import SwiftUI
 
 /// AppKit owns the ordinary window lifecycle so menu and notification routes
 /// never depend on a lazily instantiated SwiftUI scene. The window exists for
-/// routing from launch, while its hosted SwiftUI tree is created only on first
-/// presentation and then owns navigation and all product state.
+/// routing from launch, while its hosted SwiftUI tree exists only while the
+/// window is presented. The persistent router restores navigation on reopen.
 @MainActor
-public final class AppWindowController: NSWindowController {
+public final class AppWindowController: NSWindowController, NSWindowDelegate {
     public static let initialContentSize = AppSurfaceLayout.contentSize
 
-    private var makeContent: (@MainActor () -> AnyView)?
+    private let makeContent: @MainActor () -> AnyView
 
     public init<Content: View>(
         title: String,
@@ -35,6 +35,7 @@ public final class AppWindowController: NSWindowController {
         }
         window.center()
         super.init(window: window)
+        window.delegate = self
     }
 
     @available(*, unavailable)
@@ -50,13 +51,16 @@ public final class AppWindowController: NSWindowController {
     }
 
     /// The menu client owns this controller for its whole process lifetime,
-    /// but an ordinary window may never be requested. Delay the SwiftUI and
-    /// Accessibility graph until first presentation so a hidden host cannot
-    /// accumulate observation generations while five-second polling runs.
+    /// but an ordinary window may never be requested. Materialize the SwiftUI
+    /// and Accessibility graph only while the window is presented so a hidden
+    /// host cannot accumulate observation generations while polling runs.
     func prepareContentForPresentation() {
-        guard window?.contentViewController == nil, let makeContent else { return }
+        guard window?.contentViewController == nil else { return }
         window?.contentViewController = NSHostingController(rootView: makeContent())
-        self.makeContent = nil
+    }
+
+    public func windowWillClose(_ notification: Notification) {
+        window?.contentViewController = nil
     }
 
     var isConfiguredForTesting: Bool {

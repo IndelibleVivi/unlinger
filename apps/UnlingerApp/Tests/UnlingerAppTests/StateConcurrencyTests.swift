@@ -1,6 +1,24 @@
 import Foundation
+import Observation
 import Testing
 @testable import UnlingerKit
+
+private final class ObservationFlag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = false
+
+    func mark() {
+        lock.lock()
+        value = true
+        lock.unlock()
+    }
+
+    func read() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return value
+    }
+}
 
 private actor DelayedProjectionClient: UnlingerClient {
     private var statusCalls = 0
@@ -79,6 +97,27 @@ struct StateConcurrencyTests {
         #expect(await client.overviewCalls == 1)
         #expect(state.browserOverview.phase == .clear)
         #expect(!state.browserOverview.requiresTrailingRefresh)
+    }
+
+    @Test("equal refreshes do not republish observable source state")
+    func equalRefreshDoesNotRepublishSourceState() async {
+        let client = CountingProjectionClient()
+        let state = AppState(client: client, mutationLedger: TestMutationJournal())
+        await state.refresh()
+
+        let changed = ObservationFlag()
+        withObservationTracking {
+            _ = state.status
+            _ = state.history
+            _ = state.browserSnapshot
+            _ = state.connection
+        } onChange: {
+            changed.mark()
+        }
+
+        await state.refresh()
+
+        #expect(!changed.read())
     }
 
     @Test("a stopped polling session cannot apply after restart")
