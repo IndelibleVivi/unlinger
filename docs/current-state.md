@@ -1,6 +1,32 @@
 # Current state
 
-**Updated:** 2026-09-15. **Programme:** 0.1. **Reader posture:** experimental developer source preview; not a signed/notarized App release or multi-day reliability claim.
+**Updated:** 2026-09-16. **Programme:** 0.1. **Reader posture:** experimental developer source preview; not a signed/notarized App release or multi-day reliability claim.
+
+## App memory hardening candidate (2026-09-16)
+
+The owner observed a recurrent installed-App memory event above 20 GB. The exact
+spike did not recur during bounded inspection, so its complete cause remains
+unproved and the event is treated as a release blocker rather than explained
+away by later low samples. The installed `e26297b` App stayed below 100 MiB in
+several exact-child runs after the event; a later idle capture reported a 29 MiB
+physical footprint, about 13 MiB of allocated malloc memory and a sub-megabyte
+AttributeGraph allocation. One Accessibility transport failure coincided with a
+later ScreenCaptureKit capture error and is not attributed to the App without
+stronger evidence.
+
+The current source candidate removes one concrete unnecessary retention surface:
+`AppWindowController` still owns one reusable ordinary `NSWindow` from launch,
+but does not construct its SwiftUI/Accessibility hosting tree until first
+presentation. The first presentation constructs that tree exactly once. A
+focused lifecycle regression fails the old eager-host behavior; all **86 Swift
+tests** pass, release bundling passes, the history Accessibility/RSS gate passed
+**457 probes with zero failures** and 17.8 MiB final RSS, and a separate
+three-minute menu-only polling run passed **180 samples** with 61.4 MiB startup
+maximum, 12.4 MiB final RSS and only 448 KiB growth from its minimum. These are
+bounded source-candidate results, not proof of the unique root cause, installed
+acceptance or multi-day reliability. The reference daemon remains unchanged and
+healthy on generation 25; the canonical installed App remains `e26297b` until
+the candidate has passed exact-head CI and a separate recoverable replacement.
 
 ## Current installed candidate (2026-09-15)
 
@@ -66,6 +92,7 @@ acceptance is claimed.
 | Baseline remote verification | [CI 34163955192](https://github.com/IndelibleVivi/unlinger/actions/runs/34163955192) passed for `b70bc94`; [CI 34165331792](https://github.com/IndelibleVivi/unlinger/actions/runs/34165331792) passed for `f22e08e`, including default-parallel Rust tests, release build, Swift tests and App bundling |
 | Current reader preparation | Published source-preview candidate `de1a9c3`: bilingual reader guides, licensed material scopes, current architecture and safe demo teardown; [exact CI 34170593229](https://github.com/IndelibleVivi/unlinger/actions/runs/34170593229) passed all steps |
 | Current source verification | Full local gates, [exact-source CI 34968538132](https://github.com/IndelibleVivi/unlinger/actions/runs/34968538132), and [current-head CI 34968967500](https://github.com/IndelibleVivi/unlinger/actions/runs/34968967500) passed |
+| App memory hardening candidate | Source-only lazy ordinary-window host; 86 Swift tests, release bundle, 457-probe history Accessibility/RSS gate and 180-sample menu-only polling run passed; exact 20-GB cause and installed acceptance remain open |
 | Maintainer's reference service | Accepted generation 25 from `e26297b`, healthy and quiescent `ReadyEnforce`, generation/epoch-bound with no pending candidate lease; this is one reference installation, not a generation number users should copy |
 | Reference protocols/persistence | Operator v1, frontend v5/v4/v3, SQLite v10; historical v2 rejected |
 | Reference App | Matching ad-hoc-signed schema-v5 App from `e26297b`, installed and running; neither Developer ID signed nor notarized; prior `016ca58` bundle retained as a recoverable local sibling |
