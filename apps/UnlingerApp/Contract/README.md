@@ -11,7 +11,7 @@
 - `schema_version: 2`：保留在[`v2/`](v2/)作为历史审计证据；当前server在dispatch前以schema-v1 framing返回typed `unsupported_schema`；
 - source App只发送v5，不会silent downgrade到v4/v3或改走v1 mutation/lifecycle path。
 
-安装中的accepted generation 27提供schema-v5 App endpoint并保留v4/v3 compatibility、operator v1与SQLite v10；当前是healthy `ReadyReportOnly`且没有pending lease。Matching `c17e60f` v5 App已经安装。Generation 27曾有owner-authorized process-only activation与bounded field evidence，但后续generation-28 transaction rollback已把当前runtime恢复到report-only；App不能借用历史activation或field evidence，也只能投影backend current truth，不能自行赋予或扩大signal/file-deletion authority。
+安装中的accepted generation 30提供schema-v5 App endpoint并保留v4/v3 compatibility、operator v1与SQLite v10；当前是healthy `ReadyEnforce`且没有pending lease。Matching `c17e60f` v5 App已经安装。Generation 29完成install/restart并真实rollback到generation 27，同exact artifact才鲜重安装、accept并独立arm为generation 30。App不能借用历史field evidence，也只能投影backend current truth，不能自行赋予或扩大signal/file-deletion authority。
 
 ## Transport and trust
 
@@ -53,7 +53,7 @@ V5 `BrowserOverviewSnapshot`是current browser-first surface的唯一product tru
 - bounded current sessions及typed `product`、observed version、`automatic | observe_only | protected | unknown` compatibility、optional reason ID与capability；
 - typed coverage summaries、attention、saved protections与exact recent settlement；
 - independent impact tracking start/completeness、terminal/proved cleanup counts与measurement-complete aggregates；
-- typed latest Chrome code-sign clone residue observation，其logical size不是physical reclaim承诺；`automatic_cleanup_eligible`是daemon-owned当前状态，可为true但不会给App增加删除command或authority；
+- typed latest Chrome code-sign clone residue observation，其logical size不是physical reclaim承诺；`automatic_cleanup_eligible` 表示至少一份 candidate 已满足backend gate，因此可与另一份 candidate 导致的aggregate `reference_check: referenced`并存，但不会给App增加删除command或authority；
 - 从embedded rule packs生成的family/product/admitted-version/automatic-action support catalog及`support_revision`。
 
 Daemon在同一个in-memory status+roster lock boundary内capture source facts，释放锁后完成public projection。Positive phase要求healthy/ready、current roster、no scan和相等的non-null observation time；任何不可信或不一致状态都fail closed为`unknown`。可信状态使用一份server truth table：attention → reclaiming → confirmed → verifying → active → protected → clear。

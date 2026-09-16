@@ -81,8 +81,8 @@
 "browser.storage_residue.title" = "Storage residue found";
 "browser.storage_residue.detected" = "%d Chrome code-signing clone leftovers detected";
 "browser.storage_residue.logical_size" = "%@ logical size; APFS physical reclaim may be smaller.";
-"browser.storage_residue.eligible" = "The automatic-cleanup gates are satisfied. Enforce mode removes these leftovers; report-only mode leaves them unchanged.";
-"browser.storage_residue.waiting" = "Automatic cleanup is waiting for candidate stability, complete live-process safety checks, and daemon lifecycle gates.";
+"browser.storage_residue.eligible" = "At least one unreferenced leftover is ready for automatic cleanup. Enforce mode removes only eligible leftovers; report-only leaves all unchanged.";
+"browser.storage_residue.waiting" = "Automatic cleanup is waiting for per-candidate stability, complete live-process safety checks, and daemon lifecycle gates.";
 "browser.storage_residue.unavailable" = "The Chrome code-signing clone location could not be verified safely.";
 
 /* Recent browser settlement */

@@ -81,8 +81,8 @@
 "browser.storage_residue.title" = "发现存储残留";
 "browser.storage_residue.detected" = "发现 %d 份 Chrome 代码签名 clone 残留";
 "browser.storage_residue.logical_size" = "账面大小 %@；APFS 实际可释放空间可能更少。";
-"browser.storage_residue.eligible" = "自动清理条件已满足；enforce 模式会移除这些残留，report-only 模式保持不变。";
-"browser.storage_residue.waiting" = "自动清理正在等待候选连续稳定、完整的实时进程安全检查与 daemon lifecycle 条件。";
+"browser.storage_residue.eligible" = "至少一份未被引用的残留已满足自动清理条件；enforce 模式只移除 eligible 残留，report-only 模式全部保持不变。";
+"browser.storage_residue.waiting" = "自动清理正在等待逐候选连续稳定、完整的实时进程安全检查与 daemon lifecycle 条件。";
 "browser.storage_residue.unavailable" = "无法安全验证 Chrome 代码签名 clone 目录。";
 
 /* Recent browser settlement */

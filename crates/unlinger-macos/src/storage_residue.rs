@@ -124,19 +124,34 @@ impl ChromeCloneCleanup {
         }
 
         let identities = scan.identities();
-        let stable = self.previous_candidates.as_ref() == Some(&identities);
+        let stable_candidates = identities
+            .iter()
+            .filter(|candidate| {
+                self.previous_candidates
+                    .as_ref()
+                    .is_some_and(|previous| previous.contains(candidate))
+            })
+            .cloned()
+            .collect::<Vec<_>>();
         self.previous_candidates = Some(identities.clone());
 
-        let process_gate = process_gate(snapshot, root, &identities);
+        let candidate_gates = process_gates(snapshot, root, &identities);
         let mut observation = scan.observation.clone();
-        apply_process_gate(&mut observation, process_gate);
-        if !stable {
+        apply_process_gates(&mut observation, &candidate_gates);
+        if stable_candidates.len() != identities.len() {
             observation
                 .reason_ids
                 .push("storage_residue.cleanup_waiting_for_stability".to_owned());
-            return observation;
         }
-        if process_gate != ProcessGate::Clear {
+        let removable_candidates = identities
+            .iter()
+            .zip(&candidate_gates)
+            .filter(|(candidate, gate)| {
+                stable_candidates.contains(candidate) && **gate == ProcessGate::Clear
+            })
+            .map(|(candidate, _)| candidate.clone())
+            .collect::<Vec<_>>();
+        if removable_candidates.is_empty() {
             return observation;
         }
 
@@ -154,7 +169,7 @@ impl ChromeCloneCleanup {
                 .push("storage_residue.cleanup_report_only".to_owned());
             return observation;
         }
-        let mut mutation = || remover.remove(&scan);
+        let mut mutation = || remover.remove(&scan, &removable_candidates);
         let Some(removal_result) = run_mutation(&mut mutation) else {
             observation.automatic_cleanup_eligible = false;
             observation
@@ -164,19 +179,48 @@ impl ChromeCloneCleanup {
         };
 
         let result_scan = scan_code_sign_clone_root(root, observed_at_unix_millis);
-        let remaining_candidates_unchanged = result_scan.identities() == identities;
+        let result_identities = result_scan.identities();
+        let planned_candidates_absent = removable_candidates
+            .iter()
+            .all(|candidate| !result_identities.contains(candidate));
+        let removed_any = removable_candidates
+            .iter()
+            .any(|candidate| !result_identities.contains(candidate));
+        let rescan_proves_shape = result_scan.observation.shape_complete
+            && result_scan.observation.status != StorageResidueStatus::Unavailable;
         let mut result = result_scan.observation;
-        self.previous_candidates = None;
-        if removal_result.is_ok() && result.status == StorageResidueStatus::Clear {
-            result
-                .reason_ids
-                .push("storage_residue.automatic_cleanup_completed".to_owned());
-        } else {
-            if result.status == StorageResidueStatus::Detected {
-                apply_process_gate(&mut result, process_gate);
-                result.automatic_cleanup_eligible =
-                    remaining_candidates_unchanged && process_gate == ProcessGate::Clear;
+        if result.status == StorageResidueStatus::Detected {
+            let result_process_gates = process_gates(snapshot, root, &result_identities);
+            apply_process_gates(&mut result, &result_process_gates);
+            result.automatic_cleanup_eligible = result_identities
+                .iter()
+                .zip(&result_process_gates)
+                .any(|(candidate, gate)| {
+                    stable_candidates.contains(candidate) && *gate == ProcessGate::Clear
+                });
+            if result_identities
+                .iter()
+                .any(|candidate| !stable_candidates.contains(candidate))
+            {
+                result
+                    .reason_ids
+                    .push("storage_residue.cleanup_waiting_for_stability".to_owned());
             }
+            self.previous_candidates = Some(result_identities);
+        } else {
+            self.previous_candidates = None;
+        }
+        if removal_result.is_ok() && rescan_proves_shape && planned_candidates_absent && removed_any
+        {
+            result.reason_ids.push(
+                if result.status == StorageResidueStatus::Clear {
+                    "storage_residue.automatic_cleanup_completed"
+                } else {
+                    "storage_residue.automatic_cleanup_partial"
+                }
+                .to_owned(),
+            );
+        } else {
             result
                 .reason_ids
                 .push("storage_residue.automatic_cleanup_failed".to_owned());
@@ -395,77 +439,80 @@ enum ProcessGate {
     Incomplete,
 }
 
-impl ProcessGate {
-    fn reference_check(self) -> StorageResidueReferenceCheck {
-        match self {
-            Self::Clear => StorageResidueReferenceCheck::CompleteNoReferences,
-            Self::CandidatePathReferenced | Self::CleanupHelperActive => {
-                StorageResidueReferenceCheck::Referenced
-            }
-            Self::Incomplete => StorageResidueReferenceCheck::Incomplete,
-        }
-    }
-
-    fn reason_ids(self) -> Vec<String> {
-        match self {
-            Self::Clear => vec!["storage_residue.no_live_clone_references".to_owned()],
-            Self::CandidatePathReferenced => {
-                vec!["storage_residue.clone_candidate_path_referenced".to_owned()]
-            }
-            Self::CleanupHelperActive => {
-                vec!["storage_residue.clone_cleanup_helper_active".to_owned()]
-            }
-            Self::Incomplete => {
-                vec!["storage_residue.process_observation_incomplete".to_owned()]
-            }
-        }
-    }
-}
-
-fn apply_process_gate(observation: &mut StorageResidueObservation, process_gate: ProcessGate) {
-    observation.reference_check = process_gate.reference_check();
+fn apply_process_gates(observation: &mut StorageResidueObservation, process_gates: &[ProcessGate]) {
     observation
         .reason_ids
         .retain(|reason| reason != "storage_residue.reference_check_incomplete");
-    observation.reason_ids.extend(process_gate.reason_ids());
+    if process_gates.contains(&ProcessGate::Incomplete) {
+        observation.reference_check = StorageResidueReferenceCheck::Incomplete;
+        observation
+            .reason_ids
+            .push("storage_residue.process_observation_incomplete".to_owned());
+        return;
+    }
+    if process_gates.iter().all(|gate| *gate == ProcessGate::Clear) {
+        observation.reference_check = StorageResidueReferenceCheck::CompleteNoReferences;
+        observation
+            .reason_ids
+            .push("storage_residue.no_live_clone_references".to_owned());
+        return;
+    }
+
+    observation.reference_check = StorageResidueReferenceCheck::Referenced;
+    if process_gates.contains(&ProcessGate::CandidatePathReferenced) {
+        observation
+            .reason_ids
+            .push("storage_residue.clone_candidate_path_referenced".to_owned());
+    }
+    if process_gates.contains(&ProcessGate::CleanupHelperActive) {
+        observation
+            .reason_ids
+            .push("storage_residue.clone_cleanup_helper_active".to_owned());
+    }
 }
 
-fn process_gate(
+fn process_gates(
     snapshot: Option<&Snapshot>,
     root: &Path,
     candidates: &[CloneCandidateIdentity],
-) -> ProcessGate {
+) -> Vec<ProcessGate> {
     let Some(snapshot) = snapshot else {
-        return ProcessGate::Incomplete;
+        return vec![ProcessGate::Incomplete; candidates.len()];
     };
-    let canonical_root = root.canonicalize().ok();
-
-    for process in &snapshot.processes {
-        if process_references_candidate_path(process, root, canonical_root.as_deref(), candidates) {
-            return ProcessGate::CandidatePathReferenced;
-        }
-        match clone_cleanup_helper_suffix(process) {
-            Some(Ok(suffix))
-                if candidates
-                    .iter()
-                    .any(|candidate| candidate.suffix() == Some(suffix)) =>
-            {
-                return ProcessGate::CleanupHelperActive;
-            }
-            Some(Ok(_)) | None => {}
-            Some(Err(())) => return ProcessGate::Incomplete,
-        }
-    }
-
     if !snapshot.proves_complete_classification_coverage()
         || snapshot
             .processes
             .iter()
             .any(|process| may_be_chrome_process(process) && process.runtime.app_bundle.is_none())
     {
-        return ProcessGate::Incomplete;
+        return vec![ProcessGate::Incomplete; candidates.len()];
     }
-    ProcessGate::Clear
+    let Ok(canonical_root) = root.canonicalize() else {
+        return vec![ProcessGate::Incomplete; candidates.len()];
+    };
+    let mut gates = vec![ProcessGate::Clear; candidates.len()];
+
+    for process in &snapshot.processes {
+        for (candidate, gate) in candidates.iter().zip(&mut gates) {
+            if process_references_candidate_path(process, root, &canonical_root, candidate) {
+                *gate = ProcessGate::CandidatePathReferenced;
+            }
+        }
+        match clone_cleanup_helper_suffix(process) {
+            Some(Ok(suffix)) => {
+                if let Some((index, _)) = candidates
+                    .iter()
+                    .enumerate()
+                    .find(|(_, candidate)| candidate.suffix() == Some(suffix))
+                {
+                    gates[index] = ProcessGate::CleanupHelperActive;
+                }
+            }
+            None => {}
+            Some(Err(())) => return vec![ProcessGate::Incomplete; candidates.len()],
+        }
+    }
+    gates
 }
 
 fn is_bundle_confirmed_chrome_process(process: &ProcessRecord) -> bool {
@@ -509,8 +556,8 @@ fn clone_cleanup_helper_suffix(process: &ProcessRecord) -> Option<Result<&str, (
 fn process_references_candidate_path(
     process: &ProcessRecord,
     root: &Path,
-    canonical_root: Option<&Path>,
-    candidates: &[CloneCandidateIdentity],
+    canonical_root: &Path,
+    candidate: &CloneCandidateIdentity,
 ) -> bool {
     process
         .executable_path
@@ -519,13 +566,10 @@ fn process_references_candidate_path(
         .map(Path::new)
         .filter(|path| path.is_absolute())
         .any(|path| {
-            candidates.iter().any(|candidate| {
-                candidate.name.to_str().is_ok_and(|name| {
-                    [Some(root), canonical_root]
-                        .into_iter()
-                        .flatten()
-                        .any(|candidate_root| path.starts_with(candidate_root.join(name)))
-                })
+            candidate.name.to_str().is_ok_and(|name| {
+                [root, canonical_root]
+                    .into_iter()
+                    .any(|candidate_root| path.starts_with(candidate_root.join(name)))
             })
         })
 }
@@ -557,18 +601,23 @@ fn valid_clone_suffix(suffix: &str) -> bool {
 }
 
 trait CandidateRemover {
-    fn remove(&self, scan: &CloneScan) -> io::Result<()>;
+    fn remove(&self, scan: &CloneScan, candidates: &[CloneCandidateIdentity]) -> io::Result<()>;
 }
 
 struct DescriptorRelativeRemover;
 
 impl CandidateRemover for DescriptorRelativeRemover {
-    fn remove(&self, scan: &CloneScan) -> io::Result<()> {
+    fn remove(&self, scan: &CloneScan, identities: &[CloneCandidateIdentity]) -> io::Result<()> {
         let root = scan
             .root
             .as_ref()
             .ok_or_else(|| io::Error::other("clone root is unavailable"))?;
-        for candidate in &scan.candidates {
+        for identity in identities {
+            let candidate = scan
+                .candidates
+                .iter()
+                .find(|candidate| candidate.identity == *identity)
+                .ok_or_else(|| io::Error::other("clone candidate is absent from the scan"))?;
             let metadata = candidate.directory.metadata()?;
             if metadata.uid() != unsafe { libc::geteuid() }
                 || metadata.dev() != candidate.identity.device
@@ -923,7 +972,7 @@ mod tests {
     }
 
     #[test]
-    fn candidate_change_restarts_stability_window() {
+    fn new_candidate_waits_while_a_stable_candidate_is_cleaned() {
         let temp = TempDirectory::new();
         let root = clone_root(&temp);
         let first_candidate = add_clone(&root, "A1b2C3");
@@ -937,16 +986,228 @@ mod tests {
 
         assert_eq!(changed.status, StorageResidueStatus::Detected);
         assert!(!changed.automatic_cleanup_eligible);
-        assert!(first_candidate.exists());
+        assert!(!first_candidate.exists());
         assert!(second_candidate.exists());
+        assert_eq!(changed.candidate_count, 1);
+        assert!(
+            changed
+                .reason_ids
+                .contains(&"storage_residue.cleanup_waiting_for_stability".to_owned())
+        );
+        assert!(
+            changed
+                .reason_ids
+                .contains(&"storage_residue.automatic_cleanup_partial".to_owned())
+        );
+    }
+
+    #[test]
+    fn live_candidate_is_retained_while_stable_stale_candidates_are_cleaned() {
+        let temp = TempDirectory::new();
+        let root = clone_root(&temp);
+        let live_candidate = add_clone(&root, "A1b2C3");
+        let stale_candidate = add_clone(&root, "D4e5F6");
+        let mut live_chrome =
+            chrome_process(vec!["Google Chrome"], CHROME_BUNDLE_ID, "Google Chrome");
+        live_chrome.executable_path = Some(
+            live_candidate
+                .join("Google Chrome.app/Contents/MacOS/Google Chrome")
+                .to_string_lossy()
+                .into_owned(),
+        );
+        let referenced_snapshot = complete_snapshot(vec![live_chrome]);
+        let mut cleanup = ChromeCloneCleanup::new();
+
+        let _ = cleanup.reconcile_root(
+            &root,
+            1,
+            Some(&referenced_snapshot),
+            ChromeCloneCleanupMode::Enforce,
+        );
+        let partial = cleanup.reconcile_root(
+            &root,
+            2,
+            Some(&referenced_snapshot),
+            ChromeCloneCleanupMode::Enforce,
+        );
+
+        assert!(live_candidate.exists());
+        assert!(!stale_candidate.exists());
+        assert_eq!(partial.status, StorageResidueStatus::Detected);
+        assert_eq!(partial.candidate_count, 1);
+        assert_eq!(
+            partial.reference_check,
+            StorageResidueReferenceCheck::Referenced
+        );
+        assert!(!partial.automatic_cleanup_eligible);
+        assert!(
+            partial
+                .reason_ids
+                .contains(&"storage_residue.clone_candidate_path_referenced".to_owned())
+        );
+        assert!(
+            partial
+                .reason_ids
+                .contains(&"storage_residue.automatic_cleanup_partial".to_owned())
+        );
+
+        let cleared = cleanup.reconcile_root(
+            &root,
+            3,
+            Some(&complete_snapshot(Vec::new())),
+            ChromeCloneCleanupMode::Enforce,
+        );
+        assert!(!live_candidate.exists());
+        assert_eq!(cleared.status, StorageResidueStatus::Clear);
+        assert!(
+            cleared
+                .reason_ids
+                .contains(&"storage_residue.automatic_cleanup_completed".to_owned())
+        );
+    }
+
+    #[test]
+    fn report_only_mixed_set_projects_subset_eligibility_without_mutation() {
+        let temp = TempDirectory::new();
+        let root = clone_root(&temp);
+        let live_candidate = add_clone(&root, "A1b2C3");
+        let stale_candidate = add_clone(&root, "D4e5F6");
+        let mut live_chrome =
+            chrome_process(vec!["Google Chrome"], CHROME_BUNDLE_ID, "Google Chrome");
+        live_chrome.executable_path = Some(
+            live_candidate
+                .join("Google Chrome.app/Contents/MacOS/Google Chrome")
+                .to_string_lossy()
+                .into_owned(),
+        );
+        let snapshot = complete_snapshot(vec![live_chrome]);
+        let mut cleanup = ChromeCloneCleanup::new();
+
+        let _ = cleanup.reconcile_root(
+            &root,
+            1,
+            Some(&snapshot),
+            ChromeCloneCleanupMode::ReportOnly,
+        );
+        let observation = cleanup.reconcile_root(
+            &root,
+            2,
+            Some(&snapshot),
+            ChromeCloneCleanupMode::ReportOnly,
+        );
+
+        assert!(live_candidate.exists());
+        assert!(stale_candidate.exists());
+        assert_eq!(observation.candidate_count, 2);
+        assert_eq!(
+            observation.reference_check,
+            StorageResidueReferenceCheck::Referenced
+        );
+        assert!(observation.automatic_cleanup_eligible);
+        assert!(
+            observation
+                .reason_ids
+                .contains(&"storage_residue.cleanup_report_only".to_owned())
+        );
+    }
+
+    #[test]
+    fn absolute_argument_reference_retains_only_the_matching_candidate() {
+        let temp = TempDirectory::new();
+        let root = clone_root(&temp);
+        let referenced_candidate = add_clone(&root, "A1b2C3");
+        let stale_candidate = add_clone(&root, "D4e5F6");
+        let mut worker = chrome_process(
+            vec!["fixture-worker"],
+            CHROME_HELPER_BUNDLE_ID_PREFIX,
+            "fixture-worker",
+        );
+        worker.executable_path = Some("/usr/bin/fixture-worker".to_owned());
+        worker.runtime.app_bundle = None;
+        worker.arguments = Some(vec![
+            "fixture-worker".to_owned(),
+            referenced_candidate
+                .join("payload")
+                .to_string_lossy()
+                .into_owned(),
+        ]);
+        let snapshot = complete_snapshot(vec![worker]);
+        let mut cleanup = ChromeCloneCleanup::new();
+
+        let _ = cleanup.reconcile_root(&root, 1, Some(&snapshot), ChromeCloneCleanupMode::Enforce);
+        let partial =
+            cleanup.reconcile_root(&root, 2, Some(&snapshot), ChromeCloneCleanupMode::Enforce);
+
+        assert!(referenced_candidate.exists());
+        assert!(!stale_candidate.exists());
+        assert_eq!(partial.candidate_count, 1);
+        assert!(
+            partial
+                .reason_ids
+                .contains(&"storage_residue.clone_candidate_path_referenced".to_owned())
+        );
+        assert!(
+            partial
+                .reason_ids
+                .contains(&"storage_residue.automatic_cleanup_partial".to_owned())
+        );
+    }
+
+    #[test]
+    fn matching_cleanup_helper_retains_only_its_candidate() {
+        let temp = TempDirectory::new();
+        let root = clone_root(&temp);
+        let helper_candidate = add_clone(&root, "A1b2C3");
+        let stale_candidate = add_clone(&root, "D4e5F6");
+        let snapshot = complete_snapshot(vec![chrome_process(
+            vec![
+                "Google Chrome Helper",
+                CLONE_CLEANUP_TYPE_ARGUMENT,
+                "--unique-temp-dir-suffix=A1b2C3",
+            ],
+            CHROME_HELPER_BUNDLE_ID_PREFIX,
+            "Google Chrome Helper",
+        )]);
+        let mut cleanup = ChromeCloneCleanup::new();
+
+        let _ = cleanup.reconcile_root(&root, 1, Some(&snapshot), ChromeCloneCleanupMode::Enforce);
+        let partial =
+            cleanup.reconcile_root(&root, 2, Some(&snapshot), ChromeCloneCleanupMode::Enforce);
+
+        assert!(helper_candidate.exists());
+        assert!(!stale_candidate.exists());
+        assert_eq!(partial.candidate_count, 1);
+        assert_eq!(
+            partial.reference_check,
+            StorageResidueReferenceCheck::Referenced
+        );
+        assert!(
+            partial
+                .reason_ids
+                .contains(&"storage_residue.clone_cleanup_helper_active".to_owned())
+        );
+        assert!(
+            partial
+                .reason_ids
+                .contains(&"storage_residue.automatic_cleanup_partial".to_owned())
+        );
     }
 
     #[test]
     fn lifecycle_revalidation_closes_the_gate_before_mutation() {
         let temp = TempDirectory::new();
         let root = clone_root(&temp);
-        let candidate = add_clone(&root, "A1b2C3");
-        let snapshot = complete_snapshot(Vec::new());
+        let live_candidate = add_clone(&root, "A1b2C3");
+        let stale_candidate = add_clone(&root, "D4e5F6");
+        let mut live_chrome =
+            chrome_process(vec!["Google Chrome"], CHROME_BUNDLE_ID, "Google Chrome");
+        live_chrome.executable_path = Some(
+            live_candidate
+                .join("Google Chrome.app/Contents/MacOS/Google Chrome")
+                .to_string_lossy()
+                .into_owned(),
+        );
+        let snapshot = complete_snapshot(vec![live_chrome]);
         let mut cleanup = ChromeCloneCleanup::new();
         let _ = cleanup.reconcile_root(&root, 1, Some(&snapshot), ChromeCloneCleanupMode::Enforce);
 
@@ -959,7 +1220,8 @@ mod tests {
             &mut |_action| None,
         );
 
-        assert!(candidate.exists());
+        assert!(live_candidate.exists());
+        assert!(stale_candidate.exists());
         assert!(!observation.automatic_cleanup_eligible);
         assert!(
             observation
@@ -1171,6 +1433,76 @@ mod tests {
             &complete_snapshot(vec![argument_reference]),
             StorageResidueReferenceCheck::Referenced,
         );
+
+        let temp = TempDirectory::new();
+        let root = clone_root(&temp);
+        let first_candidate = add_clone(&root, "A1b2C3");
+        let second_candidate = add_clone(&root, "D4e5F6");
+        let incomplete = Snapshot {
+            observed_at_unix_millis: 1,
+            current_uid: unsafe { libc::geteuid() },
+            processes: Vec::new(),
+            coverage: SnapshotCoverage {
+                listed_processes: 1,
+                unreadable_processes: 1,
+                ..SnapshotCoverage::default()
+            },
+        };
+        let mut cleanup = ChromeCloneCleanup::new();
+        let _ =
+            cleanup.reconcile_root(&root, 1, Some(&incomplete), ChromeCloneCleanupMode::Enforce);
+        let observation =
+            cleanup.reconcile_root(&root, 2, Some(&incomplete), ChromeCloneCleanupMode::Enforce);
+        assert!(first_candidate.exists());
+        assert!(second_candidate.exists());
+        assert_eq!(
+            observation.reference_check,
+            StorageResidueReferenceCheck::Incomplete
+        );
+        assert!(!observation.automatic_cleanup_eligible);
+    }
+
+    #[test]
+    fn malformed_cleanup_helper_blocks_every_candidate() {
+        let cases = [
+            vec!["Google Chrome Helper", CLONE_CLEANUP_TYPE_ARGUMENT],
+            vec![
+                "Google Chrome Helper",
+                CLONE_CLEANUP_TYPE_ARGUMENT,
+                "--unique-temp-dir-suffix=not-valid",
+            ],
+            vec![
+                "Google Chrome Helper",
+                CLONE_CLEANUP_TYPE_ARGUMENT,
+                "--unique-temp-dir-suffix=A1b2C3",
+                "--unique-temp-dir-suffix=D4e5F6",
+            ],
+        ];
+        for arguments in cases {
+            let temp = TempDirectory::new();
+            let root = clone_root(&temp);
+            let first_candidate = add_clone(&root, "A1b2C3");
+            let second_candidate = add_clone(&root, "D4e5F6");
+            let snapshot = complete_snapshot(vec![chrome_process(
+                arguments,
+                CHROME_HELPER_BUNDLE_ID_PREFIX,
+                "Google Chrome Helper",
+            )]);
+            let mut cleanup = ChromeCloneCleanup::new();
+
+            let _ =
+                cleanup.reconcile_root(&root, 1, Some(&snapshot), ChromeCloneCleanupMode::Enforce);
+            let observation =
+                cleanup.reconcile_root(&root, 2, Some(&snapshot), ChromeCloneCleanupMode::Enforce);
+
+            assert!(first_candidate.exists());
+            assert!(second_candidate.exists());
+            assert_eq!(
+                observation.reference_check,
+                StorageResidueReferenceCheck::Incomplete
+            );
+            assert!(!observation.automatic_cleanup_eligible);
+        }
     }
 
     #[test]
@@ -1200,8 +1532,48 @@ mod tests {
     struct FailingRemover;
 
     impl CandidateRemover for FailingRemover {
-        fn remove(&self, _scan: &CloneScan) -> io::Result<()> {
+        fn remove(
+            &self,
+            _scan: &CloneScan,
+            _candidates: &[CloneCandidateIdentity],
+        ) -> io::Result<()> {
             Err(io::Error::other("injected fixture failure"))
+        }
+    }
+
+    struct RemoveThenPoisonRoot;
+
+    impl CandidateRemover for RemoveThenPoisonRoot {
+        fn remove(
+            &self,
+            scan: &CloneScan,
+            candidates: &[CloneCandidateIdentity],
+        ) -> io::Result<()> {
+            DescriptorRelativeRemover.remove(scan, candidates)?;
+            let root = scan
+                .root
+                .as_ref()
+                .ok_or_else(|| io::Error::other("clone root is unavailable"))?;
+            if unsafe { libc::mkdirat(root.as_raw_fd(), c"surprise-name".as_ptr(), 0o700) } != 0 {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(())
+        }
+    }
+
+    struct RemoveFirstThenFail;
+
+    impl CandidateRemover for RemoveFirstThenFail {
+        fn remove(
+            &self,
+            scan: &CloneScan,
+            candidates: &[CloneCandidateIdentity],
+        ) -> io::Result<()> {
+            let Some(first) = candidates.first() else {
+                return Err(io::Error::other("no planned clone candidate"));
+            };
+            DescriptorRelativeRemover.remove(scan, std::slice::from_ref(first))?;
+            Err(io::Error::other("injected failure after first removal"))
         }
     }
 
@@ -1236,6 +1608,99 @@ mod tests {
             observation
                 .reason_ids
                 .contains(&"storage_residue.automatic_cleanup_failed".to_owned())
+        );
+    }
+
+    #[test]
+    fn partial_remover_failure_rescans_actual_survivors() {
+        let temp = TempDirectory::new();
+        let root = clone_root(&temp);
+        let first_candidate = add_clone(&root, "A1b2C3");
+        let second_candidate = add_clone(&root, "D4e5F6");
+        let snapshot = complete_snapshot(Vec::new());
+        let mut cleanup = ChromeCloneCleanup::new();
+        cleanup.reconcile_root_with_remover(
+            &root,
+            1,
+            Some(&snapshot),
+            ChromeCloneCleanupMode::Enforce,
+            &RemoveFirstThenFail,
+        );
+
+        let partial = cleanup.reconcile_root_with_remover(
+            &root,
+            2,
+            Some(&snapshot),
+            ChromeCloneCleanupMode::Enforce,
+            &RemoveFirstThenFail,
+        );
+
+        assert!(!first_candidate.exists());
+        assert!(second_candidate.exists());
+        assert_eq!(partial.status, StorageResidueStatus::Detected);
+        assert_eq!(partial.candidate_count, 1);
+        assert!(partial.automatic_cleanup_eligible);
+        assert!(
+            partial
+                .reason_ids
+                .contains(&"storage_residue.automatic_cleanup_failed".to_owned())
+        );
+        assert!(
+            !partial
+                .reason_ids
+                .contains(&"storage_residue.automatic_cleanup_completed".to_owned())
+        );
+        assert!(
+            !partial
+                .reason_ids
+                .contains(&"storage_residue.automatic_cleanup_partial".to_owned())
+        );
+
+        let retried =
+            cleanup.reconcile_root(&root, 3, Some(&snapshot), ChromeCloneCleanupMode::Enforce);
+        assert!(!second_candidate.exists());
+        assert_eq!(retried.status, StorageResidueStatus::Clear);
+    }
+
+    #[test]
+    fn unavailable_rescan_never_claims_completed_cleanup() {
+        let temp = TempDirectory::new();
+        let root = clone_root(&temp);
+        let candidate = add_clone(&root, "A1b2C3");
+        let snapshot = complete_snapshot(Vec::new());
+        let mut cleanup = ChromeCloneCleanup::new();
+        cleanup.reconcile_root_with_remover(
+            &root,
+            1,
+            Some(&snapshot),
+            ChromeCloneCleanupMode::Enforce,
+            &RemoveThenPoisonRoot,
+        );
+
+        let observation = cleanup.reconcile_root_with_remover(
+            &root,
+            2,
+            Some(&snapshot),
+            ChromeCloneCleanupMode::Enforce,
+            &RemoveThenPoisonRoot,
+        );
+
+        assert!(!candidate.exists());
+        assert_eq!(observation.status, StorageResidueStatus::Unavailable);
+        assert!(
+            observation
+                .reason_ids
+                .contains(&"storage_residue.automatic_cleanup_failed".to_owned())
+        );
+        assert!(
+            !observation
+                .reason_ids
+                .contains(&"storage_residue.automatic_cleanup_completed".to_owned())
+        );
+        assert!(
+            !observation
+                .reason_ids
+                .contains(&"storage_residue.automatic_cleanup_partial".to_owned())
         );
     }
 }

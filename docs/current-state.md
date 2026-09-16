@@ -2,40 +2,60 @@
 
 **Updated:** 2026-09-17. **Programme:** 0.1. **Reader posture:** experimental developer source preview; not a signed/notarized App release or multi-day reliability claim.
 
-## Source-only Chrome clone automatic cleanup (2026-09-16)
+## Source-only per-candidate Chrome clone cleanup refinement (2026-09-17)
 
-Current source now treats the exact current-user Chrome `code_sign_clone`
-family as a default enforce-mode cleanup target while preserving the ordinary
-daemon default of report-only. It retains one previous exact candidate identity
-set in memory, requires the same set at the next 15-minute storage observation,
-and uses the canonical native process snapshot to block only candidate-level
-references: a process executable or absolute argv path inside a candidate, or a
-bundle-confirmed clone-cleanup Helper whose exact suffix matches that candidate.
-Ordinary Chrome main, renderer, GPU and utility processes outside the candidate
-set, and a valid unrelated cleanup suffix, do not block. Incomplete process
-coverage, insufficient Chrome-looking facts, and missing/malformed/ambiguous
-cleanup-helper suffixes still fail closed. Only a healthy, ready, unpaused, non-draining enforce daemon
-may mutate. Deletion stays descriptor-relative beneath the scanner-validated
-candidate, never follows symlinks, and is followed immediately by a rescan whose
-actual result becomes the persisted/public typed observation. Raw root and
-candidate paths remain absent from SQLite, IPC, diagnostics and logs.
+Current source treats the exact current-user Chrome `code_sign_clone` family as
+an enforce-mode cleanup target while preserving the ordinary daemon default of
+report-only. It retains prior exact candidate identities only in memory and
+evaluates each candidate independently at the next 15-minute observation. A
+candidate is eligible only when its device/inode/name identity is unchanged and
+the complete canonical native snapshot finds no executable or absolute argv
+path inside it and no bundle-confirmed clone-cleanup Helper naming its exact
+suffix. A live candidate therefore remains protected without blocking stable
+unreferenced siblings. Ordinary Chrome main, renderer, GPU and utility processes
+outside candidates, and a valid unrelated cleanup suffix, do not block.
+Incomplete process coverage, insufficient Chrome-looking facts and
+missing/malformed/ambiguous cleanup-helper suffixes still fail closed for every
+candidate.
 
-Temp-fixture coverage proves report-only non-mutation, first-observation
-cooling, second-stable-observation cleanup, candidate-change reset, ordinary
-Chrome/helper non-blocking, exact suffix and candidate-path reference blocking,
-unrelated-suffix non-blocking, incomplete-coverage blocking, symlink/unexpected-shape refusal,
-and truthful failed-removal rescan. For this correction, the complete
-`unlinger-macos` test package, focused daemon storage-residue tests, workspace
-format check and strict `unlinger-macos`/`unlinger-daemon` all-target clippy pass
-locally. Exact source commit `516d483` then passed
-[CI 35106242999](https://github.com/IndelibleVivi/unlinger/actions/runs/35106242999).
-The installed generation 27 still uses the earlier global-Chrome blocking gate:
-with ordinary Chrome running it reports `chrome_process_active`, nine candidates
-and 13,273,958,043 logical bytes rather than deleting. The candidate-reference
-correction has not replaced that daemon, has no installed cleanup receipt, and
-has not deleted a real Chrome clone. Generation 27 is currently healthy
-`ReadyReportOnly` after the transaction recovery described below, so no storage
-mutation is authorized. Installed verification remains a separate gate.
+Only a healthy, ready, unpaused, non-draining enforce daemon may mutate. The
+remover receives only the eligible exact subset, stays descriptor-relative
+beneath scanner-validated candidates, never follows symlinks and immediately
+rescans. A complete subset removal with protected survivors emits
+`storage_residue.automatic_cleanup_partial`; full removal emits
+`storage_residue.automatic_cleanup_completed`. Removal error, unavailable or
+incomplete rescan, or any planned identity still present emits failure while
+preserving the actual remaining observation. Public `reference_check` remains
+aggregate, so `referenced` and `automatic_cleanup_eligible: true` may coexist
+when different candidates supply those facts. Raw root and candidate paths
+remain absent from SQLite, IPC, diagnostics and logs.
+
+Focused temp fixtures prove full and subset deletion, a new candidate waiting
+while an unchanged sibling is cleaned, mixed report-only projection, ordinary
+Chrome/helper non-blocking, executable and absolute-argv references, exact,
+unrelated and malformed helper suffixes, incomplete global proof, lifecycle
+closure, symlink/unexpected-shape refusal, partial remover failure and
+unavailable-rescan failure. Seventeen focused storage-residue tests, the full
+`unlinger-macos` package, focused daemon persistence/scheduling tests, complete
+workspace format/clippy/test/release-build gates, 91 Swift tests, App bundling,
+two isolated seven-test v5 socket passes, source doctor and dry-run all pass
+after the final source edit. Doctor inspected 489 processes and dry-run 487,
+with zero unreadable processes or identity/argument/descriptor gaps. The
+workspace run also exposed a test-only control-plane temp-directory collision;
+its clock-only nonce was replaced by the established process-local atomic
+sequence pattern and the full workspace rerun passed. A fresh Accessibility/RSS
+lane could not start because the console session was locked; the prior
+`c17e60f` fixture and installed guards remain the applicable memory evidence.
+Exact-head CI remains pending for this per-candidate source candidate.
+
+Installed generation 30 contains the prior aggregate candidate-reference gate,
+not this refinement. With ordinary Chrome continuously open it observes nine
+candidates and 13,273,958,043 logical bytes. Native/lsof evidence shows one
+candidate is the running Chrome main executable, so generation 30 correctly
+reports `clone_candidate_path_referenced` but protects all nine as one set. No
+real clone has been deleted. The source refinement is intended to preserve that
+one live candidate and clean only the stable unreferenced peers; installed and
+field verification remain separate gates.
 
 ## Source snapshot and rollback recovery correction (2026-09-17)
 
@@ -76,8 +96,13 @@ test and release-build gates pass, as do 91 Swift tests, App bundling and the
 two-pass isolated v5 socket smoke. A fresh source-only doctor inspected 514
 current-user processes in 110 ms and a separate dry-run inspected 513; both
 reported zero unreadable processes, zero argument gaps, zero executable-identity
-gaps and zero descriptor gaps. This correction is source evidence only until a
-fresh candidate completes the transactional install lane.
+gaps and zero descriptor gaps. Exact commit `b2ada65` passed
+[CI 35130438688](https://github.com/IndelibleVivi/unlinger/actions/runs/35130438688).
+Generation 29 then completed report-only install/restart and App/socket checks,
+really rolled back to healthy generation 27, and the exact artifact was freshly
+installed, checked, accepted and explicitly armed as healthy `ReadyEnforce`
+generation 30. This correction is therefore installed; the later per-candidate
+clone refinement above is not.
 
 ## Installed App memory recurrence and bounded installed repair (2026-09-16)
 
@@ -181,18 +206,18 @@ acceptance is claimed.
 | Subsequent test correction | `f22e08eb3410050b380eaee7b84c4ccda2a3ad1a`: bounded post-release offline-lock tests; production locking/timeouts unchanged |
 | Baseline remote verification | [CI 34163955192](https://github.com/IndelibleVivi/unlinger/actions/runs/34163955192) passed for `b70bc94`; [CI 34165331792](https://github.com/IndelibleVivi/unlinger/actions/runs/34165331792) passed for `f22e08e`, including default-parallel Rust tests, release build, Swift tests and App bundling |
 | Current reader preparation | Published source-preview candidate `de1a9c3`: bilingual reader guides, licensed material scopes, current architecture and safe demo teardown; [exact CI 34170593229](https://github.com/IndelibleVivi/unlinger/actions/runs/34170593229) passed all steps |
-| Current source verification | Chrome candidate-reference correction `516d483` passed [exact-head CI 35106242999](https://github.com/IndelibleVivi/unlinger/actions/runs/35106242999); App repair `c17e60f` passed [exact-head CI 35118609063](https://github.com/IndelibleVivi/unlinger/actions/runs/35118609063); mapped-vnode snapshot and transaction-rollback corrections pass the complete local Rust workspace gates, 91 Swift tests, App bundling, isolated v5 socket smoke, source-doctor and dry-run checks, with their exact-head CI still pending |
+| Current source verification | Chrome aggregate candidate-reference correction `516d483` passed [exact-head CI 35106242999](https://github.com/IndelibleVivi/unlinger/actions/runs/35106242999); App repair `c17e60f` passed [exact-head CI 35118609063](https://github.com/IndelibleVivi/unlinger/actions/runs/35118609063); mapped-vnode snapshot and transaction-rollback correction `b2ada65` passed [exact-head CI 35130438688](https://github.com/IndelibleVivi/unlinger/actions/runs/35130438688) after complete local Rust/App/socket/source checks; the current per-candidate clone refinement has focused local evidence only and is not yet committed or installed |
 | App memory repair | Installed `c17e60f` removes the captured SwiftUI popup Accessibility adaptor path, suppresses equal publications and releases the closed-window host; its exact process passed a 2,400-sample installed RSS guard, while the exact intermittent trigger and multi-day acceptance remain open |
-| Maintainer's reference service | Accepted generation 27, healthy and quiescent `ReadyReportOnly` with no pending candidate lease after the generation-28 rollback; it still uses the global-Chrome blocking clone gate and is one reference installation, not a generation number users should copy |
+| Maintainer's reference service | Accepted generation 30, healthy and quiescent `ReadyEnforce` with no pending candidate lease; generation 29 proved restart and real rollback to generation 27 before the exact artifact was freshly installed, accepted and armed; it has the aggregate candidate-reference clone gate, not the current per-candidate source refinement |
 | Reference protocols/persistence | Operator v1, frontend v5/v4/v3, SQLite v10; historical v2 rejected |
 | Reference App | Ad-hoc-signed schema-v5 App from `c17e60f`; strict replacement checks and a 2,400-sample installed guard passed; neither Developer ID signed nor notarized; displaced `628d822`, `e26297b` and `016ca58` bundles retained as recoverable local siblings |
 | Policy | Playwright `0.6.0`, agent-browser/Puppeteer `0.4.0`; process-only; every artifact flag false |
 | Publication | [Repository public](https://github.com/IndelibleVivi/unlinger); source-available under SUL-1.0 + CC BY-NC-SA 4.0; anonymous API and reader/license/diagram access verified; no GitHub Release |
 
-The source daemon still defaults to report-only. Generation 27's earlier explicit
-activation is historical; the transaction recovery deliberately restored it to
-the report-only floor. That current runtime remains separate from building the
-source and from repository publication.
+The source daemon still defaults to report-only. The reference generation 30 was
+separately accepted and explicitly armed after its transaction proof; its
+current `ReadyEnforce` runtime remains distinct from the default, from the newer
+per-candidate source refinement, and from repository publication.
 
 ## Current installed transaction evidence
 
@@ -213,7 +238,7 @@ fresh generation 25 repeated the v10 migration, binary match, report-only
 restart and seven-plus-seven App/socket checks. The owner then accepted the
 candidate, retiring the rollback lease, and explicitly armed generation 25. At
 that stage the owner's ordinary PATH symlink resolved to generation 25 and
-exposed the new `session` surface; it now resolves to generation 27.
+exposed the new `session` surface; it now resolves to generation 30.
 
 The later first App-only memory repair did not replace or restart generation 25.
 After exact-head CI passed, the canonical App was replaced recoverably with the
@@ -246,9 +271,22 @@ was built, a byte-identical recovery CLI staged on the startup volume drained
 generation 28 and selected generation 27; the first retry from the removable
 build volume reproduced the same executable-open deadlock in the restored old
 daemon. Replaying from the startup-volume copy completed in the normal readiness
-window. Current generation 27 is healthy, quiescent `ReadyReportOnly`, unarmed,
-has no rollback lease, and retained the valid SQLite-v10 database. Generation 28
+window and returned generation 27 to healthy `ReadyReportOnly`. Generation 28
 was not accepted and supplies no cleanup or enforcement evidence.
+
+After exact-head `b2ada65` CI passed, a byte-identical candidate CLI staged on
+the startup volume installed generation 29 at the report-only floor. Generation
+29 matched the release artifact, passed seven schema-v5 live-socket checks,
+completed an exact report-only restart, and passed the seven checks again. The
+mandatory rollback restored healthy generation 27 in report-only mode and the
+matching App again passed all seven socket checks. A fresh install of the same
+artifact became generation 30, repeated seven checks before and after restart,
+and was accepted only after those checks. The owner-authorized mode transition
+then armed generation 30. Current service readback is healthy, quiescent
+`ReadyEnforce`, with exact PID/generation/binary identity, zero problems and no
+rollback lease. Its aggregate candidate-reference gate observed one real live
+candidate reference and therefore retained all nine candidates; this is safe
+installed refusal, not per-candidate cleanup acceptance.
 
 ## Current controlled evidence
 
@@ -276,7 +314,7 @@ The publication candidate passed fresh local formatting, strict workspace clippy
 
 - The original generation-17 terminal SQLite disk-I/O failure cause remains unproved. Exact-instance containment/recovery and later transactional replacement succeeded; a later healthy database check does not establish the original cause.
 - The command wrapper does not integrate every Codex App host or browser tool automatically. The source v10 optional session-owner primitive also has no supported automatic Codex adapter yet. Exact CLI/browser compatibility, lifetime/client proof and all ordinary gates remain required; unregistered, active-owner, reused, unsupported or unverified controllers stay protected.
-- Chrome clone observation now accepts the actual `.app.bundle` shape and no-follow framework links. Installed generation 27 observes nine candidates and 13,273,958,043 regular-file logical bytes but still blocks on any ordinary Chrome process; it is currently report-only after transaction recovery. Source `516d483` narrows that gate to candidate-level references and is not yet installed or credited with a real cleanup.
+- Chrome clone observation accepts the actual `.app.bundle` shape and no-follow framework links. Installed generation 30 observes nine candidates and 13,273,958,043 regular-file logical bytes and proves that one exact candidate is referenced by the continuously running ordinary Chrome executable; its aggregate gate therefore protects all nine. Current source evaluates stability and references per candidate so that stable unreferenced peers can be removed while the live candidate remains protected, but that refinement is not yet installed or credited with a real cleanup.
 - All artifact admission is disabled. The dormant DAP engine still has a quarantine-after-crash recovery gap and a final pathname-swap TOCTOU. Native pathname-reference tests also intermittently returned no reference for an owned open ordinary or `O_EVTONLY` descriptor under parallel execution; exact serial tests passed, and the cause is unresolved. The active process path does not use that query. [Safety](SAFETY.md) owns these boundaries.
 - The old zero-deadline offline-lock test failed because a concurrent fork can inherit an `O_CLOEXEC` descriptor until exec. A deterministic owned-child probe established that cause; `f22e08e` retains held-lock denial and gives post-release acquisition its existing bounded wait. The final exact-head CI passed. A later local full workspace run reproduced the separate dormant native-query failures above; no assertions were weakened.
 - The current source fixture passed 460 Accessibility-tree probes with zero read failures and an external 22,208 KiB final RSS sample. The installed `628d822` App's earlier 300-sample/one-tree acceptance was superseded by the later 19-GB recurrence. The installed `c17e60f` native-popup repair then passed 2,400 one-second RSS samples with a 22,192 KiB maximum, but neither that bounded guard nor source checks establish the exact intermittent trigger, multi-day App behavior, packaged notifications or every menu organizer/display arrangement.

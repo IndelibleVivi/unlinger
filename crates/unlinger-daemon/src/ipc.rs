@@ -1608,21 +1608,21 @@ mod control_plane_tests {
     use super::*;
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::{Arc, Barrier, mpsc};
     use std::thread;
-    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+    use std::time::Duration;
+
+    static TEMP_STATE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
     struct TempState(PathBuf);
 
     impl TempState {
         fn new() -> Self {
-            let nonce = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .expect("clock after epoch")
-                .as_nanos();
+            let sequence = TEMP_STATE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
             let directory = std::env::temp_dir().join(format!(
-                "unlinger-expire-pause-{}-{nonce:x}",
-                std::process::id()
+                "unlinger-control-plane-{}-{sequence}",
+                std::process::id(),
             ));
             fs::create_dir(&directory).expect("create temp directory");
             fs::set_permissions(&directory, fs::Permissions::from_mode(0o700))

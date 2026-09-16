@@ -20,7 +20,7 @@ Editable source: [architecture.mmd](architecture.mmd). The SVG is a rendered exp
 
 The Chrome clone path is separate from process runtime artifacts and has its own explicit deletion edge. It does not enable any artifact-pack flag or reuse DAP authority. Every runtime-artifact admission flag remains false. The dormant DAP engine is outside the active diagram and retains the unresolved risks in [SAFETY.md](SAFETY.md).
 
-Chrome clone 的磁盘状态单独进入状态库；源码只会删除 scanner 再次确认的精确 candidate 目录。逻辑字节不是保证可释放的 APFS 空间；profile、浏览器数据和 runtime artifact 仍无自动删除入口。已安装 generation 27 仍保留旧的全局 Chrome blocker，且当前为 `ReadyReportOnly`；它尚不具备这条新增 source edge。
+Chrome clone 的磁盘状态单独进入状态库；源码逐个保留 candidate identity，对每个 candidate 独立评估稳定性与 live reference，只删除 scanner 再次确认的 eligible 子集。一份正在使用的 clone 会受保护，但不阻塞其他已稳定且无人引用的 clone。逻辑字节不是保证可释放的 APFS 空间；profile、浏览器数据和 runtime artifact 仍无自动删除入口。已安装 generation 30 是 healthy `ReadyEnforce`，含 aggregate candidate-reference gate；这条逐候选 source refinement 尚未安装。
 
 ## Ownership and evidence map
 
