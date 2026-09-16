@@ -2,7 +2,7 @@
 
 **Updated:** 2026-09-16. **Programme:** 0.1. **Reader posture:** experimental developer source preview; not a signed/notarized App release or multi-day reliability claim.
 
-## App memory hardening candidate (2026-09-16)
+## Installed App memory hardening candidate (2026-09-16)
 
 The owner observed a recurrent installed-App memory event above 20 GB. The exact
 spike did not recur during bounded inspection, so its complete cause remains
@@ -14,7 +14,7 @@ AttributeGraph allocation. One Accessibility transport failure coincided with a
 later ScreenCaptureKit capture error and is not attributed to the App without
 stronger evidence.
 
-The current source candidate removes one concrete unnecessary retention surface:
+Commit `628d822` removes one concrete unnecessary retention surface:
 `AppWindowController` still owns one reusable ordinary `NSWindow` from launch,
 but does not construct its SwiftUI/Accessibility hosting tree until first
 presentation. The first presentation constructs that tree exactly once. A
@@ -22,11 +22,22 @@ focused lifecycle regression fails the old eager-host behavior; all **86 Swift
 tests** pass, release bundling passes, the history Accessibility/RSS gate passed
 **457 probes with zero failures** and 17.8 MiB final RSS, and a separate
 three-minute menu-only polling run passed **180 samples** with 61.4 MiB startup
-maximum, 12.4 MiB final RSS and only 448 KiB growth from its minimum. These are
-bounded source-candidate results, not proof of the unique root cause, installed
-acceptance or multi-day reliability. The reference daemon remains unchanged and
-healthy on generation 25; the canonical installed App remains `e26297b` until
-the candidate has passed exact-head CI and a separate recoverable replacement.
+maximum, 12.4 MiB final RSS and only 448 KiB growth from its minimum. Exact-head
+[CI 35072613168](https://github.com/IndelibleVivi/unlinger/actions/runs/35072613168)
+then passed every job.
+
+The ad-hoc-signed bundle was installed at the canonical owner-local Applications
+path after recursive equality and strict signature/plist checks. The displaced
+`e26297b` bundle and earlier `016ca58` bundle remain separate recoverable
+siblings. The installed App passed 180 normal menu-only RSS samples with a 73.3
+MiB maximum and 11.6 MiB final value, then 120 visible-window samples between
+10.8 and 38.0 MiB with a 29.1 MiB final value. A trusted Accessibility read
+returned the live browser overview, cleanup-impact/residue cards and controls.
+The App was still running at 19.8 MiB after seven and a half minutes. The
+generation-25 daemon was not restarted or changed and remained healthy,
+quiescent `ReadyEnforce`. These are bounded installed-candidate results, not
+proof of the unique root cause, packaged-notification behavior or multi-day
+reliability; recurrence still blocks a private-v0.1 reliability claim.
 
 ## Current installed candidate (2026-09-15)
 
@@ -67,7 +78,7 @@ adopt an older long-lived controller. The installed primitive is consequently
 a foundation, not Phase-2 ambient completion or zero-touch daily dogfood
 acceptance.
 
-Focused candidate regressions cover bounded descriptor saturation/error
+The 2026-09-15 daemon/App candidate regressions cover bounded descriptor saturation/error
 handling, owned native FD/socket sampling, no-signal completion through
 executor/store/IPC, transactional v8→v9→v10 migration, path-free ordinary
 session discovery, lease generations, exact owner/controller/version/session
@@ -91,11 +102,11 @@ acceptance is claimed.
 | Subsequent test correction | `f22e08eb3410050b380eaee7b84c4ccda2a3ad1a`: bounded post-release offline-lock tests; production locking/timeouts unchanged |
 | Baseline remote verification | [CI 34163955192](https://github.com/IndelibleVivi/unlinger/actions/runs/34163955192) passed for `b70bc94`; [CI 34165331792](https://github.com/IndelibleVivi/unlinger/actions/runs/34165331792) passed for `f22e08e`, including default-parallel Rust tests, release build, Swift tests and App bundling |
 | Current reader preparation | Published source-preview candidate `de1a9c3`: bilingual reader guides, licensed material scopes, current architecture and safe demo teardown; [exact CI 34170593229](https://github.com/IndelibleVivi/unlinger/actions/runs/34170593229) passed all steps |
-| Current source verification | Full local gates, [exact-source CI 34968538132](https://github.com/IndelibleVivi/unlinger/actions/runs/34968538132), and [current-head CI 34968967500](https://github.com/IndelibleVivi/unlinger/actions/runs/34968967500) passed |
-| App memory hardening candidate | Source-only lazy ordinary-window host; 86 Swift tests, release bundle, 457-probe history Accessibility/RSS gate and 180-sample menu-only polling run passed; exact 20-GB cause and installed acceptance remain open |
+| Current source verification | Full local gates, [exact-source CI 34968538132](https://github.com/IndelibleVivi/unlinger/actions/runs/34968538132), [current-head CI 34968967500](https://github.com/IndelibleVivi/unlinger/actions/runs/34968967500), and App-memory exact-head [CI 35072613168](https://github.com/IndelibleVivi/unlinger/actions/runs/35072613168) passed |
+| App memory hardening candidate | Installed `628d822` lazy ordinary-window host; 86 Swift tests, release bundle, 457-probe source Accessibility/RSS gate, 180 source menu-only samples, 180 installed menu-only samples, 120 installed visible-window samples and one trusted installed Accessibility read passed; exact 20-GB cause and multi-day acceptance remain open |
 | Maintainer's reference service | Accepted generation 25 from `e26297b`, healthy and quiescent `ReadyEnforce`, generation/epoch-bound with no pending candidate lease; this is one reference installation, not a generation number users should copy |
 | Reference protocols/persistence | Operator v1, frontend v5/v4/v3, SQLite v10; historical v2 rejected |
-| Reference App | Matching ad-hoc-signed schema-v5 App from `e26297b`, installed and running; neither Developer ID signed nor notarized; prior `016ca58` bundle retained as a recoverable local sibling |
+| Reference App | Ad-hoc-signed schema-v5 App from `628d822`, installed and running; neither Developer ID signed nor notarized; displaced `e26297b` and earlier `016ca58` bundles retained as recoverable local siblings |
 | Policy | Playwright `0.6.0`, agent-browser/Puppeteer `0.4.0`; process-only; every artifact flag false |
 | Publication | [Repository public](https://github.com/IndelibleVivi/unlinger); source-available under SUL-1.0 + CC BY-NC-SA 4.0; anonymous API and reader/license/diagram access verified; no GitHub Release |
 
@@ -124,6 +135,14 @@ candidate, retiring the rollback lease, and explicitly armed generation 25. The
 owner's ordinary PATH symlink now resolves to generation 25 and exposes the new
 `session` surface.
 
+The later App-only memory repair did not replace or restart that daemon. After
+exact-head CI passed, the canonical App was replaced recoverably with the
+`628d822` bundle and the `e26297b` App was preserved beside the existing
+`016ca58` rollback bundle. Recursive bundle equality, strict signature/plist
+checks and an exact canonical launch passed. The installed App then completed
+180 menu-only and 120 visible-window RSS samples below the 384 MiB cutoff, and
+one trusted Accessibility read exposed the live schema-v5 overview and controls.
+
 A later full observation cycle remained healthy and quiescent `ReadyEnforce`
 with SQLite v10, exact PID/generation/binary identity, armed generation 25,
 event source healthy, zero recovered cleanup attempts, zero attention and no
@@ -131,9 +150,10 @@ scan or cleanup in progress. The installed App remained running. A fresh
 browser overview saw two ordinary Playwright/Google Chrome `152.0.7977.83`
 sessions and correctly protected both as `browser_product_unsupported`; this is
 installed observation, not an eligible cleanup or host-adapter proof. Storage
-residue remained observe-only with `automatic_cleanup_eligible = false`. Fresh
-visual UI, packaged-notification and installed Accessibility/RSS acceptance were
-not performed.
+residue remained observe-only with `automatic_cleanup_eligible = false`. The
+later App-memory acceptance read those live impact/residue facts in the installed
+UI through Accessibility. Pixel-level visual QA, packaged-notification and
+multi-day App acceptance were not performed.
 
 ## Current controlled evidence
 
@@ -164,7 +184,7 @@ The publication candidate passed fresh local formatting, strict workspace clippy
 - Chrome clone observation now accepts the actual `.app.bundle` shape and no-follow framework links. A real observation matched one clone and 1,475,187,528 regular-file logical bytes; live references were observed and deletion remains unavailable.
 - All artifact admission is disabled. The dormant DAP engine still has a quarantine-after-crash recovery gap and a final pathname-swap TOCTOU. Native pathname-reference tests also intermittently returned no reference for an owned open ordinary or `O_EVTONLY` descriptor under parallel execution; exact serial tests passed, and the cause is unresolved. The active process path does not use that query. [Safety](SAFETY.md) owns these boundaries.
 - The old zero-deadline offline-lock test failed because a concurrent fork can inherit an `O_CLOEXEC` descriptor until exec. A deterministic owned-child probe established that cause; `f22e08e` retains held-lock denial and gives post-release acquisition its existing bounded wait. The final exact-head CI passed. A later local full workspace run reproduced the separate dormant native-query failures above; no assertions were weakened.
-- The current source fixture passed 467 Accessibility-tree probes with zero read failures and an external 30,000 KiB final RSS sample. It did not contact or replace the installed App/service. Historical installed-App evidence includes ten minutes/1,398 tree reads and a later bounded v5 deployment observation; neither source nor installed points establish multi-day App behavior, packaged notifications or every menu organizer/display arrangement.
+- The current source fixture passed 457 Accessibility-tree probes with zero read failures and an external 18,256 KiB final RSS sample. The installed `628d822` App separately passed 300 RSS samples across hidden-menu and visible-window states plus one trusted Accessibility-tree read. Historical installed-App evidence includes ten minutes/1,398 tree reads and an earlier bounded v5 deployment observation; neither current nor historical points establish multi-day App behavior, packaged notifications or every menu organizer/display arrangement.
 - No Intel/universal verification, signed/notarized distribution, automatic update path or public release is claimed. Recognition of agent-browser/Puppeteer is not controlled field acceptance.
 
 ## Publication preparation
