@@ -92,6 +92,8 @@ mod platform {
     const CTL_KERN: libc::c_int = 1;
     const KERN_ARGMAX: libc::c_int = 8;
     const KERN_PROCARGS2: libc::c_int = 49;
+    const PROC_PIDREGIONPATHINFO: libc::c_int = 8;
+    const VNODE_TYPE_REGULAR: libc::c_int = 1;
     const STATUS_RUN: u32 = 2;
     const STATUS_SLEEP: u32 = 3;
     const STATUS_STOP: u32 = 4;
@@ -504,28 +506,111 @@ mod platform {
         kern_process_status(pid) == Some(STATUS_ZOMBIE)
     }
 
+    /// Public Darwin ABI prefix for `struct proc_regioninfo` from
+    /// `<sys/proc_info.h>`. The following `vnode_info_path` is provided by
+    /// `libc`; keeping the prefix explicit lets us retrieve the executable's
+    /// already-mapped vnode without reopening its pathname.
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    struct ProcRegionInfo {
+        protection: u32,
+        max_protection: u32,
+        inheritance: u32,
+        flags: u32,
+        offset: u64,
+        behavior: u32,
+        user_wired_count: u32,
+        user_tag: u32,
+        pages_resident: u32,
+        pages_shared_now_private: u32,
+        pages_swapped_out: u32,
+        pages_dirtied: u32,
+        reference_count: u32,
+        shadow_depth: u32,
+        share_mode: u32,
+        private_pages_resident: u32,
+        shared_pages_resident: u32,
+        object_id: u32,
+        depth: u32,
+        address: u64,
+        size: u64,
+    }
+
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    struct ProcRegionWithPathInfo {
+        region: ProcRegionInfo,
+        vnode: libc::vnode_info_path,
+    }
+
+    fn identity_from_mapped_region(
+        region: &ProcRegionWithPathInfo,
+        expected_path: &str,
+    ) -> ExecutableIdentity {
+        let path_bytes = unsafe {
+            std::slice::from_raw_parts(
+                region.vnode.vip_path.as_ptr().cast::<u8>(),
+                std::mem::size_of_val(&region.vnode.vip_path),
+            )
+        };
+        let path_end = path_bytes
+            .iter()
+            .position(|byte| *byte == 0)
+            .unwrap_or(path_bytes.len());
+        let Ok(mapped_path) = std::str::from_utf8(&path_bytes[..path_end]) else {
+            return ExecutableIdentity::default();
+        };
+        if Path::new(mapped_path) != Path::new(expected_path) {
+            return ExecutableIdentity::default();
+        }
+
+        let vnode = &region.vnode.vip_vi;
+        if vnode.vi_type != VNODE_TYPE_REGULAR {
+            return ExecutableIdentity::default();
+        }
+        let stat = &vnode.vi_stat;
+        let Ok(size) = u64::try_from(stat.vst_size) else {
+            return ExecutableIdentity::default();
+        };
+        ExecutableIdentity {
+            device: Some(u64::from(stat.vst_dev)),
+            inode: Some(stat.vst_ino),
+            size: Some(size),
+            modified_unix_nanos: Some(
+                i128::from(stat.vst_mtime) * 1_000_000_000 + i128::from(stat.vst_mtimensec),
+            ),
+        }
+    }
+
+    fn mapped_executable_identity(pid: libc::c_int, expected_path: &str) -> ExecutableIdentity {
+        let mut region = unsafe { std::mem::zeroed::<ProcRegionWithPathInfo>() };
+        let Ok(buffer_size) = libc::c_int::try_from(size_of::<ProcRegionWithPathInfo>()) else {
+            return ExecutableIdentity::default();
+        };
+        let returned = unsafe {
+            libc::proc_pidinfo(
+                pid,
+                PROC_PIDREGIONPATHINFO,
+                0,
+                (&raw mut region).cast::<c_void>(),
+                buffer_size,
+            )
+        };
+        if returned != buffer_size {
+            return ExecutableIdentity::default();
+        }
+
+        identity_from_mapped_region(&region, expected_path)
+    }
+
     fn read_process(pid: u32, argmax: usize) -> Result<ProcessRecord, ()> {
         let pid_i32 = i32::try_from(pid).map_err(|_| ())?;
         let info = pidinfo::<TaskAllInfo>(pid_i32, 0).map_err(|_| ())?;
         let path = pidpath(pid_i32).ok().filter(|path| !path.is_empty());
         let executable = path
             .as_deref()
-            .and_then(|path| {
-                OpenOptions::new()
-                    .read(true)
-                    .custom_flags(libc::O_NOFOLLOW_ANY | libc::O_CLOEXEC)
-                    .open(path)
-                    .ok()
-            })
-            .and_then(|file| file.metadata().ok())
-            .map_or_else(ExecutableIdentity::default, |metadata| ExecutableIdentity {
-                device: Some(metadata.dev()),
-                inode: Some(metadata.ino()),
-                size: Some(metadata.size()),
-                modified_unix_nanos: Some(
-                    i128::from(metadata.mtime()) * 1_000_000_000
-                        + i128::from(metadata.mtime_nsec()),
-                ),
+            .map_or_else(ExecutableIdentity::default, |path| {
+                mapped_executable_identity(pid_i32, path)
             });
         let started_at_unix_micros = info
             .pbsd
@@ -815,6 +900,7 @@ mod platform {
     mod tests {
         use super::*;
         use crate::parse_procargs2;
+        use std::os::unix::fs::PermissionsExt;
         use std::time::Instant;
 
         struct OwnedZombie {
@@ -1093,6 +1179,113 @@ mod platform {
             assert!(process.runtime.open_file_descriptors >= 3);
             assert!(process.runtime.tcp_listening_ports.contains(&port));
             assert!(process.runtime.tcp_established_local_ports.contains(&port));
+        }
+
+        #[test]
+        fn mapped_executable_identity_does_not_require_path_read_access() {
+            struct OwnedChild(std::process::Child);
+
+            impl Drop for OwnedChild {
+                fn drop(&mut self) {
+                    let _ = self.0.kill();
+                    let _ = self.0.wait();
+                }
+            }
+
+            struct OwnedFixtureDirectory(std::path::PathBuf);
+
+            impl Drop for OwnedFixtureDirectory {
+                fn drop(&mut self) {
+                    let _ = std::fs::remove_dir_all(&self.0);
+                }
+            }
+
+            let unique = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("fixture clock")
+                .as_nanos();
+            let fixture = OwnedFixtureDirectory(std::env::temp_dir().join(format!(
+                "unlinger-mapped-executable-{}-{unique}",
+                std::process::id()
+            )));
+            std::fs::create_dir(&fixture.0).expect("create fixture directory");
+            let executable_path = fixture.0.join("sleep");
+            std::fs::copy("/bin/sleep", &executable_path).expect("copy fixture executable");
+            let metadata = std::fs::metadata(&executable_path).expect("fixture metadata");
+            let child = std::process::Command::new(&executable_path)
+                .arg("30")
+                .spawn()
+                .expect("launch fixture executable");
+            let child = OwnedChild(child);
+            let pid = i32::try_from(child.0.id()).expect("fixture PID fits i32");
+            let reported_path = pidpath(pid).expect("fixture executable path");
+
+            std::fs::set_permissions(&executable_path, std::fs::Permissions::from_mode(0o100))
+                .expect("remove fixture read access");
+            assert!(
+                OpenOptions::new()
+                    .read(true)
+                    .custom_flags(libc::O_NOFOLLOW_ANY | libc::O_CLOEXEC)
+                    .open(&executable_path)
+                    .is_err(),
+                "the former pathname read-open must be unavailable"
+            );
+
+            assert_eq!(
+                mapped_executable_identity(pid, &reported_path),
+                ExecutableIdentity {
+                    device: Some(metadata.dev()),
+                    inode: Some(metadata.ino()),
+                    size: Some(metadata.size()),
+                    modified_unix_nanos: Some(
+                        i128::from(metadata.mtime()) * 1_000_000_000
+                            + i128::from(metadata.mtime_nsec()),
+                    ),
+                }
+            );
+        }
+
+        #[test]
+        fn mapped_region_requires_successful_regular_vnode_stat() {
+            let expected_path = "/private/tmp/unlinger-mapped-executable";
+            let mut region = unsafe { std::mem::zeroed::<ProcRegionWithPathInfo>() };
+            assert!(expected_path.len() < std::mem::size_of_val(&region.vnode.vip_path));
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    expected_path.as_ptr(),
+                    region.vnode.vip_path.as_mut_ptr().cast::<u8>(),
+                    expected_path.len(),
+                );
+            }
+            region.vnode.vip_vi.vi_stat.vst_dev = 42;
+            region.vnode.vip_vi.vi_stat.vst_ino = 84;
+            region.vnode.vip_vi.vi_stat.vst_size = 168;
+            region.vnode.vip_vi.vi_stat.vst_mtime = 21;
+            region.vnode.vip_vi.vi_stat.vst_mtimensec = 7;
+
+            assert_eq!(
+                identity_from_mapped_region(&region, expected_path),
+                ExecutableIdentity::default(),
+                "a full-size kernel response without a successful vnode stat must fail closed"
+            );
+
+            region.vnode.vip_vi.vi_type = VNODE_TYPE_REGULAR;
+            assert_eq!(
+                identity_from_mapped_region(&region, expected_path),
+                ExecutableIdentity {
+                    device: Some(42),
+                    inode: Some(84),
+                    size: Some(168),
+                    modified_unix_nanos: Some(21_000_000_007),
+                }
+            );
+
+            region.vnode.vip_vi.vi_stat.vst_size = -1;
+            assert_eq!(
+                identity_from_mapped_region(&region, expected_path),
+                ExecutableIdentity::default(),
+                "an invalid vnode size must fail the whole identity closed"
+            );
         }
     }
 }

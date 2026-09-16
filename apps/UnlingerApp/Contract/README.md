@@ -11,7 +11,7 @@
 - `schema_version: 2`：保留在[`v2/`](v2/)作为历史审计证据；当前server在dispatch前以schema-v1 framing返回typed `unsupported_schema`；
 - source App只发送v5，不会silent downgrade到v4/v3或改走v1 mutation/lifecycle path。
 
-安装中的accepted generation 15仍只提供schema-v4 App endpoint、v3、operator v1与SQLite v6；当前是healthy `ReadyEnforce`、exact generation/epoch-bound、`0.3.0` process-only且没有pending lease。Matching v4 App已经安装。Source v5/v7/`0.4.0` candidate未安装，不能借用generation 15的activation或field evidence。App仍只能投影backend activation truth，不能自行赋予或扩大signal/file-deletion authority。
+安装中的accepted generation 27提供schema-v5 App endpoint并保留v4/v3 compatibility、operator v1与SQLite v10；当前是healthy `ReadyReportOnly`且没有pending lease。Matching `c17e60f` v5 App已经安装。Generation 27曾有owner-authorized process-only activation与bounded field evidence，但后续generation-28 transaction rollback已把当前runtime恢复到report-only；App不能借用历史activation或field evidence，也只能投影backend current truth，不能自行赋予或扩大signal/file-deletion authority。
 
 ## Transport and trust
 
@@ -93,7 +93,7 @@ Capability projection和mutation authorization调用同一Rust public-action pol
 
 `incidents`继续返回transitional `ObservationRoster`，供compatibility、detail和diagnostic testing使用。Never-observed没有fake timestamp/token；replacement cycle完成前保留上一份roster，失败后标`stale_after_failure`。它不是browser screen的composition surface、work queue或manual-kill authority。
 
-每个retained public history event有opaque、stable、unique `event_token`。Equivalent consecutive observations在SQLite v7合并为one span；v5提供first/latest time与count，v4/v3保持旧shape。Observation count/age retention不再驱逐cleanup impact/detail；detail至少保留14天，aggregate lifetime authority继续存在。Swift history index只展示terminal cleanup outcomes，observation span留在detail。Cleanup同时保留process、artifact、overall outcome；`state: FAILED`与`overall_outcome: cleared_with_residue`可以共存。Diagnostics payload有required integer `document_schema_version`；source v5 App要求value 5。Export是semantic-lossless JSON，不承诺原始byte layout或key order。
+每个retained public history event有opaque、stable、unique `event_token`。Equivalent consecutive observations在当前SQLite v10保留的span authority中合并为one span；v5提供first/latest time与count，v4/v3保持旧shape。Observation count/age retention不再驱逐cleanup impact/detail；detail至少保留14天，aggregate lifetime authority继续存在。Swift history index只展示terminal cleanup outcomes，observation span留在detail。Cleanup同时保留process、artifact、overall outcome；`state: FAILED`与`overall_outcome: cleared_with_residue`可以共存。Diagnostics payload有required integer `document_schema_version`；source v5 App要求value 5。Export是semantic-lossless JSON，不承诺原始byte layout或key order。
 
 ## Canonical fixtures and verification
 

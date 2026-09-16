@@ -465,7 +465,13 @@ pub fn install(
         )?;
 
         if old_launchd.loaded && old_launchd.pid.is_some() {
-            quiesce_loaded_service(paths, uid, old_launchd, old_status.as_ref())?;
+            quiesce_loaded_service(
+                paths,
+                uid,
+                old_launchd,
+                old_status.as_ref(),
+                QuiescePolicy::StableOrFailed,
+            )?;
             daemon_lock = Some(prove_daemon_offline(paths, SERVICE_STOP_TIMEOUT)?);
         }
         let offline = daemon_lock.as_ref().ok_or_else(|| {
@@ -715,7 +721,13 @@ pub fn uninstall(paths: &LocalPaths) -> Result<ServiceStatusReport, ServiceError
     match (launchd.loaded, launchd.pid) {
         (true, Some(pid)) => {
             let daemon_status = ipc_status_for_launchd(paths, Some(pid))?;
-            quiesce_loaded_service(paths, uid, launchd, daemon_status.as_ref())?;
+            quiesce_loaded_service(
+                paths,
+                uid,
+                launchd,
+                daemon_status.as_ref(),
+                QuiescePolicy::StableOrFailed,
+            )?;
         }
         (true, None) => bootout_and_wait(uid, None)?,
         (false, _) => {}
@@ -2069,11 +2081,29 @@ fn validate_disarmed_response(
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum QuiescePolicy {
+    StableOrFailed,
+    TransactionRollback,
+}
+
 fn validate_quiesce_disarm_response(
     status: &DaemonStatus,
     generation: u64,
     instance_id: &str,
+    policy: QuiescePolicy,
 ) -> Result<(), ServiceError> {
+    if status.startup_state == StartupState::FirstScanReportOnly
+        && policy == QuiescePolicy::TransactionRollback
+    {
+        validate_disarmed_response(status, generation, instance_id)?;
+        if !status.healthy && !status.ready && !status.draining {
+            return Ok(());
+        }
+        return Err(ServiceError::new(
+            "pre-ready rollback daemon did not confirm an unhealthy, non-ready disarmed state",
+        ));
+    }
     if status.startup_state != StartupState::Failed {
         return validate_report_only_response(status, generation, instance_id);
     }
@@ -2118,6 +2148,7 @@ fn quiesce_loaded_service(
     uid: u32,
     launchd: LaunchdState,
     status: Option<&DaemonStatus>,
+    policy: QuiescePolicy,
 ) -> Result<(), ServiceError> {
     let identity = capture_loaded_identity(launchd)?;
     let status = status.ok_or_else(|| {
@@ -2126,7 +2157,12 @@ fn quiesce_loaded_service(
     if status.managed {
         let instance_id = status.instance_id.clone();
         let report_only = request_disarm(paths, status)?;
-        validate_quiesce_disarm_response(&report_only, required_generation(status)?, &instance_id)?;
+        validate_quiesce_disarm_response(
+            &report_only,
+            required_generation(status)?,
+            &instance_id,
+            policy,
+        )?;
         let instance_id = report_only.instance_id.clone();
         let draining = request_drain(paths, &report_only)?;
         validate_managed_identity(&draining, required_generation(status)?)?;
@@ -2564,7 +2600,13 @@ fn drain_rollback_selected_service(
                     "rollback IPC and exact launchd process identities do not match",
                 ));
             }
-            quiesce_loaded_service(paths, uid, exact_launchd, Some(&status))
+            quiesce_loaded_service(
+                paths,
+                uid,
+                exact_launchd,
+                Some(&status),
+                QuiescePolicy::TransactionRollback,
+            )
         }
         Ok(Some(status)) => {
             if transaction.prior_manifest.is_some() || transaction.prior_plist.is_none() {
@@ -2572,7 +2614,13 @@ fn drain_rollback_selected_service(
                     "unexpected legacy daemon is running during managed rollback",
                 ));
             }
-            quiesce_loaded_service(paths, uid, launchd, Some(&status))
+            quiesce_loaded_service(
+                paths,
+                uid,
+                launchd,
+                Some(&status),
+                QuiescePolicy::TransactionRollback,
+            )
         }
         Ok(None) | Err(_) => {
             let generation = installed_generation_result(paths)?.ok_or_else(|| {
@@ -3894,8 +3942,13 @@ mod tests {
         let report_only = managed_lifecycle_status(DaemonMode::ReportOnly, 7, "instance-a");
         validate_report_only_response(&report_only, 7, "instance-a")
             .expect("exact report-only response");
-        validate_quiesce_disarm_response(&report_only, 7, "instance-a")
-            .expect("ready report-only remains quiescent");
+        validate_quiesce_disarm_response(
+            &report_only,
+            7,
+            "instance-a",
+            QuiescePolicy::StableOrFailed,
+        )
+        .expect("ready report-only remains quiescent");
         assert!(validate_report_only_response(&report_only, 7, "instance-b").is_err());
         assert!(validate_report_only_response(&report_only, 8, "instance-a").is_err());
 
@@ -3905,30 +3958,100 @@ mod tests {
         validate_disarmed_response(&not_ready, 7, "instance-a")
             .expect("fail-closed disarm does not require readiness");
         assert!(validate_report_only_response(&not_ready, 7, "instance-a").is_err());
-        assert!(validate_quiesce_disarm_response(&not_ready, 7, "instance-a").is_err());
+        assert!(
+            validate_quiesce_disarm_response(
+                &not_ready,
+                7,
+                "instance-a",
+                QuiescePolicy::StableOrFailed,
+            )
+            .is_err()
+        );
+        assert!(
+            validate_quiesce_disarm_response(
+                &not_ready,
+                7,
+                "instance-a",
+                QuiescePolicy::TransactionRollback,
+            )
+            .is_err()
+        );
+
+        let mut first_scan_failed = report_only.clone();
+        first_scan_failed.healthy = false;
+        first_scan_failed.ready = false;
+        first_scan_failed.startup_state = StartupState::FirstScanReportOnly;
+        assert!(
+            validate_quiesce_disarm_response(
+                &first_scan_failed,
+                7,
+                "instance-a",
+                QuiescePolicy::StableOrFailed,
+            )
+            .is_err()
+        );
+        validate_quiesce_disarm_response(
+            &first_scan_failed,
+            7,
+            "instance-a",
+            QuiescePolicy::TransactionRollback,
+        )
+        .expect("exact unhealthy first-scan candidate can complete transaction rollback");
 
         let mut failed = report_only.clone();
         failed.healthy = false;
         failed.ready = false;
         failed.startup_state = StartupState::Failed;
         failed.last_error = Some("primary managed failure".to_owned());
-        validate_quiesce_disarm_response(&failed, 7, "instance-a")
+        validate_quiesce_disarm_response(&failed, 7, "instance-a", QuiescePolicy::StableOrFailed)
             .expect("exact terminal Failed can proceed to coordinated drain");
         assert!(validate_report_only_response(&failed, 7, "instance-a").is_err());
-        assert!(validate_quiesce_disarm_response(&failed, 7, "instance-b").is_err());
-        assert!(validate_quiesce_disarm_response(&failed, 8, "instance-a").is_err());
+        assert!(
+            validate_quiesce_disarm_response(
+                &failed,
+                7,
+                "instance-b",
+                QuiescePolicy::StableOrFailed,
+            )
+            .is_err()
+        );
+        assert!(
+            validate_quiesce_disarm_response(
+                &failed,
+                8,
+                "instance-a",
+                QuiescePolicy::StableOrFailed,
+            )
+            .is_err()
+        );
 
         let mut failed_not_disarmed = failed.clone();
         failed_not_disarmed.requested_mode = DaemonMode::Enforce;
         failed_not_disarmed.effective_mode = DaemonMode::Enforce;
         failed_not_disarmed.armed_generation = Some(7);
         failed_not_disarmed.enforcement_epoch = Some("stale-epoch".to_owned());
-        assert!(validate_quiesce_disarm_response(&failed_not_disarmed, 7, "instance-a").is_err());
+        assert!(
+            validate_quiesce_disarm_response(
+                &failed_not_disarmed,
+                7,
+                "instance-a",
+                QuiescePolicy::StableOrFailed,
+            )
+            .is_err()
+        );
 
         let mut failed_but_ready = failed;
         failed_but_ready.healthy = true;
         failed_but_ready.ready = true;
-        assert!(validate_quiesce_disarm_response(&failed_but_ready, 7, "instance-a").is_err());
+        assert!(
+            validate_quiesce_disarm_response(
+                &failed_but_ready,
+                7,
+                "instance-a",
+                QuiescePolicy::StableOrFailed,
+            )
+            .is_err()
+        );
 
         let enforce = managed_lifecycle_status(DaemonMode::Enforce, 7, "instance-a");
         validate_enforce_response(&enforce, 7, "instance-a").expect("exact enforce response");

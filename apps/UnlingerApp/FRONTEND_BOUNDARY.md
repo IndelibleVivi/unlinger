@@ -10,11 +10,11 @@
 
 ## Backend truth
 
-Unlinger 是 local-only macOS runtime-hygiene utility。Direct daemon默认report-only。Current source提供schema v5并保留v4/v3 compatibility，使用SQLite v7与`0.4.0` process-only packs；source App只发送v5，并要求atomic `browser_overview`。安装中的accepted generation 15仍是healthy `ReadyEnforce`，提供schema v4/v3、SQLite v6，按generation/epoch绑定`0.3.0` process-only authority且无pending lease；installed App只发送v4。Frontend只投影backend truth，不拥有signal authorization、storage deletion、service installation/update/rollback、daemon mode switching或lifecycle recovery。
+Unlinger 是 local-only macOS runtime-hygiene utility。Direct daemon默认report-only。Current source提供schema v5并保留v4/v3 compatibility，使用SQLite v10、Playwright `0.6.0`与其他`0.4.0` process-only packs；source/installed App只发送v5，并要求atomic `browser_overview`。安装中的accepted generation 27是healthy `ReadyReportOnly`，提供schema v5/v4/v3、operator v1与SQLite v10，当前无pending lease；matching `c17e60f` App已经安装。Frontend只投影backend truth，不拥有signal authorization、storage deletion、service installation/update/rollback、daemon mode switching或lifecycle recovery。
 
 Schemas v3/v4/v5都提供 status/history/explain/incidents/diagnostics、mutation status，以及pause/resume/named retry/exact protect/unprotect。V4与v5提供read-only `browser_overview`；v5在v4 shape上增加impact、storage residue和observation spans。V3请求overview会收到typed `invalid_request`，不会downgrade或拼装替代结果。所有actions使用backend capabilities，并由同一backend policy在commit前重新授权。UI缺失capability时fail closed，不从stage、score、reason string或session presence自行猜补。
 
-Automatic process admission依然极窄：source只允许controllerless exact Chrome for Testing `151.0.7922.34`或`152.0.7977.42`且所有 hard gates成立；installed generation 15仍只允许151。Source `0.4.0`与installed `0.3.0` packs都关闭runtime-artifact admission；这不改变frontend schema，UI也不得从settlement、residue observation或历史DAP evidence推断当前会删artifact。Unknown/mixed/wrong versions、controller-bearing、headed/attached、standard/shared profile与不完整 identity保持 `PROTECTED`。UI不得添加 manual kill绕过它。
+Automatic process admission依然极窄：source与installed generation 27只允许exact Chrome for Testing `151.0.7922.34`或`152.0.7977.42`且所有 hard gates成立；controller-bearing sessions还必须满足相应task/optional owner lifetime contract。所有source/installed packs都关闭runtime-artifact admission；这不改变frontend schema，UI也不得从settlement、residue observation或历史DAP evidence推断当前会删artifact。Unknown/mixed/wrong versions、unproved controller ownership、headed/attached、standard/shared profile与不完整 identity保持 `PROTECTED`。UI不得添加 manual kill绕过它。
 
 ## State mapping
 
@@ -59,6 +59,6 @@ Click routing复用 shared `AppRouter`，进入 exact incident或 global status�
 
 ## Live boundary
 
-Active generation-15 database属于安装服务并使用SQLite v6；它已accepted、healthy process-only enforce且没有pending lease。Candidate A generation 14通过[`../../docs/INSTALLED_DOGFOOD.md`](../../docs/INSTALLED_DOGFOOD.md)完成install、restart与真实rollback到generation 13；same exact-head candidate以generation 15 fresh reinstall，重复restart与serialized App checks后才accept。Full-timing field run结束时先回到report-only，之后才独立arm并通过later sweep。
+Active generation-27 database属于安装服务并使用SQLite v10；它已accepted、healthy `ReadyReportOnly`且没有pending lease。Generation 26通过[`../../docs/INSTALLED_DOGFOOD.md`](../../docs/INSTALLED_DOGFOOD.md)完成install、restart与真实rollback到generation 25；fresh generation 27重复transaction proof后才accept并曾独立arm。后续generation-28 readiness failure又通过transaction rollback恢复generation 27并留在report-only。`docs/current-state.md`拥有exact runtime truth；Frontend不得把历史arm或cleanup evidence解释成当前authority。
 
-使用 [`scripts/pre-v0.1-smoke.sh`](scripts/pre-v0.1-smoke.sh) 获得可重复的isolated report-only v5 App integration；它同时保留v4/v3 compatibility regression coverage。Owner-only CfT harness、process-only activation与installed dogfood proof仍不属于frontend source validation，即使当前generation 15已经分别通过这些runtime gates。
+使用 [`scripts/pre-v0.1-smoke.sh`](scripts/pre-v0.1-smoke.sh) 获得可重复的isolated report-only v5 App integration；它同时保留v4/v3 compatibility regression coverage。Owner-only CfT harness、historical process-only activation与installed dogfood proof仍不属于frontend source validation，即使generation 27分别拥有对应的bounded runtime evidence。

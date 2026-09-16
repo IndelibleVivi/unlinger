@@ -9,17 +9,28 @@ This runbook advances only acceptance level 3. It installs the exact source cand
 - The current installed service is healthy and quiescent. It may already be enforce-mode only when the owner has explicitly authorized replacement; candidate install must still use the service transaction, which first disarms/drains the exact prior instance and records a report-only rollback floor.
 - Record the current `active_generation`, `cli_path`, database schema and service-status output before mutation.
 - Build candidate binaries with `cargo build --release --workspace`; build the App with `apps/UnlingerApp/scripts/bundle.sh`.
+- Stage a byte-identical candidate CLI in a private directory on the macOS startup volume and run the complete install/restart/rollback/reinstall transaction from that copy. A prior installed daemon may still derive process identity by reopening the transaction CLI pathname; executing that CLI from a removable build volume can deadlock first-scan readiness and rollback. Verify the copy with `cmp` and strict `codesign` before use, retain it through the mandatory rollback proof, and remove only that exact task-owned staging directory after the transaction is accepted or rolled back.
 
 ## Candidate install
 
-Run the candidate CLI itself so the copied CLI and daemon come from one release build:
+Run the startup-volume copy of the candidate CLI so the copied CLI and daemon
+still come from one release build:
 
 ```bash
-target/release/unlinger service install \
+candidate_stage="$(mktemp -d "${TMPDIR%/}/unlinger-candidate.XXXXXX")"
+cp target/release/unlinger "$candidate_stage/unlinger"
+cmp target/release/unlinger "$candidate_stage/unlinger"
+codesign --verify --strict "$candidate_stage/unlinger"
+
+"$candidate_stage/unlinger" service install \
   --daemon target/release/unlingerd \
   --mode report-only \
   --json
 ```
+
+Confirm that `candidate_stage` is on the startup volume before starting the
+transaction. Do not rebuild or replace either staged candidate binary while a
+candidate or restored prior daemon is completing its first scan.
 
 A successful install must report all of the following at the same readback:
 
@@ -36,7 +47,7 @@ While that lease is pending, ordinary install, uninstall and `set-mode` remain b
 When the App changes, install the verified ad-hoc bundle at the owner-local application target, preserving any prior bundle as a recoverable sibling until the new App has launched. For a backend-only candidate whose frontend contract is unchanged, retain the existing App and verify it against the new daemon. The packaged executable and resource lookup must contain no source/build-volume path, and a clean launch must not request removable-volume access. Run the opt-in `LiveSocketTests` against the installed service socket, launch the packaged App, and verify that status/history/roster/detail/diagnostics and ordinary mutation reconciliation use the candidate's current frontend schema. For the current line this is schema v5, with v4 and v3 retained only as compatibility endpoints; the App must never silently downgrade. The regular Dock/window route must remain available independently of status-item discovery by any external menu host. Restart the daemon with:
 
 ```bash
-<candidate-cli-path> service restart-report-only --json
+"$candidate_stage/unlinger" service restart-report-only --json
 ```
 
 Then recreate the App/client state and repeat the current-schema read/reconciliation checks. Notification authorization and final visual behavior remain owner-observed macOS UI gates.
@@ -46,7 +57,7 @@ Then recreate the App/client state and repeat the current-schema read/reconcilia
 Before retaining the candidate for dogfood, exercise the lease rather than merely inspecting its files:
 
 ```bash
-<candidate-cli-path> service rollback-candidate --json
+"$candidate_stage/unlinger" service rollback-candidate --json
 <recorded-prior-cli-path> service status --json
 ```
 
@@ -59,14 +70,14 @@ Reinstall the same exact-head candidate as a fresh generation and fresh acceptan
 During dogfood:
 
 ```bash
-<active-candidate-cli-path> service status --json
-<active-candidate-cli-path> service rollback-candidate --json
+<startup-volume-candidate-cli-path> service status --json
+<startup-volume-candidate-cli-path> service rollback-candidate --json
 ```
 
 Only after the owner accepts the observed candidate may the retained prior generation and database backup be retired:
 
 ```bash
-<active-candidate-cli-path> service accept-candidate --json
+<startup-volume-candidate-cli-path> service accept-candidate --json
 ```
 
 `accept-candidate` is the durable linearization point. A crash before durable `accepted` restores the prior report-only generation; a crash after it finishes cleanup and must not reinterpret the candidate as rollback-eligible.
