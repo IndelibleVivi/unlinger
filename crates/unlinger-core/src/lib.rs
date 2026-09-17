@@ -33,6 +33,7 @@ pub use model::{
 };
 pub use state::{IncidentState, TransitionError};
 pub use storage_residue::{
+    StorageCleanupAttemptFacts, StorageCleanupDisposition, StorageCleanupResultFacts,
     StorageResidueKind, StorageResidueObservation, StorageResidueReferenceCheck,
     StorageResidueStatus,
 };

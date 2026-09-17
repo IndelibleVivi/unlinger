@@ -9,6 +9,7 @@ use unlinger_core::{
     CleanupActionJournal, CleanupReceipt, CleanupResources, CleanupSignal, CleanupStage,
     GateLedger, IncidentReport, IncidentState, ProcessIdentity, ProcessRole, ProcessRoleCount,
     ProcessTarget, ResourceSnapshot, RootSummary, RuntimeArtifactKind, SignalDisposition,
+    StorageCleanupAttemptFacts, StorageCleanupDisposition, StorageCleanupResultFacts,
     StorageResidueKind, StorageResidueObservation, StorageResidueReferenceCheck,
     StorageResidueStatus,
 };
@@ -390,6 +391,38 @@ fn downgrade_current_database_to_v5(path: &PathBuf) {
         .expect("build schema-v5 fixture");
 }
 
+fn downgrade_current_database_to_v10(path: &PathBuf) {
+    let connection = Connection::open(path).expect("open current database for v10 fixture");
+    connection
+        .execute_batch(
+            "DROP TABLE storage_cleanup_attempts;
+             PRAGMA user_version = 10;",
+        )
+        .expect("build schema-v10 fixture");
+}
+
+fn chrome_code_sign_clone_observation(
+    observed_at_unix_millis: u64,
+    candidate_count: usize,
+    logical_bytes: u64,
+) -> StorageResidueObservation {
+    StorageResidueObservation {
+        kind: StorageResidueKind::ChromeCodeSignClone,
+        status: if candidate_count == 0 {
+            StorageResidueStatus::Clear
+        } else {
+            StorageResidueStatus::Detected
+        },
+        observed_at_unix_millis,
+        candidate_count,
+        logical_bytes,
+        shape_complete: true,
+        reference_check: StorageResidueReferenceCheck::CompleteNoReferences,
+        automatic_cleanup_eligible: false,
+        reason_ids: vec!["storage_residue.code_sign_clone_detected".to_owned()],
+    }
+}
+
 #[test]
 fn records_redacted_observation_and_cleanup_timeline() {
     let database = TempDatabase::new();
@@ -649,6 +682,415 @@ fn storage_residue_observation_is_durable_redacted_and_preserves_current_eligibi
 }
 
 #[test]
+fn storage_cleanup_attempt_persists_prepared_then_terminal_result_with_the_observation() {
+    let database = TempDatabase::new();
+    let store = HistoryStore::open(&database.0).expect("open store");
+    let before = chrome_code_sign_clone_observation(4_200, 5, 67_000);
+    store
+        .record_storage_residue_observation(&before)
+        .expect("seed residue observation");
+
+    let facts = StorageCleanupAttemptFacts {
+        planned_candidate_count: 2,
+        before_candidate_count: 5,
+        before_logical_bytes: 67_000,
+    };
+    let prepared = store
+        .begin_storage_cleanup_attempt(4_300, &facts)
+        .expect("prepare cleanup attempt");
+    assert_eq!(prepared.attempt_token().len(), 32);
+
+    // The durable PREPARED row exists before any directory deletion and is
+    // readable as nonterminal.
+    let prepared_record = store
+        .latest_storage_cleanup_attempt()
+        .expect("read prepared attempt")
+        .expect("prepared row");
+    assert_eq!(prepared_record.disposition, None);
+    assert_eq!(prepared_record.completed_at_unix_millis, None);
+    assert_eq!(prepared_record.planned_candidate_count, 2);
+    assert_eq!(prepared_record.before_candidate_count, 5);
+    assert_eq!(prepared_record.before_logical_bytes, 67_000);
+
+    let after = chrome_code_sign_clone_observation(4_350, 3, 40_000);
+    store
+        .complete_storage_cleanup_attempt(
+            &prepared,
+            &StorageCleanupResultFacts {
+                disposition: StorageCleanupDisposition::Partial,
+                planned_candidate_count: 2,
+                before_candidate_count: 5,
+                before_logical_bytes: 67_000,
+                removed_candidate_count: Some(2),
+                after_candidate_count: Some(3),
+                after_logical_bytes: Some(40_000),
+                retained_not_planned_count: Some(3),
+            },
+            &after,
+        )
+        .expect("complete cleanup attempt");
+
+    let record = store
+        .latest_storage_cleanup_attempt()
+        .expect("read terminal attempt")
+        .expect("terminal row");
+    assert_eq!(record.attempt_token, prepared.attempt_token());
+    assert_eq!(record.disposition, Some(StorageCleanupDisposition::Partial));
+    assert_eq!(record.completed_at_unix_millis, Some(4_350));
+    assert_eq!(record.removed_candidate_count, Some(2));
+    assert_eq!(record.after_candidate_count, Some(3));
+    assert_eq!(record.after_logical_bytes, Some(40_000));
+    assert_eq!(record.retained_not_planned_count, Some(3));
+    // The terminal result and the real latest residue observation agree.
+    assert_eq!(
+        store
+            .latest_storage_residue_observation()
+            .expect("read residue observation"),
+        Some(after)
+    );
+}
+
+#[test]
+fn a_new_prepared_attempt_masks_the_previous_terminal_result_in_readback() {
+    let database = TempDatabase::new();
+    let store = HistoryStore::open(&database.0).expect("open store");
+    let first = store
+        .begin_storage_cleanup_attempt(
+            6_000,
+            &StorageCleanupAttemptFacts {
+                planned_candidate_count: 2,
+                before_candidate_count: 4,
+                before_logical_bytes: 8_000,
+            },
+        )
+        .expect("prepare first attempt");
+    store
+        .complete_storage_cleanup_attempt(
+            &first,
+            &StorageCleanupResultFacts {
+                disposition: StorageCleanupDisposition::Complete,
+                planned_candidate_count: 2,
+                before_candidate_count: 4,
+                before_logical_bytes: 8_000,
+                removed_candidate_count: Some(2),
+                after_candidate_count: Some(0),
+                after_logical_bytes: Some(0),
+                retained_not_planned_count: Some(0),
+            },
+            &chrome_code_sign_clone_observation(6_050, 0, 0),
+        )
+        .expect("complete first attempt");
+    assert_eq!(
+        store
+            .latest_storage_cleanup_attempt()
+            .expect("read terminal attempt")
+            .expect("terminal row")
+            .disposition,
+        Some(StorageCleanupDisposition::Complete)
+    );
+
+    let second = store
+        .begin_storage_cleanup_attempt(
+            6_100,
+            &StorageCleanupAttemptFacts {
+                planned_candidate_count: 1,
+                before_candidate_count: 3,
+                before_logical_bytes: 3_000,
+            },
+        )
+        .expect("prepare second attempt");
+    let latest = store
+        .latest_storage_cleanup_attempt()
+        .expect("read latest attempt")
+        .expect("latest row");
+    assert_eq!(latest.attempt_token, second.attempt_token());
+    assert_eq!(
+        latest.disposition, None,
+        "a newer PREPARED attempt must mask the older terminal result"
+    );
+    assert_eq!(latest.completed_at_unix_millis, None);
+}
+
+#[test]
+fn storage_cleanup_result_and_observation_commit_together_or_not_at_all() {
+    let first = TempDatabase::new();
+    let second = TempDatabase::new();
+    let store_a = HistoryStore::open(&first.0).expect("open first store");
+    let store_b = HistoryStore::open(&second.0).expect("open second store");
+    let existing = chrome_code_sign_clone_observation(1_000, 3, 3_000);
+    store_b
+        .record_storage_residue_observation(&existing)
+        .expect("seed second observation");
+    let prepared = store_a
+        .begin_storage_cleanup_attempt(
+            1_100,
+            &StorageCleanupAttemptFacts {
+                planned_candidate_count: 2,
+                before_candidate_count: 3,
+                before_logical_bytes: 3_000,
+            },
+        )
+        .expect("prepare on first store");
+
+    // The prepared handle belongs to another database, so the terminal
+    // transaction must fail and write neither half.
+    let error = store_b.complete_storage_cleanup_attempt(
+        &prepared,
+        &StorageCleanupResultFacts {
+            disposition: StorageCleanupDisposition::Complete,
+            planned_candidate_count: 2,
+            before_candidate_count: 3,
+            before_logical_bytes: 3_000,
+            removed_candidate_count: Some(2),
+            after_candidate_count: Some(1),
+            after_logical_bytes: Some(1_000),
+            retained_not_planned_count: Some(1),
+        },
+        &chrome_code_sign_clone_observation(1_200, 1, 1_000),
+    );
+    assert!(error.is_err());
+    assert_eq!(
+        store_b
+            .latest_storage_residue_observation()
+            .expect("read second observation"),
+        Some(existing)
+    );
+    assert!(
+        store_b
+            .latest_storage_cleanup_attempt()
+            .expect("read second attempts")
+            .is_none()
+    );
+}
+
+#[test]
+fn storage_cleanup_result_must_match_its_durable_prepared_facts() {
+    let database = TempDatabase::new();
+    let store = HistoryStore::open(&database.0).expect("open store");
+    let existing = chrome_code_sign_clone_observation(1_000, 3, 3_000);
+    store
+        .record_storage_residue_observation(&existing)
+        .expect("seed observation");
+    let prepared = store
+        .begin_storage_cleanup_attempt(
+            1_100,
+            &StorageCleanupAttemptFacts {
+                planned_candidate_count: 2,
+                before_candidate_count: 3,
+                before_logical_bytes: 3_000,
+            },
+        )
+        .expect("prepare cleanup attempt");
+
+    let error = store.complete_storage_cleanup_attempt(
+        &prepared,
+        &StorageCleanupResultFacts {
+            disposition: StorageCleanupDisposition::Complete,
+            planned_candidate_count: 1,
+            before_candidate_count: 1,
+            before_logical_bytes: 1_000,
+            removed_candidate_count: Some(1),
+            after_candidate_count: Some(0),
+            after_logical_bytes: Some(0),
+            retained_not_planned_count: Some(0),
+        },
+        &chrome_code_sign_clone_observation(1_200, 0, 0),
+    );
+    assert!(error.is_err());
+    assert_eq!(
+        store
+            .latest_storage_residue_observation()
+            .expect("read unchanged observation"),
+        Some(existing),
+        "a rejected terminal result must not replace the residue observation"
+    );
+    let latest = store
+        .latest_storage_cleanup_attempt()
+        .expect("read attempt")
+        .expect("prepared row");
+    assert_eq!(latest.disposition, None);
+    assert_eq!(latest.planned_candidate_count, 2);
+    assert_eq!(latest.before_candidate_count, 3);
+    assert_eq!(latest.before_logical_bytes, 3_000);
+}
+
+#[test]
+fn abandoned_prepared_attempt_recovers_as_delivery_unknown_and_is_never_claimed() {
+    let database = TempDatabase::new();
+    let store = HistoryStore::open(&database.0).expect("open store");
+    let before = chrome_code_sign_clone_observation(2_000, 4, 8_000);
+    store
+        .record_storage_residue_observation(&before)
+        .expect("seed observation");
+    store
+        .begin_storage_cleanup_attempt(
+            2_100,
+            &StorageCleanupAttemptFacts {
+                planned_candidate_count: 2,
+                before_candidate_count: 4,
+                before_logical_bytes: 8_000,
+            },
+        )
+        .expect("prepare abandoned attempt");
+    assert_eq!(
+        store
+            .latest_storage_cleanup_attempt()
+            .expect("read abandoned attempt")
+            .expect("abandoned row")
+            .disposition,
+        None
+    );
+
+    // A crash or restart finalizes the PREPARED attempt without inferring
+    // anything from directory counts.
+    assert_eq!(
+        store
+            .recover_storage_cleanup_attempts(9_000)
+            .expect("recover prepared attempt"),
+        1
+    );
+    let record = store
+        .latest_storage_cleanup_attempt()
+        .expect("read recovered attempt")
+        .expect("recovered row");
+    assert_eq!(
+        record.disposition,
+        Some(StorageCleanupDisposition::DeliveryUnknown)
+    );
+    assert_eq!(record.removed_candidate_count, None);
+    assert_eq!(record.after_candidate_count, None);
+    assert_eq!(record.after_logical_bytes, None);
+    assert_eq!(record.retained_not_planned_count, None);
+
+    // A later, lower directory count is reported separately and never rewrites
+    // the interrupted attempt into an Unlinger attribution claim.
+    let observed_later = chrome_code_sign_clone_observation(9_100, 1, 1_000);
+    store
+        .record_storage_residue_observation(&observed_later)
+        .expect("record later observation");
+    assert_eq!(
+        store
+            .latest_storage_cleanup_attempt()
+            .expect("read attempt after observation")
+            .expect("recovered row")
+            .disposition,
+        Some(StorageCleanupDisposition::DeliveryUnknown)
+    );
+    assert_eq!(
+        store
+            .latest_storage_residue_observation()
+            .expect("read latest observation"),
+        Some(observed_later)
+    );
+    // Recovery is idempotent once the attempt is terminal.
+    assert_eq!(
+        store
+            .recover_storage_cleanup_attempts(9_200)
+            .expect("repeat recovery"),
+        0
+    );
+}
+
+#[test]
+fn a_new_attempt_finalizes_an_unresolved_prior_attempt_as_delivery_unknown() {
+    let database = TempDatabase::new();
+    let store = HistoryStore::open(&database.0).expect("open store");
+    store
+        .begin_storage_cleanup_attempt(
+            3_000,
+            &StorageCleanupAttemptFacts {
+                planned_candidate_count: 1,
+                before_candidate_count: 2,
+                before_logical_bytes: 2_000,
+            },
+        )
+        .expect("prepare first attempt");
+    store
+        .begin_storage_cleanup_attempt(
+            3_100,
+            &StorageCleanupAttemptFacts {
+                planned_candidate_count: 1,
+                before_candidate_count: 1,
+                before_logical_bytes: 1_000,
+            },
+        )
+        .expect("prepare second attempt");
+    drop(store);
+
+    let connection = Connection::open(&database.0).expect("inspect attempts");
+    let rows = connection
+        .prepare("SELECT disposition FROM storage_cleanup_attempts ORDER BY id")
+        .expect("prepare attempt query")
+        .query_map([], |row| row.get::<_, Option<String>>(0))
+        .expect("query attempts")
+        .collect::<Result<Vec<_>, _>>()
+        .expect("collect attempts");
+    assert_eq!(
+        rows,
+        vec![Some("delivery_unknown".to_owned()), None],
+        "an unresolved prior attempt must be terminated as delivery_unknown"
+    );
+}
+
+#[test]
+fn v10_to_v11_migration_preserves_residue_and_session_owner_authority() {
+    let database = TempDatabase::new();
+    let store = HistoryStore::open(&database.0).expect("open store");
+    let observation = chrome_code_sign_clone_observation(5_000, 4, 12_000);
+    store
+        .record_storage_residue_observation(&observation)
+        .expect("record residue observation");
+    drop(store);
+
+    let connection = Connection::open(&database.0).expect("open v10 fixture");
+    connection
+        .execute_batch(
+            "INSERT INTO session_owner_leases (
+                 lease_id, capability, selector_fingerprint, session_name,
+                 controller_version, generation, registrar_json, owner_json,
+                 created_at_ms, activated_at_us, released_at_us, release_reason
+             ) VALUES (
+                 '0123456789abcdef0123456789abcdef',
+                 'fedcba9876543210fedcba9876543210',
+                 '0123456789abcdef', 'session-v10', '1.62.1', 1,
+                 '{}', NULL, 10, NULL, NULL, NULL
+             );",
+        )
+        .expect("seed v10 session owner lease");
+    drop(connection);
+    downgrade_current_database_to_v10(&database.0);
+
+    let migrated = HistoryStore::open(&database.0).expect("migrate v10 to v11");
+    assert_eq!(HistoryStore::schema_version(), 11);
+    assert_eq!(
+        migrated
+            .latest_storage_residue_observation()
+            .expect("read migrated residue"),
+        Some(observation)
+    );
+    let lease = migrated
+        .session_owner_status("0123456789abcdef0123456789abcdef")
+        .expect("read migrated session owner")
+        .expect("preserved session owner lease");
+    assert_eq!(lease.session_name, "session-v10");
+    assert_eq!(lease.generation, 1);
+    // The storage cleanup authority starts empty on a migrated v10 database.
+    assert!(
+        migrated
+            .latest_storage_cleanup_attempt()
+            .expect("read migrated attempts")
+            .is_none()
+    );
+    drop(migrated);
+
+    let connection = Connection::open(&database.0).expect("inspect migrated schema");
+    let version: i64 = connection
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .expect("read migrated version");
+    assert_eq!(version, 11);
+}
+
+#[test]
 fn cooling_grace_is_durable_and_resets_on_identity_or_observation_gap() {
     let database = TempDatabase::new();
     let store = HistoryStore::open(&database.0).expect("open store");
@@ -720,7 +1162,7 @@ fn migrates_v2_history_and_pause_but_resets_legacy_wall_clock_cooling() {
     let synchronous: i64 = connection
         .pragma_query_value(None, "synchronous", |row| row.get(0))
         .expect("read synchronous mode");
-    assert_eq!(version, 10);
+    assert_eq!(version, i64::from(HistoryStore::schema_version()));
     assert_eq!(journal_mode, "wal");
     assert_eq!(synchronous, 2);
     drop(connection);
@@ -819,7 +1261,7 @@ fn v4_to_current_preserves_history_and_retry_block_but_resets_incompatible_cooli
     downgrade_current_database_to_v4(&database.0);
 
     let migrated = HistoryStore::open(&database.0).expect("migrate v4 to current");
-    assert_eq!(HistoryStore::schema_version(), 10);
+    assert_eq!(HistoryStore::schema_version(), 11);
     let connection = Connection::open(&database.0).expect("inspect migrated artifact journal");
     let artifact_columns = connection
         .prepare("PRAGMA table_info(cleanup_artifact_actions)")
@@ -905,7 +1347,7 @@ fn v5_to_current_backfills_event_tokens_and_impact_authority() {
     let version: i64 = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .expect("read migrated version");
-    assert_eq!(version, 10);
+    assert_eq!(version, i64::from(HistoryStore::schema_version()));
     let archived_attribution_rows: i64 = connection
         .query_row(
             "SELECT count(*) FROM impact_attribution_legacy",

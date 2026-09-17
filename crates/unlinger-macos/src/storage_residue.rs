@@ -5,7 +5,8 @@ use std::os::fd::{AsRawFd, FromRawFd, IntoRawFd};
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 use std::path::Path;
 use unlinger_core::{
-    ProcessRecord, Snapshot, StorageResidueKind, StorageResidueObservation,
+    ProcessRecord, Snapshot, StorageCleanupAttemptFacts, StorageCleanupDisposition,
+    StorageCleanupResultFacts, StorageResidueKind, StorageResidueObservation,
     StorageResidueReferenceCheck, StorageResidueStatus,
 };
 
@@ -21,6 +22,26 @@ pub enum ChromeCloneCleanupMode {
     ReportOnly,
     Enforce,
     LifecycleBlocked,
+}
+
+/// One reconciliation result. `cleanup` is present only when the
+/// descriptor-relative deletion path actually ran this cycle, and it carries
+/// only public-safe attempt/result facts. Candidate names, absolute paths and
+/// raw identities never leave the scanner's transient memory.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ChromeCloneReconciliation {
+    pub observation: StorageResidueObservation,
+    pub cleanup: Option<StorageCleanupResultFacts>,
+}
+
+impl ChromeCloneReconciliation {
+    #[must_use]
+    fn observation_only(observation: StorageResidueObservation) -> Self {
+        Self {
+            observation,
+            cleanup: None,
+        }
+    }
 }
 
 /// Keeps only the previous private candidate identities in memory. Candidate
@@ -42,18 +63,21 @@ impl ChromeCloneCleanup {
         observed_at_unix_millis: u64,
         snapshot: Option<&Snapshot>,
         mode: ChromeCloneCleanupMode,
-        mut run_mutation: F,
-    ) -> StorageResidueObservation
+        mut run_cleanup: F,
+    ) -> ChromeCloneReconciliation
     where
-        F: FnMut(&mut dyn FnMut() -> io::Result<()>) -> Option<io::Result<()>>,
+        F: FnMut(
+            &StorageCleanupAttemptFacts,
+            &mut dyn FnMut() -> io::Result<()>,
+        ) -> Option<io::Result<()>>,
     {
         let temporary = std::env::temp_dir();
         let Some(parent) = temporary.parent() else {
             self.previous_candidates = None;
-            return unavailable(
+            return ChromeCloneReconciliation::observation_only(unavailable(
                 observed_at_unix_millis,
                 "storage_residue.temp_root_unavailable",
-            );
+            ));
         };
         self.reconcile_root_guarded(
             &parent.join("X").join(CLONE_ROOT_NAME),
@@ -61,7 +85,7 @@ impl ChromeCloneCleanup {
             snapshot,
             mode,
             &DescriptorRelativeRemover,
-            &mut run_mutation,
+            &mut run_cleanup,
         )
     }
 
@@ -82,8 +106,9 @@ impl ChromeCloneCleanup {
             snapshot,
             mode,
             &DescriptorRelativeRemover,
-            &mut |action| Some(action()),
+            &mut |_facts, action| Some(action()),
         )
+        .observation
     }
 
     #[cfg(test)]
@@ -101,13 +126,17 @@ impl ChromeCloneCleanup {
             snapshot,
             mode,
             remover,
-            &mut |action| Some(action()),
+            &mut |_facts, action| Some(action()),
         )
+        .observation
     }
 
     fn reconcile_root_guarded<
         R: CandidateRemover,
-        F: FnMut(&mut dyn FnMut() -> io::Result<()>) -> Option<io::Result<()>>,
+        F: FnMut(
+            &StorageCleanupAttemptFacts,
+            &mut dyn FnMut() -> io::Result<()>,
+        ) -> Option<io::Result<()>>,
     >(
         &mut self,
         root: &Path,
@@ -115,12 +144,12 @@ impl ChromeCloneCleanup {
         snapshot: Option<&Snapshot>,
         mode: ChromeCloneCleanupMode,
         remover: &R,
-        run_mutation: &mut F,
-    ) -> StorageResidueObservation {
+        run_cleanup: &mut F,
+    ) -> ChromeCloneReconciliation {
         let scan = scan_code_sign_clone_root(root, observed_at_unix_millis);
         if scan.observation.status != StorageResidueStatus::Detected {
             self.previous_candidates = None;
-            return scan.observation;
+            return ChromeCloneReconciliation::observation_only(scan.observation);
         }
 
         let identities = scan.identities();
@@ -152,14 +181,14 @@ impl ChromeCloneCleanup {
             .map(|(candidate, _)| candidate.clone())
             .collect::<Vec<_>>();
         if removable_candidates.is_empty() {
-            return observation;
+            return ChromeCloneReconciliation::observation_only(observation);
         }
 
         if mode == ChromeCloneCleanupMode::LifecycleBlocked {
             observation
                 .reason_ids
                 .push("storage_residue.cleanup_lifecycle_blocked".to_owned());
-            return observation;
+            return ChromeCloneReconciliation::observation_only(observation);
         }
 
         observation.automatic_cleanup_eligible = true;
@@ -167,15 +196,20 @@ impl ChromeCloneCleanup {
             observation
                 .reason_ids
                 .push("storage_residue.cleanup_report_only".to_owned());
-            return observation;
+            return ChromeCloneReconciliation::observation_only(observation);
         }
+        let attempt = StorageCleanupAttemptFacts {
+            planned_candidate_count: removable_candidates.len(),
+            before_candidate_count: observation.candidate_count,
+            before_logical_bytes: observation.logical_bytes,
+        };
         let mut mutation = || remover.remove(&scan, &removable_candidates);
-        let Some(removal_result) = run_mutation(&mut mutation) else {
+        let Some(removal_result) = run_cleanup(&attempt, &mut mutation) else {
             observation.automatic_cleanup_eligible = false;
             observation
                 .reason_ids
                 .push("storage_residue.cleanup_lifecycle_blocked".to_owned());
-            return observation;
+            return ChromeCloneReconciliation::observation_only(observation);
         };
 
         let result_scan = scan_code_sign_clone_root(root, observed_at_unix_millis);
@@ -183,9 +217,10 @@ impl ChromeCloneCleanup {
         let planned_candidates_absent = removable_candidates
             .iter()
             .all(|candidate| !result_identities.contains(candidate));
-        let removed_any = removable_candidates
+        let removed_planned = removable_candidates
             .iter()
-            .any(|candidate| !result_identities.contains(candidate));
+            .filter(|candidate| !result_identities.contains(candidate))
+            .count();
         let rescan_proves_shape = result_scan.observation.shape_complete
             && result_scan.observation.status != StorageResidueStatus::Unavailable;
         let mut result = result_scan.observation;
@@ -210,22 +245,58 @@ impl ChromeCloneCleanup {
         } else {
             self.previous_candidates = None;
         }
-        if removal_result.is_ok() && rescan_proves_shape && planned_candidates_absent && removed_any
-        {
-            result.reason_ids.push(
+        let disposition =
+            if removal_result.is_ok() && rescan_proves_shape && planned_candidates_absent {
+                result.reason_ids.push(
+                    if result.status == StorageResidueStatus::Clear {
+                        "storage_residue.automatic_cleanup_completed"
+                    } else {
+                        "storage_residue.automatic_cleanup_partial"
+                    }
+                    .to_owned(),
+                );
                 if result.status == StorageResidueStatus::Clear {
-                    "storage_residue.automatic_cleanup_completed"
+                    StorageCleanupDisposition::Complete
                 } else {
-                    "storage_residue.automatic_cleanup_partial"
+                    StorageCleanupDisposition::Partial
                 }
-                .to_owned(),
-            );
+            } else {
+                result
+                    .reason_ids
+                    .push("storage_residue.automatic_cleanup_failed".to_owned());
+                StorageCleanupDisposition::Failed
+            };
+        // A partial removal that left a planned candidate behind keeps the
+        // existing "failed" classification; the counts below stay honest.
+        let (removed_candidate_count, after_candidate_count, after_logical_bytes) =
+            if rescan_proves_shape {
+                (
+                    Some(removed_planned),
+                    Some(result.candidate_count),
+                    Some(result.logical_bytes),
+                )
+            } else {
+                (None, None, None)
+            };
+        let retained_not_planned_count = if rescan_proves_shape {
+            let retained_planned = removable_candidates.len().saturating_sub(removed_planned);
+            Some(result.candidate_count.saturating_sub(retained_planned))
         } else {
-            result
-                .reason_ids
-                .push("storage_residue.automatic_cleanup_failed".to_owned());
+            None
+        };
+        ChromeCloneReconciliation {
+            observation: result,
+            cleanup: Some(StorageCleanupResultFacts {
+                disposition,
+                planned_candidate_count: attempt.planned_candidate_count,
+                before_candidate_count: attempt.before_candidate_count,
+                before_logical_bytes: attempt.before_logical_bytes,
+                removed_candidate_count,
+                after_candidate_count,
+                after_logical_bytes,
+                retained_not_planned_count,
+            }),
         }
-        result
     }
 }
 
@@ -1248,17 +1319,19 @@ mod tests {
         let mut cleanup = ChromeCloneCleanup::new();
         let _ = cleanup.reconcile_root(&root, 1, Some(&snapshot), ChromeCloneCleanupMode::Enforce);
 
-        let observation = cleanup.reconcile_root_guarded(
+        let reconciliation = cleanup.reconcile_root_guarded(
             &root,
             2,
             Some(&snapshot),
             ChromeCloneCleanupMode::Enforce,
             &DescriptorRelativeRemover,
-            &mut |_action| None,
+            &mut |_facts, _action| None,
         );
 
         assert!(live_candidate.exists());
         assert!(stale_candidate.exists());
+        assert!(reconciliation.cleanup.is_none());
+        let observation = reconciliation.observation;
         assert!(!observation.automatic_cleanup_eligible);
         assert!(
             observation
@@ -1777,5 +1850,154 @@ mod tests {
                 .reason_ids
                 .contains(&"storage_residue.automatic_cleanup_partial".to_owned())
         );
+    }
+
+    #[test]
+    fn refused_preparation_never_runs_the_deletion() {
+        let temp = TempDirectory::new();
+        let root = clone_root(&temp);
+        let candidate = add_clone(&root, "A1b2C3");
+        let snapshot = complete_snapshot(Vec::new());
+        let mut cleanup = ChromeCloneCleanup::new();
+        let _ = cleanup.reconcile_root(&root, 1, Some(&snapshot), ChromeCloneCleanupMode::Enforce);
+
+        // A durable PREPARED write that fails must refuse the deletion: the
+        // authority returns `None` without ever invoking the mutation.
+        let mut offered = None;
+        let reconciliation = cleanup.reconcile_root_guarded(
+            &root,
+            2,
+            Some(&snapshot),
+            ChromeCloneCleanupMode::Enforce,
+            &DescriptorRelativeRemover,
+            &mut |facts: &StorageCleanupAttemptFacts,
+                  _action: &mut dyn FnMut() -> io::Result<()>| {
+                offered = Some(*facts);
+                None
+            },
+        );
+
+        assert!(candidate.exists());
+        assert!(reconciliation.cleanup.is_none());
+        assert!(!reconciliation.observation.automatic_cleanup_eligible);
+        assert!(
+            reconciliation
+                .observation
+                .reason_ids
+                .contains(&"storage_residue.cleanup_lifecycle_blocked".to_owned())
+        );
+        // The refused attempt still reports the public-safe plan it was denied.
+        let offered = offered.expect("attempt facts offered to the authority");
+        assert_eq!(offered.planned_candidate_count, 1);
+        assert_eq!(offered.before_candidate_count, 1);
+    }
+
+    #[test]
+    fn authorized_cleanup_reports_complete_public_safe_result_facts() {
+        let temp = TempDirectory::new();
+        let root = clone_root(&temp);
+        add_clone(&root, "A1b2C3");
+        add_clone(&root, "D4e5F6");
+        let snapshot = complete_snapshot(Vec::new());
+        let mut cleanup = ChromeCloneCleanup::new();
+        let _ = cleanup.reconcile_root(&root, 1, Some(&snapshot), ChromeCloneCleanupMode::Enforce);
+
+        let mut offered = None;
+        let reconciliation = cleanup.reconcile_root_guarded(
+            &root,
+            2,
+            Some(&snapshot),
+            ChromeCloneCleanupMode::Enforce,
+            &DescriptorRelativeRemover,
+            &mut |facts: &StorageCleanupAttemptFacts,
+                  action: &mut dyn FnMut() -> io::Result<()>| {
+                offered = Some(*facts);
+                Some(action())
+            },
+        );
+
+        let facts = offered.expect("attempt facts offered to the authority");
+        assert_eq!(facts.planned_candidate_count, 2);
+        assert_eq!(facts.before_candidate_count, 2);
+        let cleanup = reconciliation.cleanup.expect("cleanup result");
+        assert_eq!(cleanup.disposition, StorageCleanupDisposition::Complete);
+        assert_eq!(cleanup.planned_candidate_count, 2);
+        assert_eq!(cleanup.before_candidate_count, 2);
+        assert_eq!(cleanup.removed_candidate_count, Some(2));
+        assert_eq!(cleanup.after_candidate_count, Some(0));
+        assert_eq!(cleanup.after_logical_bytes, Some(0));
+        assert_eq!(cleanup.retained_not_planned_count, Some(0));
+    }
+
+    #[test]
+    fn cleanup_result_reports_partial_and_unprovable_dispositions() {
+        let temp = TempDirectory::new();
+        let root = clone_root(&temp);
+        let referenced = add_clone(&root, "A1b2C3");
+        add_clone(&root, "D4e5F6");
+        let mut worker = chrome_process(
+            vec!["fixture-worker"],
+            CHROME_HELPER_BUNDLE_ID_PREFIX,
+            "fixture-worker",
+        );
+        worker.executable_path = Some("/usr/bin/fixture-worker".to_owned());
+        worker.runtime.app_bundle = None;
+        worker.arguments = Some(vec![
+            "fixture-worker".to_owned(),
+            referenced.join("payload").to_string_lossy().into_owned(),
+        ]);
+        let snapshot = complete_snapshot(vec![worker]);
+        let mut cleanup = ChromeCloneCleanup::new();
+        let _ = cleanup.reconcile_root(&root, 1, Some(&snapshot), ChromeCloneCleanupMode::Enforce);
+
+        let partial = cleanup.reconcile_root_guarded(
+            &root,
+            2,
+            Some(&snapshot),
+            ChromeCloneCleanupMode::Enforce,
+            &DescriptorRelativeRemover,
+            &mut |_facts: &StorageCleanupAttemptFacts,
+                  action: &mut dyn FnMut() -> io::Result<()>| { Some(action()) },
+        );
+        let cleanup_result = partial.cleanup.expect("partial cleanup result");
+        assert_eq!(
+            cleanup_result.disposition,
+            StorageCleanupDisposition::Partial
+        );
+        assert_eq!(cleanup_result.removed_candidate_count, Some(1));
+        assert_eq!(cleanup_result.after_candidate_count, Some(1));
+        assert_eq!(cleanup_result.retained_not_planned_count, Some(1));
+
+        // An unprovable rescan never reports after-counts.
+        let temp = TempDirectory::new();
+        let root = clone_root(&temp);
+        add_clone(&root, "A1b2C3");
+        let snapshot = complete_snapshot(Vec::new());
+        let mut cleanup = ChromeCloneCleanup::new();
+        cleanup.reconcile_root_with_remover(
+            &root,
+            1,
+            Some(&snapshot),
+            ChromeCloneCleanupMode::Enforce,
+            &RemoveThenPoisonRoot,
+        );
+        let poisoned = cleanup.reconcile_root_guarded(
+            &root,
+            2,
+            Some(&snapshot),
+            ChromeCloneCleanupMode::Enforce,
+            &RemoveThenPoisonRoot,
+            &mut |_facts: &StorageCleanupAttemptFacts,
+                  action: &mut dyn FnMut() -> io::Result<()>| { Some(action()) },
+        );
+        let cleanup_result = poisoned.cleanup.expect("failed cleanup result");
+        assert_eq!(
+            cleanup_result.disposition,
+            StorageCleanupDisposition::Failed
+        );
+        assert_eq!(cleanup_result.removed_candidate_count, None);
+        assert_eq!(cleanup_result.after_candidate_count, None);
+        assert_eq!(cleanup_result.after_logical_bytes, None);
+        assert_eq!(cleanup_result.retained_not_planned_count, None);
     }
 }

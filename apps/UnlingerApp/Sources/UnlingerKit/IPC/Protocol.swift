@@ -904,6 +904,7 @@ public struct BrowserOverviewSnapshot: Codable, Equatable, Sendable {
     public var recentSettlement: BrowserSettlementSummary?
     public var impact: BrowserImpactSummary? = nil
     public var storageResidue: StorageResidueSummary? = nil
+    public var storageCleanupResult: StorageCleanupResultSummary? = nil
     public var attention: AttentionProjection
     public var protection: ProtectionProjection
     public var supportCatalog: BrowserSupportCatalog
@@ -920,6 +921,7 @@ public struct BrowserOverviewSnapshot: Codable, Equatable, Sendable {
         case recentSettlement = "recent_settlement"
         case impact
         case storageResidue = "storage_residue"
+        case storageCleanupResult = "storage_cleanup_result"
         case attention, protection
         case supportCatalog = "support_catalog"
     }
@@ -984,6 +986,41 @@ public struct StorageResidueSummary: Codable, Equatable, Sendable {
         case referenceCheck = "reference_check"
         case automaticCleanupEligible = "automatic_cleanup_eligible"
         case reasonIds = "reason_ids"
+    }
+}
+
+public enum StorageCleanupDisposition: String, Codable, Equatable, Sendable {
+    case complete
+    case partial
+    case failed
+    case deliveryUnknown = "delivery_unknown"
+}
+
+/// Path-free aggregate result owned by the daemon's schema-v5 projection.
+/// Logical byte values are observations, never physical APFS reclaim claims.
+public struct StorageCleanupResultSummary: Codable, Equatable, Sendable {
+    public var disposition: StorageCleanupDisposition
+    public var preparedAtUnixMillis: UInt64
+    public var completedAtUnixMillis: UInt64?
+    public var plannedCandidateCount: Int
+    public var beforeCandidateCount: Int
+    public var beforeLogicalBytes: UInt64
+    public var removedCandidateCount: Int?
+    public var afterCandidateCount: Int?
+    public var afterLogicalBytes: UInt64?
+    public var retainedNotPlannedCount: Int?
+
+    private enum CodingKeys: String, CodingKey {
+        case disposition
+        case preparedAtUnixMillis = "prepared_at_unix_millis"
+        case completedAtUnixMillis = "completed_at_unix_millis"
+        case plannedCandidateCount = "planned_candidate_count"
+        case beforeCandidateCount = "before_candidate_count"
+        case beforeLogicalBytes = "before_logical_bytes"
+        case removedCandidateCount = "removed_candidate_count"
+        case afterCandidateCount = "after_candidate_count"
+        case afterLogicalBytes = "after_logical_bytes"
+        case retainedNotPlannedCount = "retained_not_planned_count"
     }
 }
 

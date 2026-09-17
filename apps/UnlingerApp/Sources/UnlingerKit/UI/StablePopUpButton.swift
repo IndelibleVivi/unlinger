@@ -67,6 +67,7 @@ struct StablePopUpButton: NSViewRepresentable {
             guard configuration != next else { return }
             configuration = next
 
+            button.pullsDown = next.style == .action
             button.removeAllItems()
             button.isEnabled = next.isEnabled
             button.toolTip = next.toolTip

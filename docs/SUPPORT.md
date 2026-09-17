@@ -40,13 +40,13 @@ The controlled DAP results repeat one historical exact admitted point across two
 | Layer | Current truth |
 | --- | --- |
 | Rust CLI/service operator protocol | schema v1; lifecycle authority remains here |
-| Native App source protocol | schema v5 only; requires daemon-owned atomic `browser_overview` with impact/residue and consumes server-owned observation spans |
+| Native App source protocol | schema v5 only; requires daemon-owned atomic `browser_overview` with impact/residue/latest optional storage-cleanup result and consumes server-owned observation spans |
 | Transitional frontend endpoint | schema v4 prior overview/response shapes retained without v5-only fields |
 | Legacy-compatible frontend endpoint | schema v3 existing commands/response meaning retained; overview rejected without downgrade |
 | Schema v2 | historical fixtures retained; superseded before installation; current server returns typed `unsupported_schema` |
 | Installed generation | see [current-state](current-state.md) for exact generation, activation and rollback lease; current compatible runtime uses operator v1, frontend v5/v4/v3 and SQLite v10 |
 | Installed App/v5 integration | matching schema-v5 ad-hoc-signed private App `c17e60f` installed and running; bundle identity/signature/plist and exact launch verified; its exact process passed a 2,400-second RSS guard with a 22,192 KiB maximum; fresh visual UI and packaged-notification observation remain unverified |
-| Current source/installed implementation | both retain schema v5/v4/v3 plus operator v1, SQLite v10, Playwright `0.6.0`, other packs `0.4.0`, exact CfT 151/152 process allowlist and disabled runtime-artifact flags; installed generation 34 contains mapped-vnode snapshot, transaction recovery and the exact `.app.bundle`-aware per-candidate clone gate from `a8aed45` and is `ReadyEnforce` |
+| Current source/installed implementation | both retain schema v5/v4/v3 plus operator v1, Playwright `0.6.0`, other packs `0.4.0`, exact CfT 151/152 process allowlist and disabled runtime-artifact flags; source uses SQLite v11 with durable path-free Chrome clone attempt/result authority, an additive optional v5 result summary and App presentation of that result, while installed generation 34/App `c17e60f` remain SQLite v10-era artifacts without the result authority/presentation; generation 34 contains mapped-vnode snapshot, transaction recovery and the exact `.app.bundle`-aware per-candidate clone gate from `a8aed45`, and is `ReadyEnforce` |
 
 SQLite v10 has a candidate-specific v8 backup/rollback/open proof: generation 24 really rolled back to healthy, unarmed generation 23 with the old CLI/daemon reopening v8; the exact candidate freshly reinstalled as generation 25, repeated matching-App/socket checks before and after restart, and was accepted before arming. Earlier schema migrations remain historical evidence.
 

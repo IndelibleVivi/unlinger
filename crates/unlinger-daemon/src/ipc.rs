@@ -1,8 +1,8 @@
 use crate::{
     CleanupAttemptHandle, HistoryEvent, HistoryStore, IncidentDetail, ManagedLifecycle,
     ManagedStartupPhase, MostRecentReclaim, MutationCommit, MutationLookup, OrdinaryMutation,
-    ProtectedIncidentSummary, ProtectionProjection, StorageRecoveryOccurrence,
-    StorageRecoveryReason, StoreAttentionProjection, StoreError,
+    PreparedStorageCleanupAttempt, ProtectedIncidentSummary, ProtectionProjection,
+    StorageRecoveryOccurrence, StorageRecoveryReason, StoreAttentionProjection, StoreError,
 };
 use serde::{Deserialize, Serialize};
 use std::error::Error;
@@ -14,7 +14,9 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use unlinger_core::{CleanupOutcome, IncidentReport, SignalDisposition};
+use unlinger_core::{
+    CleanupOutcome, IncidentReport, SignalDisposition, StorageCleanupAttemptFacts,
+};
 use unlinger_protocol::{MutationContext, MutationOutcome};
 
 use crate::public_action_policy::{RuntimePolicyFacts, evaluate_action};
@@ -982,22 +984,30 @@ impl ControlPlane {
         self.status.lock().map_or(true, |status| status.draining)
     }
 
-    /// Runs one bounded storage mutation while the lifecycle/status gate is
-    /// held. This prevents pause, drain, failure, or mode transitions from
-    /// racing between final authorization and descriptor-relative deletion.
+    /// Durably PREPARES one bounded storage cleanup and then runs its deletion
+    /// while the lifecycle/status gate is held. This prevents pause, drain,
+    /// failure, or mode transitions from racing between final authorization and
+    /// descriptor-relative deletion, and it guarantees no directory deletion
+    /// can run without a durable PREPARED record: a failed authoritative write
+    /// returns `None` without invoking `action`.
     pub fn run_storage_cleanup_if_ready_enforce<T>(
         &self,
         now_unix_millis: u64,
+        facts: &StorageCleanupAttemptFacts,
         action: impl FnOnce() -> T,
-    ) -> Result<Option<T>, ControlError> {
+    ) -> Result<Option<(PreparedStorageCleanupAttempt, T)>, ControlError> {
         self.expire_pause(now_unix_millis)?;
         let status = self.lock_status()?;
         if !storage_cleanup_gate_open(&status) {
             return Ok(None);
         }
+        let prepared = self
+            .store
+            .begin_storage_cleanup_attempt(now_unix_millis, facts)
+            .map_err(map_store_error)?;
         let result = action();
         drop(status);
-        Ok(Some(result))
+        Ok(Some((prepared, result)))
     }
 
     pub fn storage_cleanup_state_at(
@@ -1690,11 +1700,19 @@ mod control_plane_tests {
         let action_entered_worker = Arc::clone(&action_entered);
         let allow_action_worker = Arc::clone(&allow_action);
         let cleanup = thread::spawn(move || {
-            cleanup_control.run_storage_cleanup_if_ready_enforce(10, || {
-                action_entered_worker.wait();
-                allow_action_worker.wait();
-                42
-            })
+            cleanup_control.run_storage_cleanup_if_ready_enforce(
+                10,
+                &StorageCleanupAttemptFacts {
+                    planned_candidate_count: 2,
+                    before_candidate_count: 5,
+                    before_logical_bytes: 4_096,
+                },
+                || {
+                    action_entered_worker.wait();
+                    allow_action_worker.wait();
+                    42
+                },
+            )
         });
         action_entered.wait();
 
@@ -1717,10 +1735,13 @@ mod control_plane_tests {
         );
 
         allow_action.wait();
-        assert_eq!(
-            cleanup.join().expect("join cleanup").expect("cleanup gate"),
-            Some(42)
-        );
+        let completed = cleanup
+            .join()
+            .expect("join cleanup")
+            .expect("cleanup gate")
+            .expect("prepared storage cleanup");
+        assert_eq!(completed.1, 42);
+        assert_eq!(completed.0.attempt_token().len(), 32);
         pause_received
             .recv_timeout(Duration::from_secs(1))
             .expect("pause completes after cleanup")
@@ -1729,7 +1750,15 @@ mod control_plane_tests {
 
         assert_eq!(
             control
-                .run_storage_cleanup_if_ready_enforce(11, || 7)
+                .run_storage_cleanup_if_ready_enforce(
+                    11,
+                    &StorageCleanupAttemptFacts {
+                        planned_candidate_count: 2,
+                        before_candidate_count: 5,
+                        before_logical_bytes: 4_096,
+                    },
+                    || 7,
+                )
                 .expect("paused gate"),
             None
         );

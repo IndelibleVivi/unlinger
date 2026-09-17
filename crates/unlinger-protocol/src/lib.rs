@@ -626,6 +626,42 @@ pub struct StorageResidueSummary {
     pub reason_ids: Vec<String>,
 }
 
+/// Terminal disposition of the latest bounded automatic storage cleanup.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StorageCleanupDisposition {
+    Complete,
+    Partial,
+    Failed,
+    DeliveryUnknown,
+}
+
+/// Latest cleanup-result summary for the chrome code-sign-clone family.
+///
+/// It is public-safe by construction: the summary carries only a typed
+/// outcome, timestamps and aggregate counts/bytes. No path, candidate name,
+/// candidate identity or attempt identity is ever present. `logical_bytes`
+/// values are sums of logical file sizes and are never presented as physical
+/// APFS reclaim.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct StorageCleanupResultSummary {
+    pub disposition: StorageCleanupDisposition,
+    pub prepared_at_unix_millis: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub completed_at_unix_millis: Option<u64>,
+    pub planned_candidate_count: usize,
+    pub before_candidate_count: usize,
+    pub before_logical_bytes: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub removed_candidate_count: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub after_candidate_count: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub after_logical_bytes: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retained_not_planned_count: Option<usize>,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct BrowserOverviewSnapshot {
     pub generated_at_unix_millis: u64,
@@ -647,6 +683,8 @@ pub struct BrowserOverviewSnapshot {
     pub impact: Option<BrowserImpactSummary>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub storage_residue: Option<StorageResidueSummary>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub storage_cleanup_result: Option<StorageCleanupResultSummary>,
     pub attention: AttentionProjection,
     pub protection: ProtectionProjection,
     pub support_catalog: BrowserSupportCatalog,
@@ -959,6 +997,7 @@ mod tests {
                 automatic_cleanup_eligible: false,
                 reason_ids: vec!["storage_residue.code_sign_clone_absent".to_owned()],
             }),
+            storage_cleanup_result: None,
             attention: AttentionProjection::default(),
             protection: ProtectionProjection::default(),
             support_catalog: BrowserSupportCatalog {
@@ -977,6 +1016,87 @@ mod tests {
         assert!(!encoded.contains("pid"));
         assert!(!encoded.contains("user_data_dir"));
         assert!(!encoded.contains("command_line"));
+    }
+
+    fn minimal_overview_encoding() -> serde_json::Value {
+        serde_json::json!({
+            "type": "browser_overview",
+            "data": {
+                "generated_at_unix_millis": 123,
+                "freshness": "current",
+                "healthy": true,
+                "effective_mode": "report_only",
+                "phase": "protected",
+                "sessions": [],
+                "coverage_notices": [],
+                "attention": {"total_count": 0, "items": []},
+                "protection": {"total_count": 0, "items": []},
+                "support_catalog": {"support_revision": "support-v1", "families": []}
+            }
+        })
+    }
+
+    #[test]
+    fn v5_storage_cleanup_result_is_optional_additive_and_roundtrips() {
+        // An older v5 payload that never carried the field must still decode.
+        let legacy: ResponseEnvelope = serde_json::from_value(serde_json::json!({
+            "schema_version": 5,
+            "request_id": 51,
+            "ok": true,
+            "payload": minimal_overview_encoding(),
+        }))
+        .expect("decode legacy v5 payload without the cleanup-result field");
+        let Payload::BrowserOverview(overview) = legacy.payload.as_ref().expect("legacy payload")
+        else {
+            panic!("legacy v5 payload is not a browser overview");
+        };
+        assert!(overview.storage_cleanup_result.is_none());
+
+        // Encoding that same state omits the field entirely, so clients that
+        // predate it observe no change.
+        let encoded = serde_json::to_string(&legacy).expect("encode without cleanup result");
+        assert!(!encoded.contains("storage_cleanup_result"));
+        let reparsed: ResponseEnvelope =
+            serde_json::from_str(&encoded).expect("reparse without cleanup result");
+        assert_eq!(reparsed, legacy);
+
+        // A new payload carrying the summary round-trips with exact typing.
+        let mut with_result = legacy.clone();
+        let Payload::BrowserOverview(overview) =
+            with_result.payload.as_mut().expect("overview payload")
+        else {
+            panic!("expected a browser overview");
+        };
+        overview.storage_cleanup_result = Some(StorageCleanupResultSummary {
+            disposition: StorageCleanupDisposition::Partial,
+            prepared_at_unix_millis: 1_000,
+            completed_at_unix_millis: Some(1_050),
+            planned_candidate_count: 2,
+            before_candidate_count: 5,
+            before_logical_bytes: 4096,
+            removed_candidate_count: Some(2),
+            after_candidate_count: Some(3),
+            after_logical_bytes: Some(2048),
+            retained_not_planned_count: Some(3),
+        });
+        let encoded = serde_json::to_string(&with_result).expect("encode with cleanup result");
+        assert!(encoded.contains(r#""storage_cleanup_result""#));
+        assert!(encoded.contains(r#""disposition":"partial""#));
+        for forbidden in [
+            "/",
+            "code_sign_clone.",
+            "Library",
+            "profile",
+            "user_data_dir",
+        ] {
+            assert!(
+                !encoded.contains(forbidden),
+                "cleanup result leaked {forbidden}"
+            );
+        }
+        let reparsed: ResponseEnvelope =
+            serde_json::from_str(&encoded).expect("reparse with cleanup result");
+        assert_eq!(reparsed, with_result);
     }
 
     #[test]

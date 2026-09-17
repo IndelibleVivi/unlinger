@@ -11,17 +11,19 @@ flowchart TB
     plan["Revalidate frozen plan<br/>commit PREPARED before signal"]
     proof["Exact TERM / survivor KILL<br/>absence + revival checks"]
     residue_gate["Clone storage gate<br/>two observations + no clone reference"]
-    residue_delete["Enforce-only clone removal<br/>descriptor-relative + immediate rescan"]
-    store[("SQLite v10<br/>ownership, typed observations, action journal<br/>terminal receipts + impact")]
-    overview["Atomic browser overview<br/>schema v5"]
+    residue_prepare["Persist storage PREPARED<br/>before any directory deletion"]
+    residue_delete["Exact clone removal<br/>descriptor-relative + immediate rescan"]
+    store[("SQLite v11<br/>ownership, observations, journals<br/>terminal receipts + impact + clone results")]
+    overview["Atomic browser overview<br/>schema v5 + optional clone result"]
     lifetime -->|released, no active client| gates
     gates -->|report-only| store
     gates -->|enforce + valid authority| plan
     plan --> proof
     proof -->|proved result| store
     residue_gate -->|report-only or blocked| store
-    residue_gate -->|ready enforce + stable| residue_delete
-    residue_delete -->|actual remaining state| store
+    residue_gate -->|ready enforce + stable| residue_prepare
+    residue_prepare -->|durable authority| residue_delete
+    residue_delete -->|terminal result + latest observation| store
     store --> overview
   end
   command -->|task run| lifetime

@@ -11,7 +11,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use unlinger_core::{CleanupRuntime, ProcessRole};
 use unlinger_daemon::{
     ControlPlane, DaemonInstanceLock, DaemonMode, DaemonStatus, EngineConfig, HistoryStore,
-    IpcServer, LocalPaths, ReconciliationEngine,
+    IpcServer, LocalPaths, ReconciliationEngine, StoreError,
 };
 use unlinger_macos::{ChromeCloneCleanup, ChromeCloneCleanupMode, MacosRuntime, MacosSnapshotter};
 use unlinger_rules::RuleSet;
@@ -117,6 +117,12 @@ fn run(arguments: Arguments) -> Result<(), Box<dyn Error>> {
         daemon_status.startup_state = unlinger_daemon::StartupState::FirstScanReportOnly;
         (ControlPlane::new(store, daemon_status)?, None)
     };
+    // A storage cleanup attempt left PREPARED across a crash or restart can
+    // never be proved by a later observation; finalize it as delivery_unknown
+    // before any new cycle runs.
+    control
+        .store()
+        .recover_storage_cleanup_attempts(recovery_now)?;
     let _server = if arguments.once {
         None
     } else {
@@ -161,32 +167,65 @@ fn run(arguments: Arguments) -> Result<(), Box<dyn Error>> {
                 // eventual SQLite write fails. A store failure must never
                 // collapse the two-observation stability window.
                 last_storage_residue_attempt_at = Some(now);
-                let process_snapshot = storage_snapshotter.capture().ok();
-                let cleanup_mode = match control.storage_cleanup_state_at(now) {
-                    Ok((DaemonMode::Enforce, true)) => ChromeCloneCleanupMode::Enforce,
-                    Ok((DaemonMode::ReportOnly, true)) => ChromeCloneCleanupMode::ReportOnly,
-                    Ok(_) | Err(_) => ChromeCloneCleanupMode::LifecycleBlocked,
-                };
-                let residue = chrome_clone_cleanup.reconcile(
-                    now,
-                    process_snapshot.as_ref(),
-                    cleanup_mode,
-                    |action| {
-                        if shutdown_requested() {
-                            return None;
+                let cycle = run_storage_residue_cycle(control.store(), now, || {
+                    let process_snapshot = storage_snapshotter.capture().ok();
+                    let cleanup_mode = match control.storage_cleanup_state_at(now) {
+                        Ok((DaemonMode::Enforce, true)) => ChromeCloneCleanupMode::Enforce,
+                        Ok((DaemonMode::ReportOnly, true)) => ChromeCloneCleanupMode::ReportOnly,
+                        Ok(_) | Err(_) => ChromeCloneCleanupMode::LifecycleBlocked,
+                    };
+                    let mut prepared = None;
+                    let reconciliation = chrome_clone_cleanup.reconcile(
+                        now,
+                        process_snapshot.as_ref(),
+                        cleanup_mode,
+                        |facts, action| {
+                            if shutdown_requested() {
+                                return None;
+                            }
+                            match control.run_storage_cleanup_if_ready_enforce(now, facts, action) {
+                                Ok(Some((attempt, result))) => {
+                                    prepared = Some(attempt);
+                                    Some(result)
+                                }
+                                Ok(None) => None,
+                                Err(error) => {
+                                    // No durable PREPARED record means no deletion.
+                                    let message = error.to_string();
+                                    if should_log_cycle_error(
+                                        &mut last_storage_residue_error,
+                                        &message,
+                                    ) {
+                                        eprintln!(
+                                            "unlingerd: storage cleanup preparation failed: {message}"
+                                        );
+                                    }
+                                    None
+                                }
+                            }
+                        },
+                    );
+                    // A terminal result is always committed together with the
+                    // real latest residue observation, in one transaction.
+                    match (reconciliation.cleanup, prepared) {
+                        (Some(result), Some(attempt)) => {
+                            control.store().complete_storage_cleanup_attempt(
+                                &attempt,
+                                &result,
+                                &reconciliation.observation,
+                            )
                         }
-                        control
-                            .run_storage_cleanup_if_ready_enforce(now, action)
-                            .ok()
-                            .flatten()
-                    },
-                );
-                match control.store().record_storage_residue_observation(&residue) {
+                        _ => control
+                            .store()
+                            .record_storage_residue_observation(&reconciliation.observation),
+                    }
+                });
+                match cycle {
                     Ok(()) => last_storage_residue_error = None,
                     Err(error) => {
                         let message = error.to_string();
                         if should_log_cycle_error(&mut last_storage_residue_error, &message) {
-                            eprintln!("unlingerd: storage residue observation failed: {message}");
+                            eprintln!("unlingerd: storage residue cycle failed: {message}");
                         }
                     }
                 }
@@ -370,11 +409,28 @@ fn storage_residue_observation_due(
         })
 }
 
+/// Runs one due storage-residue cycle behind a bounded durable-recovery retry.
+///
+/// A terminal write that fails after descriptor-relative deletion can leave a
+/// PREPARED attempt behind in a still-running daemon. Recovery is retried here
+/// before every due cycle and must become durable `delivery_unknown`; while it
+/// cannot, the cycle is skipped entirely so no new deletion can start against
+/// an earlier attempt whose delivery is still uncertain. Startup recovery is
+/// retained separately.
+fn run_storage_residue_cycle<T>(
+    store: &HistoryStore,
+    now_unix_millis: u64,
+    cycle: impl FnOnce() -> Result<T, StoreError>,
+) -> Result<T, StoreError> {
+    store.recover_storage_cleanup_attempts(now_unix_millis)?;
+    cycle()
+}
+
 #[cfg(test)]
 mod tests {
     use clap::Parser;
 
-    use super::Arguments;
+    use super::{Arguments, HistoryStore};
 
     #[test]
     fn repeated_cycle_errors_are_suppressed_until_a_success() {
@@ -446,5 +502,75 @@ mod tests {
             Some(200),
             Some(100)
         ));
+    }
+
+    #[test]
+    fn storage_cycles_retry_prepared_recovery_and_skip_on_failure() {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock after epoch")
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "unlingerd-storage-recovery-test-{}-{nonce}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&directory).expect("create test directory");
+
+        let store = HistoryStore::open(directory.join("history.sqlite3")).expect("open store");
+        let prepared = store
+            .begin_storage_cleanup_attempt(
+                1_000,
+                &unlinger_core::StorageCleanupAttemptFacts {
+                    planned_candidate_count: 1,
+                    before_candidate_count: 2,
+                    before_logical_bytes: 2_048,
+                },
+            )
+            .expect("prepare storage cleanup attempt");
+        assert_eq!(prepared.attempt_token().len(), 32);
+
+        // A healthy cycle retries recovery first, so the abandoned PREPARED
+        // attempt becomes durable delivery_unknown before the cycle body runs.
+        let cycle_ran = std::cell::Cell::new(false);
+        super::run_storage_residue_cycle(&store, 2_000, || {
+            cycle_ran.set(true);
+            Ok(())
+        })
+        .expect("healthy storage cycle");
+        assert!(cycle_ran.get());
+        let record = store
+            .latest_storage_cleanup_attempt()
+            .expect("read recovered attempt")
+            .expect("recovered row");
+        assert_eq!(
+            record.disposition,
+            Some(unlinger_core::StorageCleanupDisposition::DeliveryUnknown)
+        );
+
+        // If durable recovery cannot be made, the cycle body never runs, so no
+        // new scan or deletion can start while delivery is still uncertain.
+        let blocked_directory = directory.join("blocked");
+        std::fs::create_dir_all(&blocked_directory).expect("create blocked directory");
+        let blocked = HistoryStore::open(blocked_directory.join("history.sqlite3"))
+            .expect("open blocked store");
+        let blocked_path = blocked.path().to_path_buf();
+        let connection = rusqlite::Connection::open(&blocked_path).expect("open raw connection");
+        connection
+            .execute_batch("DROP TABLE storage_cleanup_attempts;")
+            .expect("remove attempt authority");
+        drop(connection);
+
+        let blocked_cycle_ran = std::cell::Cell::new(false);
+        let blocked_result = super::run_storage_residue_cycle(&blocked, 2_100, || {
+            blocked_cycle_ran.set(true);
+            Ok(())
+        });
+        assert!(blocked_result.is_err());
+        assert!(
+            !blocked_cycle_ran.get(),
+            "a failed recovery retry must skip the whole storage cycle"
+        );
+
+        let _ = std::fs::remove_dir_all(&directory);
     }
 }

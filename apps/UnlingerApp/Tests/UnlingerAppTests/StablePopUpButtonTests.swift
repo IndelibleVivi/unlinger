@@ -48,6 +48,24 @@ struct StablePopUpButtonTests {
         #expect(selectedID == "off")
     }
 
+    @Test("a reused native popup converts between action and selection modes")
+    func reusedButtonSynchronizesPullsDownInBothDirections() throws {
+        let coordinator = StablePopUpButton.Coordinator(onSelect: { _ in })
+        let button = NSPopUpButton(frame: .zero, pullsDown: true)
+
+        coordinator.apply(actionConfiguration(), to: button)
+        #expect(button.pullsDown)
+
+        coordinator.apply(selectionConfiguration(), to: button)
+        #expect(!button.pullsDown)
+        #expect(button.selectedItem?.representedObject as? String == "attention")
+
+        coordinator.apply(actionConfiguration(), to: button)
+        #expect(button.pullsDown)
+        #expect(button.item(at: 0)?.representedObject == nil)
+        #expect(button.item(at: 1)?.representedObject as? String == "system")
+    }
+
     private func actionConfiguration() -> StablePopUpButton.Configuration {
         StablePopUpButton.Configuration(
             style: .action,
@@ -61,6 +79,23 @@ struct StablePopUpButtonTests {
             items: [
                 StablePopUpItem(id: "system", title: "System"),
                 StablePopUpItem(id: "en", title: "English", isMarked: true)
+            ]
+        )
+    }
+
+    private func selectionConfiguration() -> StablePopUpButton.Configuration {
+        StablePopUpButton.Configuration(
+            style: .selection,
+            title: "Notifications",
+            systemImageName: nil,
+            showsTitle: true,
+            accessibilityLabel: "Notifications",
+            toolTip: "",
+            isEnabled: true,
+            selectedID: "attention",
+            items: [
+                StablePopUpItem(id: "off", title: "Off"),
+                StablePopUpItem(id: "attention", title: "Attention")
             ]
         )
     }

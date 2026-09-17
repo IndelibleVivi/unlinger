@@ -1298,8 +1298,8 @@ pub use platform::{MacosRuntime, MacosSnapshotter, SnapshotError};
 
 #[cfg(target_os = "macos")]
 pub use storage_residue::{
-    ChromeCloneCleanup, ChromeCloneCleanupMode, inspect_code_sign_clone_root,
-    observe_chrome_code_sign_clones,
+    ChromeCloneCleanup, ChromeCloneCleanupMode, ChromeCloneReconciliation,
+    inspect_code_sign_clone_root, observe_chrome_code_sign_clones,
 };
 
 #[cfg(not(target_os = "macos"))]

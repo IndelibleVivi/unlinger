@@ -48,6 +48,18 @@
           "storage_residue.reference_check_incomplete"
         ]
       },
+      "storage_cleanup_result": {
+        "disposition": "partial",
+        "prepared_at_unix_millis": 1788147000000,
+        "completed_at_unix_millis": 1788147900000,
+        "planned_candidate_count": 8,
+        "before_candidate_count": 9,
+        "before_logical_bytes": 13273958043,
+        "removed_candidate_count": 8,
+        "after_candidate_count": 1,
+        "after_logical_bytes": 1474884227,
+        "retained_not_planned_count": 1
+      },
       "attention": {
         "total_count": 0,
         "items": []

@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import UnlingerKit
 
@@ -94,6 +95,77 @@ struct BrowserHistoryPresentationTests {
         #expect(timeline[1].eventCount == 1)
         #expect(timeline[1].latestEvent.eventToken == "timeline-cleanup-1")
     }
+
+    @Test("terminal rows use the last observation at or before cleanup")
+    func terminalRowUsesObservationAtCleanupTime() async throws {
+        let detail = try await FixtureClient(
+            statusFixture: "status-report-only",
+            incidentFixture: "incident-protected"
+        ).explain(incidentID: "redacted-incident-1")
+        let history = try await FixtureClient(
+            statusFixture: "status-recently-reclaimed",
+            historyFixture: "history-cleared"
+        ).history(limit: 10)
+        var before = try #require(detail.events.first)
+        var cleanup = try #require(history.first)
+        guard case .observation(var beforeObservation) = before.payload else {
+            Issue.record("expected observation fixture")
+            return
+        }
+        before.incidentId = cleanup.incidentId
+        before.occurredAtUnixMillis = cleanup.occurredAtUnixMillis - 1_000
+        beforeObservation.family = "playwright"
+        beforeObservation.memberCount = 7
+        beforeObservation.residentMemoryBytes = 73_400_320
+        before.payload = .observation(beforeObservation)
+
+        var after = before
+        guard case .observation(var afterObservation) = after.payload else {
+            Issue.record("expected observation fixture")
+            return
+        }
+        after.eventToken = "observation-after-cleanup"
+        after.occurredAtUnixMillis = cleanup.occurredAtUnixMillis + 1_000
+        afterObservation.family = "puppeteer"
+        afterObservation.memberCount = 99
+        afterObservation.residentMemoryBytes = 999_000_000
+        after.payload = .observation(afterObservation)
+        cleanup.eventToken = "terminal-cleanup"
+
+        let entries = BrowserHistoryMapper.entries(
+            events: [after, cleanup, before],
+            currentSessions: [],
+            recentSettlement: nil,
+            mode: .enforce
+        )
+        let entry = try #require(entries.first)
+
+        #expect(entries.count == 1)
+        #expect(entry.familyKey == "browser.family.playwright")
+        #expect(entry.memberCount == 7)
+        #expect(entry.residentMemoryBytes == 73_400_320)
+        #expect(entry.state == .cleared)
+        #expect(entry.latestAt == Date(unixMillis: cleanup.occurredAtUnixMillis))
+        #expect(entry.eventCount == 1)
+    }
+
+    @Test("observations without terminal cleanup do not create history rows")
+    func observationOnlyIncidentHasNoHistoryRow() async throws {
+        let detail = try await FixtureClient(
+            statusFixture: "status-report-only",
+            incidentFixture: "incident-protected"
+        ).explain(incidentID: "redacted-incident-1")
+
+        let entries = BrowserHistoryMapper.entries(
+            events: detail.events,
+            currentSessions: [],
+            recentSettlement: nil,
+            mode: .reportOnly
+        )
+
+        #expect(entries.isEmpty)
+    }
+
     @Test("an explicit no-intervention receipt remains visible without a reclaim label")
     @MainActor
     func endedWithoutInterventionIsNotAReclaim() async throws {

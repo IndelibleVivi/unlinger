@@ -11,7 +11,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use unlinger_core::{
     BrowserCompatibility, BrowserCompatibilityDecision, BrowserProduct, CleanupReceipt,
     CleanupResources, GateLedger, IncidentReport, IncidentState, ProcessIdentity, ProcessRole,
-    ProcessRoleCount, ProcessTarget, ResourceSnapshot, RootSummary, StorageResidueKind,
+    ProcessRoleCount, ProcessTarget, ResourceSnapshot, RootSummary, StorageCleanupAttemptFacts,
+    StorageCleanupDisposition, StorageCleanupResultFacts, StorageResidueKind,
     StorageResidueObservation, StorageResidueReferenceCheck, StorageResidueStatus,
 };
 use unlinger_daemon::{
@@ -983,6 +984,42 @@ fn frontend_schema_v5_projects_impact_residue_and_observation_spans_without_chan
             reason_ids: vec!["storage_residue.cleanup_report_only".to_owned()],
         })
         .expect("record storage residue observation");
+    let storage_cleanup_attempt = store
+        .begin_storage_cleanup_attempt(
+            2_310,
+            &StorageCleanupAttemptFacts {
+                planned_candidate_count: 2,
+                before_candidate_count: 4,
+                before_logical_bytes: 8 * 1024 * 1024,
+            },
+        )
+        .expect("prepare storage cleanup attempt");
+    store
+        .complete_storage_cleanup_attempt(
+            &storage_cleanup_attempt,
+            &StorageCleanupResultFacts {
+                disposition: StorageCleanupDisposition::Partial,
+                planned_candidate_count: 2,
+                before_candidate_count: 4,
+                before_logical_bytes: 8 * 1024 * 1024,
+                removed_candidate_count: Some(2),
+                after_candidate_count: Some(2),
+                after_logical_bytes: Some(2 * 1024 * 1024),
+                retained_not_planned_count: Some(2),
+            },
+            &StorageResidueObservation {
+                kind: StorageResidueKind::ChromeCodeSignClone,
+                status: StorageResidueStatus::Detected,
+                observed_at_unix_millis: 2_320,
+                candidate_count: 2,
+                logical_bytes: 2 * 1024 * 1024,
+                shape_complete: true,
+                reference_check: StorageResidueReferenceCheck::CompleteNoReferences,
+                automatic_cleanup_eligible: true,
+                reason_ids: vec!["storage_residue.automatic_cleanup_partial".to_owned()],
+            },
+        )
+        .expect("complete storage cleanup attempt");
 
     let mut status = DaemonStatus::new(DaemonMode::ReportOnly, 42);
     status.healthy = true;
@@ -1020,6 +1057,48 @@ fn frontend_schema_v5_projects_impact_residue_and_observation_spans_without_chan
         v5["payload"]["data"]["storage_residue"]["automatic_cleanup_eligible"],
         true
     );
+    assert_eq!(
+        v5["payload"]["data"]["storage_cleanup_result"]["disposition"],
+        "partial"
+    );
+    // The public result exposes only typed outcome, timestamps and aggregate
+    // counts; no attempt identity is part of the public contract.
+    assert!(
+        v5["payload"]["data"]["storage_cleanup_result"]
+            .get("attempt_token")
+            .is_none(),
+        "the public cleanup result must not expose an attempt identity"
+    );
+    assert_eq!(
+        v5["payload"]["data"]["storage_cleanup_result"]["removed_candidate_count"],
+        2
+    );
+    assert_eq!(
+        v5["payload"]["data"]["storage_cleanup_result"]["after_candidate_count"],
+        2
+    );
+    assert_eq!(
+        v5["payload"]["data"]["storage_cleanup_result"]["before_logical_bytes"],
+        8 * 1024 * 1024
+    );
+    // The public cleanup result carries no path, candidate name, raw identity
+    // or argv material, and it never claims physical APFS reclaim.
+    let cleanup_result_text = v5["payload"]["data"]["storage_cleanup_result"].to_string();
+    for forbidden in [
+        "/",
+        "code_sign_clone.",
+        "Google Chrome.app",
+        "argv",
+        "path",
+        "physical",
+        "reclaim",
+        "users",
+    ] {
+        assert!(
+            !cleanup_result_text.contains(forbidden),
+            "v5 cleanup result leaked {forbidden}"
+        );
+    }
 
     let v4 = raw_request(
         &socket,
@@ -1027,6 +1106,20 @@ fn frontend_schema_v5_projects_impact_residue_and_observation_spans_without_chan
     );
     assert!(v4["payload"]["data"].get("impact").is_none());
     assert!(v4["payload"]["data"].get("storage_residue").is_none());
+    assert!(
+        v4["payload"]["data"]
+            .get("storage_cleanup_result")
+            .is_none()
+    );
+
+    // A legacy v3 client cannot request the v5-only browser overview at all,
+    // so it can never acquire the new result data.
+    let v3_overview = raw_request(
+        &socket,
+        r#"{"schema_version":3,"request_id":77,"command":{"command":"browser_overview"}}"#,
+    );
+    assert_eq!(v3_overview["ok"], false);
+    assert!(!v3_overview.to_string().contains("storage_cleanup_result"));
 
     let history_v5 = raw_request(
         &socket,

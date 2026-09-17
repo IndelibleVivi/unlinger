@@ -18,8 +18,9 @@ pub use store::{
     ImpactHistoryCompleteness, IncidentDetail, MUTATION_RECONCILIATION_WINDOW_MILLIS,
     ManagedLifecycle, ManagedStartupPhase, MostRecentReclaim, MutationCommit, MutationLookup,
     ObservationRecord, ObservedIncidentIdentity, OrdinaryMutation, PreparedActionHandle,
-    PreparedArtifactActionHandle, ProtectedIncidentSummary, ProtectionProjection,
-    ProtectionReconciliation, PruneResult, RetentionPolicy, RetryBlockReconciliation,
-    SessionOwnerLease, SessionOwnerStatus, StorageRecoveryOccurrence, StorageRecoveryReason,
-    StoreAttentionProjection, StoreError, TaskLease, TaskPhase, TaskStatus,
+    PreparedArtifactActionHandle, PreparedStorageCleanupAttempt, ProtectedIncidentSummary,
+    ProtectionProjection, ProtectionReconciliation, PruneResult, RetentionPolicy,
+    RetryBlockReconciliation, SessionOwnerLease, SessionOwnerStatus, StorageCleanupAttemptRecord,
+    StorageRecoveryOccurrence, StorageRecoveryReason, StoreAttentionProjection, StoreError,
+    TaskLease, TaskPhase, TaskStatus,
 };

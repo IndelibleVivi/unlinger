@@ -42,6 +42,8 @@ struct BrowserFixtureScenarioTests {
         #expect(state.browserOverview.impact?.estimatedReclaimedMemoryBytes == 1_073_741_824)
         #expect(state.browserOverview.storageResidue?.candidateCount == 49)
         #expect(state.browserOverview.storageResidue?.automaticCleanupEligible == false)
+        #expect(state.browserOverview.storageCleanupResult?.disposition == .partial)
+        #expect(state.browserOverview.storageCleanupResult?.removedCandidateCount == 8)
         #expect(state.browserOverview.visibleSections(connection: .live).contains(.impact))
         #expect(state.browserOverview.visibleSections(connection: .live).contains(.storageResidue))
     }

@@ -62,6 +62,20 @@ public enum BrowserOverviewMapper {
                     automaticCleanupEligible: residue.automaticCleanupEligible
                 )
             },
+            storageCleanupResult: snapshot?.storageCleanupResult.map { result in
+                StorageCleanupResultPresentation(
+                    disposition: result.disposition,
+                    preparedAt: Date(unixMillis: result.preparedAtUnixMillis),
+                    completedAt: result.completedAtUnixMillis.map(Date.init(unixMillis:)),
+                    plannedCandidateCount: result.plannedCandidateCount,
+                    beforeCandidateCount: result.beforeCandidateCount,
+                    beforeLogicalBytes: result.beforeLogicalBytes,
+                    removedCandidateCount: result.removedCandidateCount,
+                    afterCandidateCount: result.afterCandidateCount,
+                    afterLogicalBytes: result.afterLogicalBytes,
+                    retainedNotPlannedCount: result.retainedNotPlannedCount
+                )
+            },
             coverageNotices: notices,
             attention: attention,
             attentionOverflow: attentionOverflow,

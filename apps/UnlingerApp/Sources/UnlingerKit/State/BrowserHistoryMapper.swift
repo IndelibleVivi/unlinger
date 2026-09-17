@@ -10,11 +10,7 @@ public enum BrowserHistoryMapper {
         recentSettlement: RecentBrowserSettlement?,
         mode: EffectiveMode?
     ) -> [BrowserHistoryEntryPresentation] {
-        let settledEvents = events.filter { event in
-            guard case .cleanup = event.payload else { return false }
-            return [.cleared, .failed, .revived].contains(event.state)
-        }
-        return Dictionary(grouping: settledEvents, by: \HistoryEvent.incidentId)
+        return Dictionary(grouping: events, by: \HistoryEvent.incidentId)
             .compactMap { incidentID, incidentEvents in
                 historyEntry(
                     incidentID: incidentID,
@@ -62,34 +58,31 @@ public enum BrowserHistoryMapper {
         recentSettlement: RecentBrowserSettlement?,
         mode: EffectiveMode?
     ) -> BrowserHistoryEntryPresentation? {
-        guard let latestEvent = events.max(by: {
-            $0.occurredAtUnixMillis < $1.occurredAtUnixMillis
-        }) else { return nil }
-        let latestObservation = events
+        let terminalEvents = events.filter(isTerminalCleanup)
+        guard let terminalEvent = terminalEvents.max(by: eventPrecedes)
+        else { return nil }
+        let anchoredEvents = events.filter {
+            $0.occurredAtUnixMillis <= terminalEvent.occurredAtUnixMillis
+        }
+        let latestObservation = anchoredEvents
             .compactMap { event -> (HistoryEvent, ObservationRecord)? in
                 guard case .observation(let observation) = event.payload else { return nil }
                 return (event, observation)
             }
-            .max { $0.0.occurredAtUnixMillis < $1.0.occurredAtUnixMillis }?.1
+            .max { eventPrecedes($0.0, $1.0) }?.1
         let compatibility = latestObservation?.browserCompatibility
-        let latestCleanup = events
-            .compactMap { event -> (HistoryEvent, CleanupReceipt)? in
-                guard case .cleanup(let receipt) = event.payload else { return nil }
-                return (event, receipt)
-            }
-            .max { $0.0.occurredAtUnixMillis < $1.0.occurredAtUnixMillis }?.1
-        let withoutIntervention: Bool = if case .cleanup(let receipt) = latestEvent.payload {
-            receipt.endedWithoutIntervention
-        } else {
-            false
-        }
-        let state = currentSession?.state ?? latestEvent.state
+        guard case .cleanup(let terminalCleanup) = terminalEvent.payload else { return nil }
+        let matchingSettlement = recentSettlement?.eventToken == terminalEvent.eventToken
+            ? recentSettlement
+            : nil
+        let withoutIntervention = terminalCleanup.endedWithoutIntervention
+        let state = currentSession?.state ?? terminalEvent.state
         let coverageNotice = compatibility?.reasonId.map(BrowserOverviewMapper.coverageNotice)
 
         return BrowserHistoryEntryPresentation(
             incidentID: incidentID,
             familyKey: currentSession?.familyKey
-                ?? recentSettlement?.familyKey
+                ?? matchingSettlement?.familyKey
                 ?? latestObservation.map { BrowserOverviewMapper.familyKey(for: $0.family) }
                 ?? "browser.family.automation",
             productKey: currentSession?.productKey
@@ -110,14 +103,26 @@ public enum BrowserHistoryMapper {
                 )),
             memberCount: currentSession?.memberCount
                 ?? latestObservation?.memberCount
-                ?? latestCleanup?.resources.before?.processCount,
+                ?? terminalCleanup.resources.before?.processCount,
             residentMemoryBytes: currentSession?.residentMemoryBytes
                 ?? latestObservation?.residentMemoryBytes
-                ?? latestCleanup?.resources.before?.residentMemoryBytes,
-            latestAt: Date(unixMillis: latestEvent.occurredAtUnixMillis),
-            eventCount: events.count,
+                ?? terminalCleanup.resources.before?.residentMemoryBytes,
+            latestAt: Date(unixMillis: terminalEvent.occurredAtUnixMillis),
+            eventCount: terminalEvents.count,
             isCurrent: currentSession != nil
         )
+    }
+
+    private static func isTerminalCleanup(_ event: HistoryEvent) -> Bool {
+        guard case .cleanup = event.payload else { return false }
+        return [.cleared, .failed, .revived].contains(event.state)
+    }
+
+    private static func eventPrecedes(_ lhs: HistoryEvent, _ rhs: HistoryEvent) -> Bool {
+        if lhs.occurredAtUnixMillis == rhs.occurredAtUnixMillis {
+            return lhs.eventToken < rhs.eventToken
+        }
+        return lhs.occurredAtUnixMillis < rhs.occurredAtUnixMillis
     }
 
     private static func observationsCanCoalesce(

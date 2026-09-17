@@ -207,6 +207,14 @@ fn project_browser_overview(
     } else {
         None
     };
+    let storage_cleanup_result = if schema_version == public::SCHEMA_VERSION {
+        control
+            .store()
+            .latest_storage_cleanup_attempt()?
+            .and_then(project_storage_cleanup_result)
+    } else {
+        None
+    };
     let settlement_impact = source
         .status
         .most_recent_reclaim
@@ -307,6 +315,7 @@ fn project_browser_overview(
                 }
             }),
             storage_residue,
+            storage_cleanup_result,
             attention: projected_status.attention,
             protection: projected_status.protection,
             support_catalog,
@@ -348,6 +357,39 @@ fn project_storage_residue(
         automatic_cleanup_eligible: observation.automatic_cleanup_eligible,
         reason_ids: observation.reason_ids,
     }
+}
+
+fn project_storage_cleanup_result(
+    attempt: crate::StorageCleanupAttemptRecord,
+) -> Option<public::StorageCleanupResultSummary> {
+    // A summary exists only for a terminal disposition. PREPARED rows are
+    // transient recovery state and are never presented as a result.
+    let disposition = match attempt.disposition? {
+        unlinger_core::StorageCleanupDisposition::Complete => {
+            public::StorageCleanupDisposition::Complete
+        }
+        unlinger_core::StorageCleanupDisposition::Partial => {
+            public::StorageCleanupDisposition::Partial
+        }
+        unlinger_core::StorageCleanupDisposition::Failed => {
+            public::StorageCleanupDisposition::Failed
+        }
+        unlinger_core::StorageCleanupDisposition::DeliveryUnknown => {
+            public::StorageCleanupDisposition::DeliveryUnknown
+        }
+    };
+    Some(public::StorageCleanupResultSummary {
+        disposition,
+        prepared_at_unix_millis: attempt.prepared_at_unix_millis,
+        completed_at_unix_millis: attempt.completed_at_unix_millis,
+        planned_candidate_count: attempt.planned_candidate_count,
+        before_candidate_count: attempt.before_candidate_count,
+        before_logical_bytes: attempt.before_logical_bytes,
+        removed_candidate_count: attempt.removed_candidate_count,
+        after_candidate_count: attempt.after_candidate_count,
+        after_logical_bytes: attempt.after_logical_bytes,
+        retained_not_planned_count: attempt.retained_not_planned_count,
+    })
 }
 
 fn browser_overview_phase(
@@ -1006,8 +1048,146 @@ fn project_artifact_disposition(disposition: ArtifactDisposition) -> public::Art
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::HistoryStore;
     use crate::ipc::{RosterFreshness, RosterSnapshot};
-    use unlinger_core::{GateLedger, RootSummary};
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::{SystemTime, UNIX_EPOCH};
+    use unlinger_core::{
+        GateLedger, RootSummary, StorageCleanupAttemptFacts, StorageCleanupDisposition,
+        StorageCleanupResultFacts, StorageResidueKind, StorageResidueObservation,
+        StorageResidueReferenceCheck, StorageResidueStatus,
+    };
+
+    static NEXT_TEST_DATABASE: AtomicU64 = AtomicU64::new(1);
+
+    fn test_store(label: &str) -> HistoryStore {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock after epoch")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "unlinger-public-ipc-{label}-{}-{nonce}-{}.sqlite3",
+            std::process::id(),
+            NEXT_TEST_DATABASE.fetch_add(1, Ordering::Relaxed)
+        ));
+        HistoryStore::open(&path).expect("open projection store")
+    }
+
+    fn attempt_facts() -> StorageCleanupAttemptFacts {
+        StorageCleanupAttemptFacts {
+            planned_candidate_count: 2,
+            before_candidate_count: 4,
+            before_logical_bytes: 8_192,
+        }
+    }
+
+    fn after_observation() -> StorageResidueObservation {
+        StorageResidueObservation {
+            kind: StorageResidueKind::ChromeCodeSignClone,
+            status: StorageResidueStatus::Detected,
+            observed_at_unix_millis: 2_320,
+            candidate_count: 2,
+            logical_bytes: 4_096,
+            shape_complete: true,
+            reference_check: StorageResidueReferenceCheck::CompleteNoReferences,
+            automatic_cleanup_eligible: true,
+            reason_ids: vec!["storage_residue.automatic_cleanup_partial".to_owned()],
+        }
+    }
+
+    fn record_partial_cleanup(store: &HistoryStore) {
+        let prepared = store
+            .begin_storage_cleanup_attempt(2_310, &attempt_facts())
+            .expect("prepare cleanup attempt");
+        store
+            .complete_storage_cleanup_attempt(
+                &prepared,
+                &StorageCleanupResultFacts {
+                    disposition: StorageCleanupDisposition::Partial,
+                    planned_candidate_count: 2,
+                    before_candidate_count: 4,
+                    before_logical_bytes: 8_192,
+                    removed_candidate_count: Some(2),
+                    after_candidate_count: Some(2),
+                    after_logical_bytes: Some(4_096),
+                    retained_not_planned_count: Some(2),
+                },
+                &after_observation(),
+            )
+            .expect("complete cleanup attempt");
+    }
+
+    fn overview(control: &ControlPlane, schema_version: u32) -> public::BrowserOverviewSnapshot {
+        let payload =
+            project_browser_overview(control, 3_000, schema_version).expect("project overview");
+        let public::Payload::BrowserOverview(snapshot) = payload else {
+            panic!("expected a browser overview payload");
+        };
+        snapshot
+    }
+
+    #[test]
+    fn storage_cleanup_result_is_v5_only_public_safe_and_masked_by_prepared() {
+        let store = test_store("cleanup-result");
+        record_partial_cleanup(&store);
+        let control = ControlPlane::new(store, ready_status()).expect("projection control plane");
+
+        let v5 = overview(&control, public::SCHEMA_VERSION);
+        let summary = v5
+            .storage_cleanup_result
+            .clone()
+            .expect("v5 cleanup-result summary");
+        assert_eq!(
+            summary.disposition,
+            public::StorageCleanupDisposition::Partial
+        );
+        assert_eq!(summary.removed_candidate_count, Some(2));
+        assert_eq!(summary.after_candidate_count, Some(2));
+        assert_eq!(summary.retained_not_planned_count, Some(2));
+        assert_eq!(summary.before_logical_bytes, 8_192);
+        let encoded = serde_json::to_string(&summary).expect("encode cleanup summary");
+        for forbidden in [
+            "/",
+            "code_sign_clone.",
+            "Google Chrome.app",
+            "argv",
+            "physical",
+            "reclaim",
+            "attempt_token",
+            "lease",
+        ] {
+            assert!(
+                !encoded.contains(forbidden),
+                "v5 cleanup summary leaked {forbidden}"
+            );
+        }
+
+        // A newer PREPARED attempt masks the older terminal result: the public
+        // summary must report no terminal outcome while delivery is uncertain.
+        let newer = test_store("prepared-mask");
+        record_partial_cleanup(&newer);
+        newer
+            .begin_storage_cleanup_attempt(2_400, &attempt_facts())
+            .expect("prepare newer attempt");
+        let control = ControlPlane::new(newer, ready_status()).expect("prepared control plane");
+        assert!(
+            overview(&control, public::SCHEMA_VERSION)
+                .storage_cleanup_result
+                .is_none(),
+            "an unresolved PREPARED attempt must not project an older success"
+        );
+
+        // v4 and v3 must never acquire v5-only cleanup-result data. The v3
+        // dispatch refusal itself is enforced before this projection.
+        for previous in [
+            public::PREVIOUS_SCHEMA_VERSION,
+            public::LEGACY_SCHEMA_VERSION,
+        ] {
+            let snapshot = overview(&control, previous);
+            assert!(snapshot.storage_cleanup_result.is_none());
+            assert!(snapshot.storage_residue.is_none());
+        }
+    }
 
     fn ready_status() -> DaemonStatus {
         let mut status = DaemonStatus::new(DaemonMode::ReportOnly, 42);

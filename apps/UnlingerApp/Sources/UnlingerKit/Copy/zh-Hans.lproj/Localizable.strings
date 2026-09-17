@@ -84,6 +84,20 @@
 "browser.storage_residue.eligible" = "至少一份未被引用的残留已满足自动清理条件；enforce 模式只移除 eligible 残留，report-only 模式全部保持不变。";
 "browser.storage_residue.waiting" = "自动清理正在等待逐候选连续稳定、完整的实时进程安全检查与 daemon lifecycle 条件。";
 "browser.storage_residue.unavailable" = "无法安全验证 Chrome 代码签名 clone 目录。";
+"browser.storage_residue.clear" = "当前没有 Chrome 代码签名 clone 残留。";
+"browser.storage_cleanup.title" = "最近一次存储清理";
+"browser.storage_cleanup.complete" = "自动清理已完成；即时重新扫描确认计划中的 clone 全部消失。";
+"browser.storage_cleanup.partial" = "自动清理移除了计划中的全部 clone；清理计划之外仍有残留被保留。";
+"browser.storage_cleanup.failed" = "自动清理未能证明计划中的 clone 已全部消失。";
+"browser.storage_cleanup.delivery_unknown" = "清理已进入准备阶段，但中断使实际送达结果未知；之后的观察不会被算作这次尝试的成功证据。";
+"browser.storage_cleanup.planned" = "计划移除 %d 份 clone 候选。";
+"browser.storage_cleanup.before" = "清理前：%d 份候选，账面大小 %@。";
+"browser.storage_cleanup.removed" = "已确认 %d 份计划候选消失。";
+"browser.storage_cleanup.after" = "清理后：%d 份候选，账面大小 %@。";
+"browser.storage_cleanup.retained_not_planned" = "%d 份候选不在本次移除计划内，因此被保留。";
+"browser.storage_cleanup.prepared_at" = "准备时间 %@";
+"browser.storage_cleanup.completed_at" = "结果确认时间 %@";
+"browser.storage_cleanup.apfs_caveat" = "账面大小的变化不等于已经释放同等的 APFS 物理空间。";
 
 /* Recent browser settlement */
 "browser.settlement.title" = "最近一次浏览器处理";

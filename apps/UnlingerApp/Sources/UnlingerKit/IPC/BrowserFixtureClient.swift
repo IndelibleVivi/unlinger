@@ -157,6 +157,18 @@ public struct BrowserFixtureClient: UnlingerClient {
                     "storage_residue.reference_check_incomplete",
                 ]
             )
+            snapshot.storageCleanupResult = StorageCleanupResultSummary(
+                disposition: .partial,
+                preparedAtUnixMillis: Self.observedAt - 1_800_000,
+                completedAtUnixMillis: Self.observedAt - 900_000,
+                plannedCandidateCount: 8,
+                beforeCandidateCount: 9,
+                beforeLogicalBytes: 13_273_958_043,
+                removedCandidateCount: 8,
+                afterCandidateCount: 1,
+                afterLogicalBytes: 1_474_884_227,
+                retainedNotPlannedCount: 1
+            )
         }
         return snapshot
     }

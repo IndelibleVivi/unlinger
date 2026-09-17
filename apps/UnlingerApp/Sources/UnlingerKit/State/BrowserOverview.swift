@@ -103,6 +103,36 @@ public struct StorageResiduePresentation: Equatable, Sendable {
     public var automaticCleanupEligible: Bool
 }
 
+public struct StorageCleanupResultPresentation: Equatable, Sendable {
+    public var disposition: StorageCleanupDisposition
+    public var preparedAt: Date
+    public var completedAt: Date?
+    public var plannedCandidateCount: Int
+    public var beforeCandidateCount: Int
+    public var beforeLogicalBytes: UInt64
+    public var removedCandidateCount: Int?
+    public var afterCandidateCount: Int?
+    public var afterLogicalBytes: UInt64?
+    public var retainedNotPlannedCount: Int?
+
+    public var outcomeKey: String {
+        switch disposition {
+        case .complete: "browser.storage_cleanup.complete"
+        case .partial: "browser.storage_cleanup.partial"
+        case .failed: "browser.storage_cleanup.failed"
+        case .deliveryUnknown: "browser.storage_cleanup.delivery_unknown"
+        }
+    }
+
+    public var systemImageName: String {
+        switch disposition {
+        case .complete: "externaldrive.badge.checkmark"
+        case .partial: "externaldrive.badge.exclamationmark"
+        case .failed, .deliveryUnknown: "exclamationmark.triangle"
+        }
+    }
+}
+
 public enum BrowserPopoverSection: Equatable, Hashable, Sendable {
     case overview
     case connection
@@ -131,6 +161,7 @@ public struct BrowserOverview: Equatable, Sendable {
     public var sessions: [BrowserSessionPresentation]
     public var impact: BrowserImpactPresentation?
     public var storageResidue: StorageResiduePresentation?
+    public var storageCleanupResult: StorageCleanupResultPresentation?
     public var coverageNotices: [BrowserCoverageNotice]
     public var attention: [BrowserAttentionPresentation]
     public var attentionOverflow: Int
@@ -142,14 +173,18 @@ public struct BrowserOverview: Equatable, Sendable {
         if connection != .live { result.append(.connection) }
         if impact != nil { result.append(.impact) }
         if !coverageNotices.isEmpty { result.append(.coverage) }
-        if storageResidue?.status != .clear { result.append(.storageResidue) }
+        if storageCleanupResult != nil
+            || storageResidue.map({ $0.status != .clear }) == true
+        {
+            result.append(.storageResidue)
+        }
         if !sessions.isEmpty { result.append(.sessions) }
         if !savedProtections.isEmpty { result.append(.savedProtections) }
         if !attention.isEmpty || attentionOverflow > 0 { result.append(.attention) }
         if recentSettlement != nil { result.append(.recentSettlement) }
-        if connection == .live {
-            result.append(contentsOf: [.history, .settings, .actions])
-        }
+        if connection == .live { result.append(.history) }
+        result.append(.settings)
+        if connection == .live { result.append(.actions) }
         return result
     }
 }

@@ -40,4 +40,27 @@ struct AppWindowControllerTests {
         #expect(MenuBarPopoverController.contentSize == AppSurfaceLayout.contentSize)
         #expect(MenuPopover.contentSize == AppSurfaceLayout.contentSize)
     }
+
+    @Test("closing clears and releases the exact hosted controller")
+    func closingReleasesHostedController() async throws {
+        _ = NSApplication.shared
+        let controller = AppWindowController(title: "Unlinger") {
+            Text("Status")
+        }
+
+        controller.prepareContentForPresentation()
+        weak var hostedController: NSViewController?
+        let hostWasLoaded = autoreleasepool {
+            guard let host = controller.window?.contentViewController else { return false }
+            hostedController = host
+            return true
+        }
+
+        controller.windowWillClose(Notification(name: NSWindow.willCloseNotification))
+        await Task.yield()
+
+        #expect(hostWasLoaded)
+        #expect(controller.window?.contentViewController == nil)
+        #expect(hostedController == nil)
+    }
 }

@@ -84,6 +84,20 @@
 "browser.storage_residue.eligible" = "At least one unreferenced leftover is ready for automatic cleanup. Enforce mode removes only eligible leftovers; report-only leaves all unchanged.";
 "browser.storage_residue.waiting" = "Automatic cleanup is waiting for per-candidate stability, complete live-process safety checks, and daemon lifecycle gates.";
 "browser.storage_residue.unavailable" = "The Chrome code-signing clone location could not be verified safely.";
+"browser.storage_residue.clear" = "No Chrome code-signing clone leftovers are currently present.";
+"browser.storage_cleanup.title" = "Latest storage cleanup";
+"browser.storage_cleanup.complete" = "Automatic cleanup completed; the immediate rescan proved every planned clone absent.";
+"browser.storage_cleanup.partial" = "Automatic cleanup removed every planned clone; residue outside that removal plan remains.";
+"browser.storage_cleanup.failed" = "Automatic cleanup did not prove every planned clone absent.";
+"browser.storage_cleanup.delivery_unknown" = "Cleanup was prepared, but interruption left delivery unknown. A later observation is not counted as proof of this attempt.";
+"browser.storage_cleanup.planned" = "%d clone candidates were planned for removal.";
+"browser.storage_cleanup.before" = "Before: %d candidates, %@ logical size.";
+"browser.storage_cleanup.removed" = "%d planned candidates were proved absent.";
+"browser.storage_cleanup.after" = "After: %d candidates, %@ logical size.";
+"browser.storage_cleanup.retained_not_planned" = "%d candidates were retained because they were outside this removal plan.";
+"browser.storage_cleanup.prepared_at" = "Prepared %@";
+"browser.storage_cleanup.completed_at" = "Settled %@";
+"browser.storage_cleanup.apfs_caveat" = "Logical-size change is not proof of physical APFS space reclaimed.";
 
 /* Recent browser settlement */
 "browser.settlement.title" = "Recent browser settlement";

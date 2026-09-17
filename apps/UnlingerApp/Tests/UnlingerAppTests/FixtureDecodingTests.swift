@@ -6,7 +6,7 @@ import Testing
 /// through the same explicit envelope validation the socket client uses.
 @Suite("Canonical fixture decoding")
 struct FixtureDecodingTests {
-    @Test("schema-v5 impact, residue, and observation spans decode exactly")
+    @Test("schema-v5 impact, residue, cleanup result, and observation spans decode exactly")
     func v5ImpactAndResidueFixtures() throws {
         let emptyData = try FixtureStore.data(
             named: "browser-overview-impact-empty",
@@ -42,6 +42,11 @@ struct FixtureDecodingTests {
         #expect(detected.storageResidue?.candidateCount == 49)
         #expect(detected.storageResidue?.referenceCheck == .incomplete)
         #expect(detected.storageResidue?.automaticCleanupEligible == false)
+        #expect(detected.storageCleanupResult?.disposition == .partial)
+        #expect(detected.storageCleanupResult?.plannedCandidateCount == 8)
+        #expect(detected.storageCleanupResult?.removedCandidateCount == 8)
+        #expect(detected.storageCleanupResult?.afterCandidateCount == 1)
+        #expect(detected.storageCleanupResult?.afterLogicalBytes == 1_474_884_227)
         #expect(detected.supportCatalog.families.allSatisfy {
             $0.admittedVersions.contains("152.0.7977.42")
         })
@@ -94,6 +99,7 @@ struct FixtureDecodingTests {
         #expect(overview.phase == .protected)
         #expect(overview.impact == nil)
         #expect(overview.storageResidue == nil)
+        #expect(overview.storageCleanupResult == nil)
         #expect(overview.sessions.first?.compatibility.decision == .protected)
         #expect(overview.coverageNotices.first?.reasonId == "protection.browser_version_unsupported")
     }

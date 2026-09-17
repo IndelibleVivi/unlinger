@@ -14,6 +14,7 @@ use unlinger_core::{
     CleanupActionJournal, CleanupOutcome, CleanupReceipt, CleanupResources, CleanupSignal,
     CleanupStage, EvidenceItem, GateLedger, IncidentReport, IncidentState, ProcessOutcome,
     ProcessRoleCount, RootSummary, RuntimeArtifactKind, RuntimeFailure, SignalDisposition,
+    StorageCleanupAttemptFacts, StorageCleanupDisposition, StorageCleanupResultFacts,
     StorageResidueKind, StorageResidueObservation,
 };
 use unlinger_protocol::{
@@ -31,7 +32,7 @@ mod tasks;
 pub use session_owners::{SessionOwnerLease, SessionOwnerStatus};
 pub use tasks::{TaskLease, TaskPhase, TaskStatus};
 
-const SCHEMA_VERSION: i64 = 10;
+const SCHEMA_VERSION: i64 = 11;
 const CLEANUP_DETAIL_RETENTION_MILLIS: u64 = 14 * 24 * 60 * 60 * 1_000;
 const MAX_ATTENTION_SUMMARIES: usize = 50;
 const MAX_MUTATION_RECEIPTS: usize = 10_000;
@@ -173,6 +174,38 @@ pub struct PreparedArtifactActionHandle {
     pub id: i64,
     pub attempt_id: i64,
     pub sequence: usize,
+}
+
+/// Durable handle for one PREPARED storage cleanup attempt. The token is an
+/// opaque public-safe identity and carries no path or candidate material.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PreparedStorageCleanupAttempt {
+    id: i64,
+    attempt_token: String,
+}
+
+impl PreparedStorageCleanupAttempt {
+    #[must_use]
+    pub fn attempt_token(&self) -> &str {
+        &self.attempt_token
+    }
+}
+
+/// Readback projection of one storage cleanup attempt. PREPARED attempts have
+/// no disposition or terminal counts until they are finalized.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StorageCleanupAttemptRecord {
+    pub attempt_token: String,
+    pub prepared_at_unix_millis: u64,
+    pub completed_at_unix_millis: Option<u64>,
+    pub disposition: Option<StorageCleanupDisposition>,
+    pub planned_candidate_count: usize,
+    pub before_candidate_count: usize,
+    pub before_logical_bytes: u64,
+    pub removed_candidate_count: Option<usize>,
+    pub after_candidate_count: Option<usize>,
+    pub after_logical_bytes: Option<u64>,
+    pub retained_not_planned_count: Option<usize>,
 }
 
 pub struct CleanupAttemptJournal<'a> {
@@ -725,6 +758,359 @@ impl HistoryStore {
             }
             Ok(observation)
         })
+        .transpose()
+    }
+
+    /// Durably records a PREPARED storage cleanup attempt before any directory
+    /// deletion. Any earlier unresolved attempt for the same family is
+    /// finalized as `delivery_unknown` in the same transaction, because a
+    /// PREPARED attempt that outlived its process can never be proved.
+    pub fn begin_storage_cleanup_attempt(
+        &self,
+        prepared_at_unix_millis: u64,
+        facts: &StorageCleanupAttemptFacts,
+    ) -> Result<PreparedStorageCleanupAttempt, StoreError> {
+        if facts.planned_candidate_count == 0 {
+            return Err(StoreError::Invalid(
+                "a storage cleanup attempt must plan at least one candidate".to_owned(),
+            ));
+        }
+        if facts.planned_candidate_count > facts.before_candidate_count {
+            return Err(StoreError::Invalid(
+                "a storage cleanup plan cannot exceed the observed candidate set".to_owned(),
+            ));
+        }
+        let prepared_at = sqlite_millis(
+            prepared_at_unix_millis,
+            "storage cleanup preparation timestamp",
+        )?;
+        let planned = sqlite_usize(
+            facts.planned_candidate_count,
+            "storage cleanup planned candidate count",
+        )?;
+        let before_count = sqlite_usize(
+            facts.before_candidate_count,
+            "storage cleanup observed candidate count",
+        )?;
+        let before_bytes = sqlite_u64(
+            facts.before_logical_bytes,
+            "storage cleanup observed logical bytes",
+        )?;
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        finalize_unknown_storage_cleanup_attempts(&transaction, prepared_at)?;
+        transaction.execute(
+            "INSERT INTO storage_cleanup_attempts (
+                 kind, attempt_token, prepared_at_ms, planned_candidate_count,
+                 before_candidate_count, before_logical_bytes
+             ) VALUES ('chrome_code_sign_clone', lower(hex(randomblob(16))), ?1, ?2, ?3, ?4)",
+            params![prepared_at, planned, before_count, before_bytes],
+        )?;
+        let id = transaction.last_insert_rowid();
+        let attempt_token = transaction.query_row(
+            "SELECT attempt_token FROM storage_cleanup_attempts WHERE id = ?1",
+            params![id],
+            |row| row.get::<_, String>(0),
+        )?;
+        transaction.commit()?;
+        Ok(PreparedStorageCleanupAttempt { id, attempt_token })
+    }
+
+    /// Persists the terminal storage cleanup result and the real latest residue
+    /// observation in one transaction. Either both are durable or neither is,
+    /// so a result can never disagree with the observation it settled against.
+    pub fn complete_storage_cleanup_attempt(
+        &self,
+        prepared: &PreparedStorageCleanupAttempt,
+        result: &StorageCleanupResultFacts,
+        latest_observation: &StorageResidueObservation,
+    ) -> Result<(), StoreError> {
+        if latest_observation.kind != StorageResidueKind::ChromeCodeSignClone {
+            return Err(StoreError::Invalid(
+                "storage cleanup results must remain typed".to_owned(),
+            ));
+        }
+        let payload_json = serde_json::to_string(latest_observation)?;
+        if payload_json.len() > MAX_STORAGE_RESIDUE_OBSERVATION_BYTES {
+            return Err(StoreError::Invalid(
+                "storage residue observation exceeds its storage bound".to_owned(),
+            ));
+        }
+        let disposition = result.disposition;
+        if result.planned_candidate_count > result.before_candidate_count {
+            return Err(StoreError::Invalid(
+                "a storage cleanup plan cannot exceed the observed candidate set".to_owned(),
+            ));
+        }
+        // Validate the aggregate counts in usize space first, so no invariant
+        // can be satisfied by an overflowing or wrapping conversion.
+        match disposition {
+            StorageCleanupDisposition::Complete | StorageCleanupDisposition::Partial => {
+                let (Some(removed), Some(after_count), Some(_), Some(retained_not_planned)) = (
+                    result.removed_candidate_count,
+                    result.after_candidate_count,
+                    result.after_logical_bytes,
+                    result.retained_not_planned_count,
+                ) else {
+                    return Err(StoreError::Invalid(
+                        "a complete or partial storage cleanup result requires proved counts"
+                            .to_owned(),
+                    ));
+                };
+                if removed != result.planned_candidate_count {
+                    return Err(StoreError::Invalid(
+                        "a complete or partial storage cleanup result must remove every planned candidate"
+                            .to_owned(),
+                    ));
+                }
+                let expected_after = match disposition {
+                    // Complete: nothing is left at all.
+                    StorageCleanupDisposition::Complete => 0,
+                    // Partial: only unplanned residue is left.
+                    _ => retained_not_planned,
+                };
+                if after_count != expected_after {
+                    return Err(StoreError::Invalid(
+                        "a storage cleanup result must be internally consistent".to_owned(),
+                    ));
+                }
+            }
+            StorageCleanupDisposition::Failed => {
+                if let (Some(removed), Some(after_count), Some(_), Some(retained_not_planned)) = (
+                    result.removed_candidate_count,
+                    result.after_candidate_count,
+                    result.after_logical_bytes,
+                    result.retained_not_planned_count,
+                ) {
+                    let Some(retained_planned) =
+                        result.planned_candidate_count.checked_sub(removed)
+                    else {
+                        return Err(StoreError::Invalid(
+                            "a storage cleanup result cannot remove unplanned candidates"
+                                .to_owned(),
+                        ));
+                    };
+                    if after_count.checked_sub(retained_planned) != Some(retained_not_planned) {
+                        return Err(StoreError::Invalid(
+                            "a storage cleanup result must be internally consistent".to_owned(),
+                        ));
+                    }
+                }
+            }
+            StorageCleanupDisposition::DeliveryUnknown => {
+                return Err(StoreError::Invalid(
+                    "delivery_unknown results are only recorded by recovery".to_owned(),
+                ));
+            }
+        }
+        let removed = result
+            .removed_candidate_count
+            .map(|value| sqlite_usize(value, "storage cleanup removed candidate count"))
+            .transpose()?;
+        let after_count = result
+            .after_candidate_count
+            .map(|value| sqlite_usize(value, "storage cleanup after candidate count"))
+            .transpose()?;
+        let after_bytes = result
+            .after_logical_bytes
+            .map(|value| sqlite_u64(value, "storage cleanup after logical bytes"))
+            .transpose()?;
+        let retained_not_planned = result
+            .retained_not_planned_count
+            .map(|value| sqlite_usize(value, "storage cleanup retained candidate count"))
+            .transpose()?;
+        let planned = sqlite_usize(
+            result.planned_candidate_count,
+            "storage cleanup planned candidate count",
+        )?;
+        let before_count = sqlite_usize(
+            result.before_candidate_count,
+            "storage cleanup observed candidate count",
+        )?;
+        let before_bytes = sqlite_u64(
+            result.before_logical_bytes,
+            "storage cleanup observed logical bytes",
+        )?;
+        // A terminal result may only report after-counts that its own latest
+        // residue observation actually proves.
+        if let (Some(after_count), Some(after_bytes)) =
+            (result.after_candidate_count, result.after_logical_bytes)
+            && (after_count != latest_observation.candidate_count
+                || after_bytes != latest_observation.logical_bytes)
+        {
+            return Err(StoreError::Invalid(
+                "a storage cleanup result must agree with its latest residue observation"
+                    .to_owned(),
+            ));
+        }
+        let completed_at = sqlite_millis(
+            latest_observation.observed_at_unix_millis,
+            "storage cleanup completion timestamp",
+        )?;
+        let observed_at = sqlite_millis(
+            latest_observation.observed_at_unix_millis,
+            "storage residue observation timestamp",
+        )?;
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let updated = transaction.execute(
+            "UPDATE storage_cleanup_attempts
+             SET completed_at_ms = ?1, disposition = ?2, removed_candidate_count = ?3,
+                 after_candidate_count = ?4, after_logical_bytes = ?5,
+                 retained_not_planned_count = ?6
+             WHERE id = ?7 AND attempt_token = ?8 AND disposition IS NULL
+                 AND planned_candidate_count = ?9
+                 AND before_candidate_count = ?10
+                 AND before_logical_bytes = ?11",
+            params![
+                completed_at,
+                disposition.as_str(),
+                removed,
+                after_count,
+                after_bytes,
+                retained_not_planned,
+                prepared.id,
+                prepared.attempt_token,
+                planned,
+                before_count,
+                before_bytes
+            ],
+        )?;
+        if updated != 1 {
+            return Err(StoreError::Invalid(
+                "storage cleanup attempt is not open or its result facts disagree with PREPARED"
+                    .to_owned(),
+            ));
+        }
+        transaction.execute(
+            "INSERT INTO storage_residue_latest (
+                 kind, observed_at_ms, payload_json
+             ) VALUES ('chrome_code_sign_clone', ?1, ?2)
+             ON CONFLICT(kind) DO UPDATE SET
+                 observed_at_ms = excluded.observed_at_ms,
+                 payload_json = excluded.payload_json",
+            params![observed_at, payload_json],
+        )?;
+        transaction.commit()?;
+        Ok(())
+    }
+
+    /// Finalizes every nonterminal storage cleanup attempt as
+    /// `delivery_unknown`. Used at startup and before a fresh attempt so an
+    /// interrupted PREPARED record is never silently rehabilitated into a
+    /// success claim.
+    pub fn recover_storage_cleanup_attempts(
+        &self,
+        occurred_at_unix_millis: u64,
+    ) -> Result<usize, StoreError> {
+        let occurred_at = sqlite_millis(
+            occurred_at_unix_millis,
+            "storage cleanup recovery timestamp",
+        )?;
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let recovered = finalize_unknown_storage_cleanup_attempts(&transaction, occurred_at)?;
+        transaction.commit()?;
+        Ok(recovered)
+    }
+
+    /// Latest durability view of the current storage cleanup family, newest
+    /// first regardless of terminal state. This is the only honest input for a
+    /// public summary: a newer PREPARED attempt must mask an older success.
+    pub fn latest_storage_cleanup_attempt(
+        &self,
+    ) -> Result<Option<StorageCleanupAttemptRecord>, StoreError> {
+        let connection = self.connection()?;
+        let row = connection
+            .query_row(
+                "SELECT attempt_token, prepared_at_ms, completed_at_ms, disposition,
+                    planned_candidate_count, before_candidate_count, before_logical_bytes,
+                    removed_candidate_count, after_candidate_count, after_logical_bytes,
+                    retained_not_planned_count
+             FROM storage_cleanup_attempts
+             WHERE kind = 'chrome_code_sign_clone'
+             ORDER BY id DESC LIMIT 1",
+                [],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, Option<i64>>(2)?,
+                        row.get::<_, Option<String>>(3)?,
+                        row.get::<_, i64>(4)?,
+                        row.get::<_, i64>(5)?,
+                        row.get::<_, i64>(6)?,
+                        row.get::<_, Option<i64>>(7)?,
+                        row.get::<_, Option<i64>>(8)?,
+                        row.get::<_, Option<i64>>(9)?,
+                        row.get::<_, Option<i64>>(10)?,
+                    ))
+                },
+            )
+            .optional()?;
+        row.map(
+            |(
+                attempt_token,
+                prepared_at,
+                completed_at,
+                disposition,
+                planned,
+                before_count,
+                before_bytes,
+                removed,
+                after_count,
+                after_bytes,
+                retained,
+            )| {
+                Ok(StorageCleanupAttemptRecord {
+                    attempt_token,
+                    prepared_at_unix_millis: parse_nonnegative_millis(
+                        prepared_at,
+                        "storage cleanup preparation timestamp",
+                    )?,
+                    completed_at_unix_millis: completed_at
+                        .map(|value| {
+                            parse_nonnegative_millis(value, "storage cleanup completion timestamp")
+                        })
+                        .transpose()?,
+                    disposition: disposition
+                        .map(|value| {
+                            StorageCleanupDisposition::parse(&value).ok_or_else(|| {
+                                StoreError::Corrupt(
+                                    "unknown storage cleanup disposition".to_owned(),
+                                )
+                            })
+                        })
+                        .transpose()?,
+                    planned_candidate_count: parse_nonnegative_usize(
+                        planned,
+                        "storage cleanup planned candidate count",
+                    )?,
+                    before_candidate_count: parse_nonnegative_usize(
+                        before_count,
+                        "storage cleanup observed candidate count",
+                    )?,
+                    before_logical_bytes: parse_nonnegative_u64(
+                        before_bytes,
+                        "storage cleanup observed logical bytes",
+                    )?,
+                    removed_candidate_count: removed
+                        .map(|value| parse_nonnegative_usize(value, "removed candidate count"))
+                        .transpose()?,
+                    after_candidate_count: after_count
+                        .map(|value| parse_nonnegative_usize(value, "after candidate count"))
+                        .transpose()?,
+                    after_logical_bytes: after_bytes
+                        .map(|value| parse_nonnegative_u64(value, "after logical bytes"))
+                        .transpose()?,
+                    retained_not_planned_count: retained
+                        .map(|value| {
+                            parse_nonnegative_usize(value, "retained not-planned candidate count")
+                        })
+                        .transpose()?,
+                })
+            },
+        )
         .transpose()
     }
 
@@ -3487,6 +3873,24 @@ fn validate_required_schema(connection: &Connection) -> Result<(), StoreError> {
             "storage_residue_latest",
             &["kind", "observed_at_ms", "payload_json"],
         ),
+        (
+            "storage_cleanup_attempts",
+            &[
+                "id",
+                "kind",
+                "attempt_token",
+                "prepared_at_ms",
+                "completed_at_ms",
+                "disposition",
+                "planned_candidate_count",
+                "before_candidate_count",
+                "before_logical_bytes",
+                "removed_candidate_count",
+                "after_candidate_count",
+                "after_logical_bytes",
+                "retained_not_planned_count",
+            ],
+        ),
         ("mutation_authority", &["singleton", "namespace_token"]),
         (
             "impact_attribution_legacy",
@@ -3774,13 +4178,16 @@ fn initialize_schema(connection: &mut Connection) -> Result<(), StoreError> {
     transaction.execute_batch(attribution::SCHEMA_SQL)?;
     // Older schemas have all reached the v7 impact shape at this point. Run
     // the v9 attribution repair for every versioned pre-v9 database, including
-    // direct v1..v6 -> v10 upgrades; a brand-new unversioned database already
+    // direct v1..v6 -> v11 upgrades; a brand-new unversioned database already
     // starts with current empty authority and needs no legacy provenance row.
     if (1..9).contains(&user_version) {
         attribution::repair_legacy_impacts(&transaction)?;
     }
     if user_version < 10 {
         transaction.execute_batch(session_owners::SESSION_OWNER_SCHEMA_SQL)?;
+    }
+    if user_version < 11 {
+        transaction.execute_batch(STORAGE_CLEANUP_ATTEMPT_SCHEMA_SQL)?;
     }
     transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     transaction.commit()?;
@@ -4484,6 +4891,37 @@ const SCHEMA_SQL: &str = "CREATE TABLE cleanup_attempts (
      );
      CREATE INDEX ordinary_mutation_receipts_recent
          ON ordinary_mutation_receipts (committed_at_ms DESC, namespace_token, mutation_id);";
+
+/// Schema-v11 storage cleanup attempt/result authority. The row is PREPARED
+/// before any directory deletion and finalized in one transaction together
+/// with the latest residue observation. It deliberately stores only public-safe
+/// aggregate facts: no candidate names, paths, argv or raw identities.
+const STORAGE_CLEANUP_ATTEMPT_SCHEMA_SQL: &str =
+    "CREATE TABLE IF NOT EXISTS storage_cleanup_attempts (
+         id INTEGER PRIMARY KEY AUTOINCREMENT,
+         kind TEXT NOT NULL CHECK (kind IN ('chrome_code_sign_clone')),
+         attempt_token TEXT NOT NULL UNIQUE CHECK (length(attempt_token) = 32),
+         prepared_at_ms INTEGER NOT NULL CHECK (prepared_at_ms >= 0),
+         completed_at_ms INTEGER CHECK (completed_at_ms >= prepared_at_ms),
+         disposition TEXT CHECK (
+             disposition IN ('complete', 'partial', 'failed', 'delivery_unknown')
+         ),
+         planned_candidate_count INTEGER NOT NULL
+             CHECK (planned_candidate_count >= 0),
+         before_candidate_count INTEGER NOT NULL CHECK (before_candidate_count >= 0),
+         before_logical_bytes INTEGER NOT NULL CHECK (before_logical_bytes >= 0),
+         removed_candidate_count INTEGER CHECK (removed_candidate_count >= 0),
+         after_candidate_count INTEGER CHECK (after_candidate_count >= 0),
+         after_logical_bytes INTEGER CHECK (after_logical_bytes >= 0),
+         retained_not_planned_count INTEGER CHECK (retained_not_planned_count >= 0),
+         CHECK (planned_candidate_count <= before_candidate_count),
+         CHECK (
+             (completed_at_ms IS NULL AND disposition IS NULL)
+             OR (completed_at_ms IS NOT NULL AND disposition IS NOT NULL)
+         )
+     );
+     CREATE INDEX IF NOT EXISTS storage_cleanup_attempts_recent
+         ON storage_cleanup_attempts (kind, id DESC);";
 
 const MANAGED_LIFECYCLE_SQL: &str = "CREATE TABLE IF NOT EXISTS managed_lifecycle (
          singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
@@ -5489,6 +5927,35 @@ fn sqlite_millis(value: u64, label: &str) -> Result<i64, StoreError> {
 
 fn sqlite_u64(value: u64, label: &str) -> Result<i64, StoreError> {
     i64::try_from(value).map_err(|_| StoreError::Range(format!("{label} overflowed i64")))
+}
+
+fn sqlite_usize(value: usize, label: &str) -> Result<i64, StoreError> {
+    i64::try_from(value).map_err(|_| StoreError::Range(format!("{label} overflowed i64")))
+}
+
+fn parse_nonnegative_u64(value: i64, label: &str) -> Result<u64, StoreError> {
+    u64::try_from(value).map_err(|_| StoreError::Corrupt(format!("{label} is negative")))
+}
+
+fn parse_nonnegative_usize(value: i64, label: &str) -> Result<usize, StoreError> {
+    usize::try_from(value).map_err(|_| StoreError::Corrupt(format!("{label} is negative")))
+}
+
+/// Finalizes every nonterminal storage cleanup attempt as `delivery_unknown`.
+/// A PREPARED attempt that outlived its process can never be proved by a later
+/// observation, so it is never rehabilitated into a success claim.
+fn finalize_unknown_storage_cleanup_attempts(
+    transaction: &Transaction<'_>,
+    completed_at_ms: i64,
+) -> Result<usize, StoreError> {
+    let updated = transaction.execute(
+        "UPDATE storage_cleanup_attempts
+         SET completed_at_ms = MAX(?1, prepared_at_ms),
+             disposition = 'delivery_unknown'
+         WHERE disposition IS NULL",
+        params![completed_at_ms],
+    )?;
+    Ok(updated)
 }
 
 fn current_unix_millis() -> Result<u64, StoreError> {

@@ -38,9 +38,10 @@ public struct BrowserHomeView: View {
         case .coverage:
             BrowserCoverageSection(notices: overview.coverageNotices)
         case .storageResidue:
-            if let residue = overview.storageResidue {
-                StorageResidueSection(residue: residue)
-            }
+            StorageResidueSection(
+                residue: overview.storageResidue,
+                cleanupResult: overview.storageCleanupResult
+            )
         case .sessions:
             BrowserSessionsSection(sessions: overview.sessions)
         case .savedProtections:

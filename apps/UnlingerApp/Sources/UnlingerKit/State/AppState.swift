@@ -225,7 +225,7 @@ public final class AppState {
                     history = snapshot.history
                     presentationChanged = true
                 }
-                if browserSnapshot != snapshot.browser {
+                if browserSnapshot?.hasSameObservableMeaning(as: snapshot.browser) != true {
                     browserSnapshot = snapshot.browser
                     presentationChanged = true
                 }
@@ -469,5 +469,15 @@ public final class AppState {
         if browserHistoryEntries != historyEntries {
             browserHistoryEntries = historyEntries
         }
+    }
+}
+
+private extension BrowserOverviewSnapshot {
+    func hasSameObservableMeaning(as other: BrowserOverviewSnapshot) -> Bool {
+        var lhs = self
+        var rhs = other
+        lhs.generatedAtUnixMillis = 0
+        rhs.generatedAtUnixMillis = 0
+        return lhs == rhs
     }
 }

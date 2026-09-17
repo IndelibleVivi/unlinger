@@ -92,7 +92,7 @@ A pending candidate must be accepted or rolled back before another install, unin
 # "$UNLINGER_CLI" service rollback-candidate --json
 ```
 
-Acceptance keeps report-only mode. After reviewing [support](SUPPORT.md) and [safety](SAFETY.md), an operator may explicitly enable process cleanup:
+Acceptance keeps report-only mode. After reviewing [support](SUPPORT.md) and [safety](SAFETY.md), an operator may explicitly enable the supported automatic cleanup:
 
 ```bash
 "$UNLINGER_CLI" service set-mode enforce --json
@@ -100,6 +100,10 @@ Acceptance keeps report-only mode. After reviewing [support](SUPPORT.md) and [sa
 # Return to observation:
 "$UNLINGER_CLI" service set-mode report-only --json
 ```
+
+`enforce` authorizes two bounded families and nothing else. It enables automatic process cleanup for CONFIRMED sessions under every existing protection, stability and lifetime gate, and it enables directory deletion inside exactly one admitted storage family: the current user's `com.google.Chrome.code_sign_clone` clone root beside the macOS per-user temporary directory, and only its `code_sign_clone.*` candidate directories that the scanner admitted, proved present unchanged across two consecutive observations, and proved unreferenced by an exact executable or absolute-argv path or a matching `--type=code-sign-clone-cleanup` helper. Non-targets that enforce never deletes include your browser profile and user data, downloads, caches, cookies or saved authentication state, other applications, other users' files, and any directory outside that admitted candidate set. Report-only observes and reports the same family without mutating anything.
+
+`enforce` 只授权两类有界清理。一是在全部既有保护、稳定性与生命周期门槛下清理已确认（CONFIRMED）的进程；二是只在一个被明确接纳的存储家族内删除目录：当前用户在 macOS 每用户临时目录旁的 `com.google.Chrome.code_sign_clone` clone 根，并且只限其中经扫描器接纳、连续两次观察保持同一身份、且被证明没有任何精确可执行文件/绝对 argv 路径或匹配的 `--type=code-sign-clone-cleanup` helper 引用的 `code_sign_clone.*` 候选目录。enforce 明确不会删除浏览器 profile 与用户数据、下载、缓存、cookie 或已保存的登录状态、其他应用、其他用户的文件，以及任何未纳入该候选集的目录。report-only 观察并报告同一家族，但不做任何变更。
 
 A timed-out mutation may already have committed: read `service status` before deciding what to do; do not blindly resend it. The installer does not create or update a PATH symlink. Keep the exact CLI path or deliberately update your shell entry when accepting a different generation.
 
