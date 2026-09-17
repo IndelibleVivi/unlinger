@@ -1,5 +1,6 @@
 /* Browser overview */
 "browser.overview.clear" = "未发现受支持的浏览器遗留";
+"browser.overview.clear.detail" = "目前没有符合 Unlinger 支持范围、需要清理的浏览器会话或存储残留。";
 "browser.overview.active" = "浏览器自动化正在运行";
 "browser.overview.active.detail" = "已识别的浏览器会话仍处于正常控制中。";
 "browser.overview.verifying" = "一个浏览器会话可能已失去控制";

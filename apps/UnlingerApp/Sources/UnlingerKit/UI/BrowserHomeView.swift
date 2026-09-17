@@ -19,6 +19,7 @@ public struct BrowserHomeView: View {
         }
         .scrollIndicators(.never)
         .frame(maxHeight: 520)
+        .navigationTitle("Unlinger")
     }
 
     @ViewBuilder

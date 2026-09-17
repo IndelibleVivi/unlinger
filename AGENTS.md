@@ -17,19 +17,23 @@ terminal result plus latest residue observation in one transaction, and
 `delivery_unknown` recovery without later-count inference. Source Playwright pack `0.6.0`
 keeps task-owned CLI `1.63.0-alpha-2026-08-31` and exactly admits host-owned
 ordinary CLI `1.62.1`; other packs remain `0.4.0`. The installed service is
-accepted generation 34 with SQLite v10 and the per-candidate clone policy from
-`a8aed45`. Generation 33 completed restart checks and a real rollback to
-generation 32 before the same exact artifact was freshly installed, accepted
-and armed as generation 34; it is currently healthy `ReadyEnforce`. With
-ordinary Chrome continuously open, two production-interval observations then
-removed eight stable unreferenced clones while retaining the one candidate
-containing the live main executable: candidate count 9→1 and observed logical
-bytes 13,273,958,043→1,474,884,227. Current source and installed generation
+accepted generation 36 with SQLite v11, the per-candidate clone policy from
+`a8aed45` and durable cleanup-result authority from `a9355fa`. Generation 35
+completed restart/App checks and a real rollback to generation 34 reopening its
+restored v10 database before the same exact backend artifact was freshly
+installed, accepted and armed as generation 36; it is currently healthy
+`ReadyEnforce` with no rollback lease. Earlier generation 34, with ordinary
+Chrome continuously open, removed eight stable unreferenced clones while
+retaining the one candidate containing the live main executable: candidate
+count 9→1 and observed logical bytes
+13,273,958,043→1,474,884,227. Current source and installed generation
 narrowly treat that exact non-cleanup `Google Chrome` main executable as
 complete protection for its admitted `.app.bundle` candidate; every other
-missing-bundle case remains globally incomplete. This is one bounded field
-result, not multi-day evidence or guaranteed physical APFS reclaim. The
-canonical schema-v5 App is the installed `c17e60f` memory-repair build.
+missing-bundle case remains globally incomplete. This is one bounded
+generation-34 field result, not generation-36 durable-result proof, multi-day evidence or
+guaranteed physical APFS reclaim. The canonical schema-v5 App retains the
+`c17e60f` memory repair, presents the v11 cleanup result and includes the
+installed bilingual clear-detail localization correction.
 The installed clone path adds owner-approved automatic cleanup for the exact
 Chrome `code_sign_clone` storage family: report-only still never
 mutates; valid enforce evaluates each candidate identity independently across
@@ -39,12 +43,12 @@ through descriptor-relative no-follow operations followed by immediate rescan.
 Ordinary Chrome/Chrome-Helper processes outside candidates do not block, and a
 live candidate does not block stable unreferenced siblings. The per-candidate
 gate and narrow `.app.bundle` correction are installed and supplied the bounded
-field result above. Installed App `c17e60f` replaces the diagnosed SwiftUI popup
+field result above. The installed App replaces the diagnosed SwiftUI popup
 Accessibility adaptor with one idempotent native `NSPopUpButton` path,
 suppresses equal-state publications and clears the ordinary-window controller's
-direct host ownership on close. Current uninstalled App source retains those
-repairs, fixes the bounded presentation regressions recorded in tests, and
-adds typed presentation of the source-only latest storage cleanup result.
+direct host ownership on close. It also carries the bounded presentation
+regressions recorded in tests and typed presentation of the installed latest
+storage cleanup result.
 Current daemon source also
 derives executable identity from the process's already-mapped Darwin vnode
 rather than reopening `pidpath`, and permits only an exact transaction-owned
@@ -53,22 +57,23 @@ unhealthy `FirstScanReportOnly` instance to enter coordinated rollback drain.
 Generation-23 / SQLite-v8 / Playwright-0.5.0 statements below are historical
 rollback or controlled-cleanup evidence. The candidate preserves frontend
 v5/v4/v3, operator v1, process-only artifact policy, default report-only mode and
-every existing signal gate. Full daemon source gates and the `c17e60f`
-exact-head CI pass; installed App `c17e60f` passed 91 Swift tests, a 460-probe
-Accessibility/RSS lane, a 900-sample real-daemon packaged guard and a
-2,400-sample installed-App guard with a 22,192 KiB maximum. Current source has
-additional App changes and must not borrow those installed results. Do not treat
-source tests or old field acceptance as ambient or multi-day acceptance, and do
-not open a migrated v11 DB with a pre-v11 binary. `docs/current-state.md` owns the
+every existing signal gate. Backend `a9355fa` passed exact-head CI and the
+current App passes 101 Swift tests and release bundling. The installed App's
+Settings/native-popup surface passed a 180-sample guard with a 37,520 KiB
+maximum during repeated Accessibility traversal; the earlier `c17e60f` process
+passed its 2,400-sample guard and later reached 18h45m at 12,992 KiB. Do not
+treat source tests or old field acceptance as ambient or multi-day acceptance,
+and do not open a migrated v11 DB with a pre-v11 binary except through the
+transactional rollback that restores its v10 snapshot. `docs/current-state.md` owns the
 exact installed and activation boundary.
 
 ## Current hard boundary
 
-The ordinary daemon default remains report-only. Accepted installed generation 34 contains Playwright `0.6.0`, other packs `0.4.0`, SQLite v10, mapped-vnode executable identity, the transaction-rollback recovery correction and the exact `.app.bundle`-aware per-candidate clone gate from `a8aed45`. Generation 33 installed at the report-only floor, passed App/socket checks and restart, actually rolled back to healthy generation 32, and the same exact artifact was freshly installed, accepted and armed as generation 34. It is currently healthy `ReadyEnforce`. The installed schema-v5 App is `c17e60f`. Generation 34 supplied the bounded 9→1 clone field result above without restarting ordinary Chrome. `docs/current-state.md` owns the exact evidence. Historical generation-15/17/19/23/25/30/32 results must not be borrowed as generation-34 process cleanup, broader ambient or multi-day acceptance. The original generation-17 SQLite-I/O failure cause remains unknown.
+The ordinary daemon default remains report-only. Accepted installed generation 36 contains Playwright `0.6.0`, other packs `0.4.0`, SQLite v11, mapped-vnode executable identity, transaction rollback recovery, the exact `.app.bundle`-aware per-candidate clone gate from `a8aed45` and durable cleanup-result authority from `a9355fa`. Generation 35 installed at the report-only floor, migrated v10→v11, passed App/socket checks and restart, actually rolled back to healthy generation 34 reopening v10, and the same exact backend artifact was freshly installed, accepted and armed as generation 36. It is currently healthy `ReadyEnforce`; the installed schema-v5 App presents the optional v11 result and retains the native-popup memory repair. Historical generation 34 supplied the bounded 9→1 clone field result above without restarting ordinary Chrome, but generation 36 has not yet produced a v11 live deletion/result. `docs/current-state.md` owns the exact evidence. Historical generation-15/17/19/23/25/30/32/34 results must not be borrowed as generation-36 process cleanup, durable-result field proof, broader ambient or multi-day acceptance. The original generation-17 SQLite-I/O failure cause remains unknown.
 
 - Inspect `unlinger service status` before replacing or reloading the active service. Use the transactional service CLI rather than manual binary/plist copying or ad hoc `launchctl` mutation unless diagnosing that lifecycle itself.
 - Apply the current user authorization to the live-service scope. A request to repair and restore the installed service authorizes the necessary transactional recovery/replacement and restoration of its existing policy; do not request the same permission again merely because this file records an older installed generation. A source-only task must preserve the active service. Do not run a second `unlingerd --enforce`, uninstall, widen eligibility or enable file deletion outside the authorized task and its demonstrated ownership boundary.
-- The owner observed a second installed-App runaway to about 19 GB on 2026-09-16. A system CPU-resource report captured growth from 42 MiB to about 2.0 GiB in 138 seconds on the main SwiftUI/AttributeGraph thread, dominated by `AppKitPopUpAdaptor` item Accessibility attributed-text updates; the owner then Force Quit that exact App with SIGTERM. The old App is not credited with later low-memory samples. The recoverably installed `c17e60f` App removes that popup adaptor from the three affected controls and adds equal-publication/closed-window regressions; its exact installed process passed 2,400 one-second RSS samples with a 22,192 KiB maximum and remained running. This is bounded installed evidence, not a uniquely reproduced trigger or multi-day acceptance. Existing rollback Apps must remain intact.
+- The owner observed a second installed-App runaway to about 19 GB on 2026-09-16. A system CPU-resource report captured growth from 42 MiB to about 2.0 GiB in 138 seconds on the main SwiftUI/AttributeGraph thread, dominated by `AppKitPopUpAdaptor` item Accessibility attributed-text updates; the owner then Force Quit that exact App with SIGTERM. The old App is not credited with later low-memory samples. The current App retains `c17e60f`'s native-popup/equal-publication/closed-window repair; that earlier exact process passed 2,400 one-second RSS samples with a 22,192 KiB maximum and later reached 18h45m at 12,992 KiB. The current installed Settings/native-popup surface passed 180 one-second samples with a 37,520 KiB maximum during repeated Accessibility traversal. These are bounded installed results, not a uniquely reproduced trigger or multi-day acceptance. Existing rollback Apps must remain intact.
 - Tests may signal only a process they create and retain exact ownership of; the macOS integration test uses an isolated `/bin/sleep` child.
 - `crates/unlinger-daemon/tests/cft_fieldlab.rs` is an ignored, explicit owner-approved live path. It requires a Chrome-for-Testing app bundle, refuses ordinary Chrome, scopes every signal to exact identities admitted from its unique profile tree, and retains its profile for inspection. Its fast timing profile proves mechanics only; set `UNLINGER_FIELDLAB_FULL_TIMING=1` for the production 90/15/60 timing contract.
 - `crates/unlinger-daemon/tests/managed_cft_fieldlab.rs` is the installed-generation acceptance path. It additionally exercises exact managed lifecycle identity, fresh-epoch re-arm after a same-generation restart, retry suppression, final report-only containment, and the current process-only invariant: no runtime-artifact candidate and zero receipt/journal artifact actions. Run it only with its explicit acknowledgement environment and an exact active-generation CLI path.
@@ -76,15 +81,15 @@ The ordinary daemon default remains report-only. Accepted installed generation 3
 - The dormant artifact path still has two known P2 residuals: a crash after canonical-to-quarantine rename may strand the exact quarantine entry, and the final pathname revalidation-to-`unlinkat` interval retains a same-UID swap TOCTOU. Historical generation-9 and generation-13 controlled runs removed the admitted DAP; do not turn those point results into current artifact acceptance or re-enable any pack flag without a separate owner decision after the residuals are resolved or explicitly accepted.
 - Managed `Failed` is terminal for that daemon instance. `Disarm` may durably remove any stale signal authority but must not rehabilitate it; replacement proceeds only through exact generation/instance validation, `BeginDrain`, captured-process bootout, and a fresh report-only restart. A ready report-only service acceptance also requires a stable quiescent projection: no scan or cleanup in progress.
 - IPC clients make one bounded attempt. The ordinary/default and service clients use a 15-second I/O timeout; each accepted server connection uses 3 seconds and the daemon serves at most eight connections concurrently. Never automatically resend a timed-out mutation or lifecycle command, because its delivery may already have committed; read back exact state instead. The managed field harness is the narrow exception only for read-only exact-incident `Explain`: it polls on a separate worker and may retry `not_found`, unavailable, or transient local I/O within its overall deadline while native identity sampling continues.
-- Installed generation 34 and the native App use frontend schema v5 with strict v4 and v3 compatibility endpoints, operator schema v1, and SQLite v10. The App emits v5 only and requires the daemon-owned atomic `browser_overview`, including impact/residue and observation-span facts. Frontend schemas expose only `unlinger-protocol` ordinary commands/public DTOs and contain no lifecycle command. Schema v2 is historical and must receive typed `unsupported_schema`; never silently downgrade the App to v4, v3 or v1.
+- Installed generation 36 and the native App use frontend schema v5 with strict v4 and v3 compatibility endpoints, operator schema v1, and SQLite v11. The App emits v5 only and requires the daemon-owned atomic `browser_overview`, including impact/residue, optional storage-cleanup-result and observation-span facts. Frontend schemas expose only `unlinger-protocol` ordinary commands/public DTOs and contain no lifecycle command. Schema v2 is historical and must receive typed `unsupported_schema`; never silently downgrade the App to v4, v3 or v1.
 - Independent cleanup-impact authority, observation spans, exact CfT `152.0.7977.42` eligibility and observe-only Chrome clone reporting remain installed. Task release supplies lifetime evidence only; it is never storage-deletion authority.
-- Generation 34 is accepted, healthy `ReadyEnforce`, and has no rollback lease. Its current PATH CLI symlink points to the exact generation-34 binary. Future replacements must perform their applicable transaction proof. A successful scan must never rehabilitate a terminal Failed instance. Rollback persists `RollbackInProgress` before physical mutation and replays only transaction-owned selection states until the prior report-only generation is healthy. Only rollback of the exact transaction-owned selection may disarm and drain an unhealthy, non-ready `FirstScanReportOnly` instance; ordinary install and uninstall still require a stable ready or terminal-failed projection.
+- Generation 36 is accepted, healthy `ReadyEnforce`, and has no rollback lease. Its current PATH CLI symlink points to the exact generation-36 binary. Future replacements must perform their applicable transaction proof. A successful scan must never rehabilitate a terminal Failed instance. Rollback persists `RollbackInProgress` before physical mutation and replays only transaction-owned selection states until the prior report-only generation is healthy. Only rollback of the exact transaction-owned selection may disarm and drain an unhealthy, non-ready `FirstScanReportOnly` instance; ordinary install and uninstall still require a stable ready or terminal-failed projection.
 - Whole-plan `FAILED` and public `cleared_with_residue` may coexist. A known no-removal artifact disposition after exact tree absence/revival proof keeps an incident attention/retry block but does not by itself fail the managed daemon closed. Any process/artifact delivery uncertainty, open PREPARED action, or unproved failure after a delivered side effect still triggers global fail-close.
 - The installed process-only policy retains all deterministic gates, durable abandonment grace, frozen-plan revalidation, exact identity signals, terminal receipts, bounded revival behavior, durable process-action journaling, restart recovery, generation-bound arming, fresh enforcement-epoch cooling, and report-only rollback. Runtime-artifact admission remains disabled. Do not describe one controlled run plus one stable ambient sweep as multi-day dogfood or an ordinary ambient eligible cleanup.
 
 - Optional ordinary session ownership is defined by `docs/IPC.md`: a path-free registry namespace plus unchanged session name, same-user authenticated registrar, exact live child owner, exact allowlisted controller version and exact controller identity within the activation/release window. Active, absent, reused, unsupported or unproved ownership stays protected. The source primitive is not a supported Codex adapter and does not satisfy the Phase-2 install-and-forget or dogfood exit gate by itself.
 
-- Task lifetime is defined by `docs/TASKS.md`: source SQLite v11 and installed SQLite v10, gated actual command owner, schema-v1 local peer/capability commands, immutable release and exact controller bindings. Source and installed Playwright pack `0.6.0` retain task-owned CLI `1.63.0-alpha-2026-08-31`; the other packs stay `0.4.0`. Task release must never arm, bypass cooling/protection, synthesize impact or adopt old/unrelated sessions.
+- Task lifetime is defined by `docs/TASKS.md`: source and installed SQLite v11, gated actual command owner, schema-v1 local peer/capability commands, immutable release and exact controller bindings. Source and installed Playwright pack `0.6.0` retain task-owned CLI `1.63.0-alpha-2026-08-31`; the other packs stay `0.4.0`. Task release must never arm, bypass cooling/protection, synthesize impact or adopt old/unrelated sessions.
 - `crates/unlinger-cli/tests/task_run.rs` owns the gated-launch/exec-owner integration tests and the ignored task-owned CfT field lane. The latter requires its explicit acknowledgement and exact local CfT/core paths, retains private evidence, uses production timing and an additional signal identity scope, and preserves an unrelated control session. It does not operate the installed daemon.
 
 ## Canonical paths

@@ -1,5 +1,6 @@
 /* Browser overview */
 "browser.overview.clear" = "No supported browser leftovers found";
+"browser.overview.clear.detail" = "There are currently no browser sessions or storage leftovers that meet Unlinger's supported cleanup rules.";
 "browser.overview.active" = "Browser automation is running";
 "browser.overview.active.detail" = "Recognized browser sessions are still under active control.";
 "browser.overview.verifying" = "A browser session may have lost control";
