@@ -10,7 +10,7 @@
       "observed_at_unix_millis": 1788148799000,
       "freshness": "current",
       "healthy": true,
-      "effective_mode": "report_only",
+      "effective_mode": "enforce",
       "phase": "clear",
       "sessions": [],
       "coverage_notices": [],
@@ -44,7 +44,7 @@
         "items": []
       },
       "support_catalog": {
-        "support_revision": "rules:agent-browser@0.4.0|playwright@0.4.0|puppeteer@0.4.0",
+        "support_revision": "rules:agent-browser@0.4.0|playwright@0.6.0|puppeteer@0.4.0",
         "families": [
           {
             "family": "agent-browser",
