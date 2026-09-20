@@ -29,6 +29,8 @@ Unlinger maintains abandoned automation resources on macOS: verified browser-pro
 
 [Support truth](docs/SUPPORT.md) distinguishes recognition, automatic eligibility and field evidence.
 
+pnpm `11.21.0` is excluded from unattended cache maintenance: a controlled native-prune test interrupted an active Git dependency installation. The [cache safety guide](docs/SAFETY.md#why-pnpm-11210-is-not-admitted) includes the exact boundary and an isolated reproducer.
+
 ## Try it without installing a service
 
 You need Rust **1.98.0**, macOS command-line developer tools and Git. The App additionally needs **Swift 6.0+**; its bundle verification uses Python 3 (no ripgrep dependency).

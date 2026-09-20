@@ -150,3 +150,51 @@ cargo test -p unlinger-daemon --lib tool_cache -- --include-ignored --test-threa
 This requires the inspected Homebrew npm/cacache installation. It does not target
 the user's cache; ordinary workspace tests use portable control/store/parser
 fixtures and leave this installed-producer lane ignored.
+
+### Why pnpm 11.21.0 is not admitted
+
+The native `store prune` command does not satisfy the concurrent-use requirement
+for unattended maintenance. In the inspected 11.21.0 distribution,
+`storeController/prune` unconditionally removes `storeDir/tmp`, while
+`createCafsStore.tempDir` allocates active Git-fetch directories there. The Git
+fetcher still needs that directory for checkout and package import after clone.
+No shared exclusion protects this interval from a separate prune process.
+
+The [isolated concurrency probe](../scripts/pnpm-prune-concurrency-probe.py)
+reproduces this using an unmodified pnpm distribution and a local Git dependency.
+A test-owned Git wrapper pauses after the real clone succeeds, before returning
+to pnpm. The control resumes immediately and installs successfully. The second
+case runs native prune against the same test-owned store before resuming:
+
+| Case | Active temporary directory | Prune exit | Install exit |
+| --- | --- | --- | --- |
+| Control, no prune | retained | not run | 0 |
+| Prune during the paused fetch | deleted | 0 | 1 (`ENOENT`, checkout cwd missing) |
+
+Prune even reports zero removed files/packages in this second case: those
+counters do not account for the active temporary tree it removed. A successful
+prune or a successful probabilistic install/prune race is therefore insufficient
+admission evidence. This proves one failed concurrent installation, not loss of
+existing project content or a defect in every pnpm version.
+
+Run the opt-in probe with Python 3.9+, Git, Node and an existing pnpm 11.21.0
+JavaScript CLI entry (it installs no tool and downloads no package):
+
+```bash
+python3 scripts/pnpm-prune-concurrency-probe.py \
+  --node /path/to/node --pnpm /path/to/pnpm/bin/pnpm.mjs
+```
+
+Exit zero means **the expected admission blocker was reproduced**, not that
+maintenance is safe. The probe uses fresh isolated home/cache/config/data/store
+directories, local `git+file:` input and disabled package scripts. It removes
+only its own disposable fixture tree. `--evidence-dir /path/to/new-directory`
+instead retains those fixtures and logs; an existing directory is refused.
+
+The native command also reaches global virtual-store and dlx/global-install
+cleanup; its complete scope needs separate admission proof. Checking that no
+pnpm process or temporary directory exists before launching prune cannot prevent
+a new installation from starting afterwards. Reconsider this family only with a
+producer-supported concurrency/containment mechanism and fresh counterexample
+tests. Do not substitute process-name checks, custom recursive deletion, or
+require every task to register around the missing mechanism.

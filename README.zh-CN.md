@@ -28,6 +28,8 @@ Unlinger 在 macOS 上维护自动化工作留下的资源：经过验证的浏�
 
 [支持范围](docs/SUPPORT.md) 分别说明“可识别”“允许自动清理”和“有实机证据”，三者不能互换。
 
+pnpm `11.21.0` 暂不纳入无人值守缓存维护：受控测试中，原生 prune 删除了正在使用的 Git 依赖临时目录，导致并发安装失败。[缓存安全说明](docs/SAFETY.md#why-pnpm-11210-is-not-admitted) 记录了具体边界，并提供完全隔离的复现脚本。
+
 ## 不安装服务，先试一次
 
 需要 Rust **1.98.0**、macOS command-line developer tools 和 Git。构建 App 还需要 **Swift 6.0+**；App bundle 验证使用 Python 3，无需 ripgrep。

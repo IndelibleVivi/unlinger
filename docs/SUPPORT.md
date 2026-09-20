@@ -66,3 +66,10 @@ project dependencies, uv caches and pnpm stores are not included. Source and
 isolated evidence do not imply installation or multi-day acceptance. See
 [cache safety](SAFETY.md#native-tool-cache-maintenance) for exact limits and the
 [current state](current-state.md) for verification/installed boundaries.
+
+pnpm `11.21.0` was evaluated and remains unsupported for unattended maintenance:
+native `store prune` removed a live Git-fetch temporary directory and caused a
+concurrent installation to fail in a controlled local reproduction. The same
+installation succeeds without prune. See the [admission blocker and repeatable
+probe](SAFETY.md#why-pnpm-11210-is-not-admitted). This is an exact-version result;
+other pnpm versions have not been admitted by that investigation.

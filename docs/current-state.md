@@ -2,6 +2,28 @@
 
 **Updated:** 2026-09-20. **Programme:** 0.1. **Reader posture:** experimental developer source preview; not a signed/notarized App release or multi-day reliability claim.
 
+## pnpm extension admission blocked (2026-09-20)
+
+The requested next native-cache family was evaluated against pnpm `11.21.0`.
+An isolated local-Git installation succeeds in the control case (exit 0). With
+the same fetch held after clone, native `store prune` returns 0 but removes the
+active `store/v11/tmp` directory; resuming installation fails with `ENOENT`
+(exit 1, checkout cwd missing). No network package or real user cache is needed
+for this counterexample. The final checked-in probe reproduces both cases and
+cleans its own fixtures by default; [cache safety](SAFETY.md#why-pnpm-11210-is-not-admitted)
+owns the command, scope and interpretation.
+
+pnpm automatic maintenance is **not implemented or admitted**. The inspected
+native command also reaches executable global/dlx environment cleanup, which
+has not passed the extension's containment contract. A preliminary successful
+concurrent local-tarball install does not override the controlled failing Git
+case. No per-family schema/App scaffolding was added without an admissible
+second adapter. Existing npm source behavior, SQLite v12 and frontend v5 remain
+unchanged, and the installed service/App and real caches were not modified.
+Verification for this admission change is the native probe and documentation
+checks; the application-wide results below belong to the preceding npm source
+implementation, not a new pnpm implementation or installation.
+
 ## Source tool-cache maintenance (2026-09-20, source-complete)
 
 The owner approved native maintenance of rebuildable tool caches without per-task
