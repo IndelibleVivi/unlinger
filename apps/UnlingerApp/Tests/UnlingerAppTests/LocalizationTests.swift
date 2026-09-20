@@ -49,7 +49,7 @@ struct LocalizationTests {
             "browser.coverage.version_unavailable", "browser.coverage.mixed_versions",
             "browser.coverage.controller_unverified", "browser.coverage.session_owner_unverified",
             "browser.coverage.observation_only",
-            "browser.coverage.control_path_incomplete",
+            "browser.coverage.control_path_incomplete", "browser.coverage.generic",
             "browser.settlement.cleared", "browser.settlement.residue",
             "browser.settlement.revived", "browser.settlement.failed",
             "attention.daemon_unhealthy", "attention.residue", "attention.failed.delivery_unknown",

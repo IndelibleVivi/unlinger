@@ -63,6 +63,7 @@
 
 /* Browser coverage */
 "browser.coverage.title" = "浏览器支持范围";
+"browser.coverage.generic" = "暂时无法完整确认浏览器清理条件；此会话仍受保护。";
 "browser.coverage.unsupported_product" = "这个浏览器产品不在当前自动清理范围内，已保留不动。";
 "browser.coverage.unsupported_version" = "这个浏览器版本尚未进入自动清理支持范围，已保留不动。";
 "browser.coverage.version_unavailable" = "无法确认浏览器版本，因此保留这个会话不动。";

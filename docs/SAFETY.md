@@ -145,6 +145,11 @@ and the exact 0.11.20 implementations of [cache pruning](https://github.com/astr
 and [source-revision pruning](https://github.com/astral-sh/uv/blob/0.11.20/crates/uv-distribution/src/source/mod.rs).
 The latter traverses without following directory symlinks; cache bucket roots,
 ancestors and producer marker/lock shapes are checked before native mutation.
+The owned, single-link regular `.lock` admits uv's intentional `0666` mode;
+[uv-fs sets it explicitly](https://github.com/astral-sh/uv/blob/0.11.20/crates/uv-fs/src/locked_file.rs),
+overriding umask. Its directory must still be owned and not group/world writable,
+and symlinked or hardlinked locks remain refused. The other marker files retain
+the non-group/world-writable requirement.
 All mutation tests create their own caches and canaries; never point validation
 at a user's existing cache. The active adapter and native test lane are under
 `crates/unlinger-daemon/src/tool_cache.rs` and `tool_cache_tests.rs`.

@@ -2,6 +2,31 @@
 
 **Updated:** 2026-09-21. **Programme:** 0.1. **Reader posture:** experimental developer source preview; not a signed/notarized App release or multi-day reliability claim.
 
+## Installed upgrade investigation (2026-09-21, in progress)
+
+Fresh inspection found generation 36 terminal `Failed`, disarmed to report-only,
+with `unable to open database file`. The current SQLite v11 database passed a
+read-only quick check; the earlier failure's cause remains unknown. An
+owner-authorized upgrade installed source `d383667` as generation 37 / SQLite
+v13, passed report-only App/socket checks before and after restart (7 + 7), and
+actually rolled back to generation 36 reopening its restored v11 database,
+healthy and quiescent `ReadyReportOnly`.
+
+The installed uv/uvx pair was updated through the native updater from 0.11.19 to
+exact 0.11.20. Field observation found the adapter rejected the producer's normal
+0666 `.lock`. The focused regression reproduces that refusal; the correction
+admits this native lock mode while preserving owned-root, regular-file,
+single-link and marker protections. The native availability test now initializes
+its test-owned cache through real uv before checking admission. Generation 37
+performed no cache mutation. The matching schema-v5 App is installed; the
+corrected backend remains pending installation and activation. Local format,
+strict workspace clippy, 405 Rust tests (14 opt-in ignored), release build,
+source-only doctor/dry-run, 104 Swift tests and isolated socket checks (7 + 7)
+pass. Native cache initialization and all four containment regressions pass.
+The rebuilt fixture App passed 448 Accessibility traversals with no transient
+misses, max RSS 96,608 KiB and final 10,752 KiB. Its unknown browser-coverage
+message now resolves in both languages instead of exposing an internal key.
+
 ## uv maintenance replacement (2026-09-21, source-complete; not installed)
 
 The owner admitted uv-owned rebuildable cached execution environments under the
@@ -42,9 +67,9 @@ weakened assertions. Neither transient failure's cause is established. Doctor an
 dry-run each observed five unavailable executable identities; these checks do not
 claim complete ambient coverage.
 
-No real user cache, installed tool, installed daemon or installed App was changed. The reference service facts below
-remain the dated generation-36 / SQLite-v11 evidence. A source v13 candidate is
-not installation, activation, field acceptance or release.
+Those source checks changed no real user cache or installed tool/service/App.
+The subsequent authorized installed operation is recorded above; reference facts
+below retain their dated scope.
 
 ## Installed SQLite v11 storage cleanup result authority (2026-09-17)
 

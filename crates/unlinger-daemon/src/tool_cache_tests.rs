@@ -319,6 +319,27 @@ fn execute_supervisor_reaps_child_on_parent_stdin_eof() {
 // ---------------------------------------------------------------------------
 
 #[test]
+fn containment_accepts_native_lock_permissions_but_not_writable_markers() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let root = OwnedRoot::new("native-lock-mode");
+    let cache = root.cache();
+    fs::create_dir_all(&cache).unwrap();
+    fs::write(cache.join(".lock"), b"").unwrap();
+    fs::set_permissions(cache.join(".lock"), fs::Permissions::from_mode(0o666)).unwrap();
+    assert!(fixed_cache_shape_safe(&cache));
+    assert!(preflight_cache_root(&cache, &|| false).is_ok());
+
+    for name in ["CACHEDIR.TAG", ".gitignore"] {
+        fs::write(cache.join(name), b"marker").unwrap();
+        fs::set_permissions(cache.join(name), fs::Permissions::from_mode(0o666)).unwrap();
+        assert!(!fixed_cache_shape_safe(&cache));
+        fs::set_permissions(cache.join(name), fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(fixed_cache_shape_safe(&cache));
+    }
+}
+
+#[test]
 fn containment_rejects_symlinked_bucket_root() {
     let root = OwnedRoot::new("symlink-bucket");
     let cache = root.cache();
@@ -466,6 +487,18 @@ fn availability_reports_available_for_isolated_root() {
     let uv = native_uv();
     let root = OwnedRoot::new("available");
     seed_bucket(&root.cache(), "archive-v0");
+    // Initialize through the real producer: its lock is deliberately 0666,
+    // regardless of umask. An empty synthetic cache missed this native shape.
+    assert_eq!(run_native_live(&uv, &root.cache()).outcome, "completed");
+    use std::os::unix::fs::PermissionsExt;
+    assert_eq!(
+        fs::metadata(root.cache().join(".lock"))
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777,
+        0o666
+    );
     let maintenance =
         UvCacheMaintenance::from_paths(uv, root.cache(), Duration::from_secs(30), &|| false);
     assert_eq!(

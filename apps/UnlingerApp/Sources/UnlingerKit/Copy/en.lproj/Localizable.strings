@@ -63,6 +63,7 @@
 
 /* Browser coverage */
 "browser.coverage.title" = "Browser coverage";
+"browser.coverage.generic" = "Browser eligibility could not be fully verified; this session remains protected.";
 "browser.coverage.unsupported_product" = "This browser product is outside the current automatic-cleanup scope and was left untouched.";
 "browser.coverage.unsupported_version" = "This browser version is not yet supported for automatic cleanup and was left untouched.";
 "browser.coverage.version_unavailable" = "The browser version could not be verified, so the session was left untouched.";

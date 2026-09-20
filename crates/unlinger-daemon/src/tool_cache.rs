@@ -867,7 +867,10 @@ fn fixed_cache_shape_safe(root: &Path) -> bool {
         }
     }
     // The producer's marker files and its exclusive lock must be plain,
-    // single-link, owned regular files where present.
+    // single-link, owned regular files where present. uv-fs deliberately gives
+    // its flock file mode 0666 (overriding umask); writable contents do not grant
+    // authority to replace the inode inside a root writable only by its owner.
+    // Keep the ordinary non-writable rule for the other marker files.
     for name in ["CACHEDIR.TAG", ".gitignore", ".lock"] {
         match std::fs::symlink_metadata(root.join(name)) {
             Err(error) if error.kind() == io::ErrorKind::NotFound => {}
@@ -876,7 +879,7 @@ fn fixed_cache_shape_safe(root: &Path) -> bool {
                     && !meta.file_type().is_symlink()
                     && meta.uid() == uid
                     && meta.nlink() == 1
-                    && meta.mode() & 0o022 == 0 => {}
+                    && (name == ".lock" || meta.mode() & 0o022 == 0) => {}
             _ => return false,
         }
     }
