@@ -2,32 +2,66 @@
 
 **Updated:** 2026-09-21. **Programme:** 0.1. **Reader posture:** experimental developer source preview; not a signed/notarized App release or multi-day reliability claim.
 
-## Installed upgrade investigation (2026-09-21, in progress)
+## Installed uv maintenance (2026-09-21)
 
-Fresh inspection found generation 36 terminal `Failed`, disarmed to report-only,
-with `unable to open database file`. The current SQLite v11 database passed a
-read-only quick check; the earlier failure's cause remains unknown. An
-owner-authorized upgrade installed source `d383667` as generation 37 / SQLite
-v13, passed report-only App/socket checks before and after restart (7 + 7), and
-actually rolled back to generation 36 reopening its restored v11 database,
-healthy and quiescent `ReadyReportOnly`.
+The reference service is accepted generation 39 / SQLite v13, healthy
+`ReadyEnforce`, with no rollback lease; PATH resolves to its exact CLI. The
+installed daemon and schema-v5 App come from `89001f5`, whose
+[exact-head CI](https://github.com/IndelibleVivi/unlinger/actions/runs/35523671670)
+passed. uv and uvx were updated through the native updater from 0.11.19 to exact
+0.11.20. This owner-authorized upgrade includes ordinary native cache maintenance;
+it is not a release or multi-day reliability claim.
 
-The installed uv/uvx pair was updated through the native updater from 0.11.19 to
-exact 0.11.20. Field observation found the adapter rejected the producer's normal
-0666 `.lock`. The focused regression reproduces that refusal; the correction
-admits this native lock mode while preserving owned-root, regular-file,
-single-link and marker protections. The native availability test now initializes
-its test-owned cache through real uv before checking admission. Generation 37
-performed no cache mutation. The matching schema-v5 App is installed; the
-corrected backend remains pending installation and activation. Local format,
-strict workspace clippy, 405 Rust tests (14 opt-in ignored), release build,
-source-only doctor/dry-run, 104 Swift tests and isolated socket checks (7 + 7)
-pass. Native cache initialization and all four containment regressions pass.
-The rebuilt fixture App passed 448 Accessibility traversals with no transient
-misses, max RSS 96,608 KiB and final 10,752 KiB. Its unknown browser-coverage
-message now resolves in both languages instead of exposing an internal key.
+Generation 38 passed report-only App/socket checks before and after restart
+(7 + 7), actually rolled back to generation 36 reopening its restored SQLite v11
+database, and was freshly installed as generation 39. Generation 39 repeated
+report-only socket and restart checks (7 + 7), then was accepted and armed. Both
+installed binaries were compared with the staged release artifacts. Previous App
+bundles and a private pre-upgrade database backup remain recoverable.
 
-## uv maintenance replacement (2026-09-21, source-complete; not installed)
+The first `d383667` candidate (generation 37) exposed a real admission defect:
+uv's normal 0666 `.lock` was refused. A focused regression first reproduced that
+failure, then passed after admitting this native mode while retaining owner,
+regular-file, single-link and non-writable-directory protections. The native
+availability test now initializes a test-owned cache through real uv. Generation
+37 also completed restart and real v13→v11 rollback; it performed no cache
+mutation. Generation 39's first live-cache attempt ran at the normal 15-minute
+opportunity and settled `completed` at 2026-09-21 01:08:06 +08. PREPARED and
+completion were 890 ms apart. Native accounting reported 708 removed entries
+and 32,610,713 rounded logical bytes; SQLite and fresh frontend readback agree.
+The independently observed archive bucket changed from eight entries to six,
+and the cache-environment bucket from one to zero. Those observations do not
+replace native accounting or establish physical APFS reclaim. No manual prune,
+timer override or synthetic injection into the live cache was used.
+
+Across 27 readbacks spanning 792 seconds, the daemon remained healthy enforce.
+The final App process's sampled RSS peaked at 36,272 KiB and sampled CPU at 6.7%
+(most samples were 0%). This is a bounded sparse observation, not a continuous
+resource guard, proof of active-task preservation in this field attempt or
+multi-day acceptance. Active-holder safety remains covered by the isolated
+native lock/interoperability tests. No fresh generation-39 browser-process or
+Chrome-clone deletion is claimed.
+
+Fresh validation for `89001f5`: format, strict workspace clippy, 405 Rust tests
+(14 explicit opt-in ignored), all 11 uv native isolated tests, release build,
+source-only doctor/nonmutating dry-run, 104 Swift tests, bundle verification and
+isolated socket checks (7 + 7). Doctor still reports five unavailable executable
+identities, so it is not complete ambient process coverage. The rebuilt fixture
+App passed 448 Accessibility traversals without transient misses, max RSS
+96,608 KiB and final 10,752 KiB. Unknown browser-coverage copy now resolves in
+both languages instead of exposing an internal key.
+
+Two field issues remain causally unresolved. Before upgrade, generation 36 was
+terminal `Failed`, disarmed to report-only, with `unable to open database file`.
+The live v11 database passed a read-only quick check; its new rollback instance
+was healthy. Neither observation explains the earlier failure. During the
+upgrade, the `d383667` App process became unresponsive at about one CPU core;
+a sample showed SwiftUI lazy-layout/AttributeGraph work and 588.8 MiB physical
+footprint. That exact process was terminated and the final App relaunched. Its
+subsequent observations are separate evidence; the fixture history gate does
+not prove that the live Home-window trigger is fixed.
+
+## uv maintenance source verification (2026-09-21, before installation)
 
 The owner admitted uv-owned rebuildable cached execution environments under the
 native producer lock. Source replaces npm verify with exact uv `0.11.20 cache
@@ -363,7 +397,7 @@ recorded below; no live-browser cleanup, ordinary ambient eligible incident,
 multi-day, installed Accessibility/RSS, packaged-notification, or release
 acceptance is claimed.
 
-## Source, remote and installed state
+## Earlier source and installed evidence (superseded by the 2026-09-21 record)
 
 | Surface | Observed truth |
 | --- | --- |
@@ -387,7 +421,7 @@ repository publication. The earlier generation-34 clone-cleanup result is not
 a generation-36 durable-result field point, multi-day evidence or broad ambient
 process-cleanup acceptance.
 
-## Current installed transaction evidence
+## Historical installed transaction evidence (through 2026-09-17)
 
 The generation-23 baseline was healthy, quiescent `ReadyEnforce` on SQLite v8.
 Generation 24 installed the exact candidate at the report-only floor, migrated
@@ -406,7 +440,7 @@ fresh generation 25 repeated the v10 migration, binary match, report-only
 restart and seven-plus-seven App/socket checks. The owner then accepted the
 candidate, retiring the rollback lease, and explicitly armed generation 25. At
 that stage the owner's ordinary PATH symlink resolved to generation 25 and
-exposed the new `session` surface; it now resolves to generation 36.
+exposed the new `session` surface; it later resolved to generation 36; the current target is recorded above.
 
 The later first App-only memory repair did not replace or restart generation 25.
 After exact-head CI passed, the canonical App was replaced recoverably with the
@@ -568,7 +602,7 @@ The publication candidate passed fresh local formatting, strict workspace clippy
   totals and not evidence of a new generation-36 cleanup.
 - The original generation-17 terminal SQLite disk-I/O failure cause remains unproved. Exact-instance containment/recovery and later transactional replacement succeeded; a later healthy database check does not establish the original cause.
 - The command wrapper does not integrate every Codex App host or browser tool automatically. The optional session-owner primitive introduced in v10 and retained by source v13 has no supported automatic Codex adapter. A bounded feasibility review found that later hooks/observers and turn-level lifecycle events cannot supply the current contract's exact parent/child activation plus thread-to-controller/session binding; a real adapter needs Codex host support. Exact CLI/browser compatibility, lifetime/client proof and all ordinary gates remain required; unregistered, active-owner, reused, unsupported or unverified controllers stay protected.
-- Chrome clone observation accepts the actual `.app.bundle` shape and no-follow framework links. Historical installed generation 34 evaluated candidates independently across two production-interval observations, removed eight stable unreferenced clones and retained the one candidate containing the continuously running ordinary Chrome main. Generation 36 retains that gate and is healthy enforce, but no v11 deletion/result has occurred yet. The generation-34 point does not prove generation-36 result persistence, multi-day behavior, all future Chrome clone shapes or physical APFS reclaim equal to the logical byte reduction.
+- Chrome clone observation accepts the actual `.app.bundle` shape and no-follow framework links. Historical installed generation 34 evaluated candidates independently across two production-interval observations, removed eight stable unreferenced clones and retained the one candidate containing the continuously running ordinary Chrome main. Generation 39 retains that gate; a current-generation clone deletion has not been field-verified. The upgrade readback includes an inherited September-17 terminal v11 result; it is not a generation-39 action. The generation-34 point does not prove generation-36 result persistence, multi-day behavior, all future Chrome clone shapes or physical APFS reclaim equal to the logical byte reduction.
 - All artifact admission is disabled. The dormant DAP engine still has a quarantine-after-crash recovery gap and a final pathname-swap TOCTOU. Native pathname-reference tests also intermittently returned no reference for an owned open ordinary or `O_EVTONLY` descriptor under parallel execution; exact serial tests passed, and the cause is unresolved. The active process path does not use that query. [Safety](SAFETY.md) owns these boundaries.
 - The old zero-deadline offline-lock test failed because a concurrent fork can inherit an `O_CLOEXEC` descriptor until exec. A deterministic owned-child probe established that cause; `f22e08e` retains held-lock denial and gives post-release acquisition its existing bounded wait. The final exact-head CI passed. A later local full workspace run reproduced the separate dormant native-query failures above; no assertions were weakened.
 - The source fixture passed 460 Accessibility-tree probes with zero read failures and an external 22,208 KiB final RSS sample. The installed `628d822` App's earlier 300-sample/one-tree acceptance was superseded by the later 19-GB recurrence. The installed `c17e60f` native-popup repair then passed 2,400 one-second RSS samples with a 22,192 KiB maximum and the same process later reached 18h45m at 12,992 KiB. The current installed cleanup-result/localization/root-title App passed rendered Home/History/Settings navigation and 180 one-second Settings/native-popup samples with a 37,520 KiB maximum during repeated Accessibility traversal. These bounded observations still do not establish the exact intermittent trigger, multi-day App behavior, packaged notifications or every menu organizer/display arrangement.

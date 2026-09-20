@@ -44,7 +44,7 @@ The controlled DAP results repeat one historical exact admitted point across two
 | Transitional frontend endpoint | schema v4 prior overview/response shapes retained without v5-only fields |
 | Legacy-compatible frontend endpoint | schema v3 existing commands/response meaning retained; overview rejected without downgrade |
 | Schema v2 | historical fixtures retained; superseded before installation; current server returns typed `unsupported_schema` |
-| Reference installation | the dated [current-state](current-state.md) evidence owns exact generation, activation and rollback lease; its SQLite-v11 daemon/App have durable Chrome clone-result authority and the native-popup memory repair, but no tool-cache maintenance |
+| Reference installation | the dated [current-state](current-state.md) evidence owns exact generation, activation and rollback lease; its SQLite-v13 daemon/App include native uv maintenance, durable Chrome clone-result authority and the native-popup memory repair |
 | Current source implementation | SQLite v13 adds independent uv maintenance, retained retired npm evidence, optional v5 uv facts and App/CLI presentation; schema v5/v4/v3 plus operator v1, Playwright `0.6.0`, other packs `0.4.0`, exact CfT 151/152 process allowlist, clone-result authority and disabled runtime-artifact flags remain intact |
 
 SQLite v10 has a candidate-specific v8 backup/rollback/open proof: generation 24 really rolled back to healthy, unarmed generation 23 with the old CLI/daemon reopening v8; the exact candidate freshly reinstalled as generation 25, repeated matching-App/socket checks before and after restart, and was accepted before arming. Earlier schema migrations remain historical evidence.
@@ -55,14 +55,17 @@ Synthetic verification proves code paths and counterexamples. Controlled field v
 
 The task-owned lane has isolated controlled process-only evidence for exact CfT 151 and 152, plus historical installed generation-23 CfT-152 cleanup and actual App impact readback. The host-owned ordinary lane is installed with its fixture/store/IPC/CLI and migration proof, but it still has no automatic host adapter or ambient process-cleanup receipt. Unregistered, unsupported or unverified controllers remain protected. Generation 15 separately retains the historical complete managed process/restart/containment point; it is not substituted for current-generation cleanup evidence. Generation 34 supplies one successful bounded per-candidate clone cleanup while ordinary Chrome stayed open, but ordinary ambient process enforcement acceptance remains false. Multi-day dogfood, broader field evidence, Intel/universal, signing/notarization/distribution and public alpha remain open. See [current-state](current-state.md) for dated runtime outcomes and [PRE_V0_1_ACCEPTANCE](PRE_V0_1_ACCEPTANCE.md) for claim levels.
 
-## Native tool-cache family (source candidate)
+## Native tool-cache family
 
 The active non-browser cache adapter is exact `uv 0.11.20 cache prune` at
 `~/.cache/uv`, including producer-owned cached environments under the native
 shared/exclusive lock. It does not adopt custom roots, project `.venv`, npm/npx
 or pnpm environments, and does not upgrade installed tools. Busy native locks
 retry after 15 minutes; ordinary upkeep is weekly and independent of process
-observation. Source is not installed or field-accepted. npm `11.19.0` / cacache
+observation. Generation 39 includes this adapter after v13→v11 rollback/open
+proof and fresh installation; [current state](current-state.md) owns the exact
+activation and bounded live-result evidence (one completed native attempt,
+708 entries / about 32.6 MB logical bytes). npm `11.19.0` / cacache
 `20.0.4` verify is retired because an exact interleaving destroys an active Git
 fetch; its old results remain isolated historical evidence. See
 [cache safety](SAFETY.md#native-tool-cache-maintenance).

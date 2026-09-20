@@ -240,7 +240,7 @@ V1 may expose bounded internal diagnostic identities needed by CLI/service trans
 
 Current source accepts schemas 1, 3, 4 and 5. The source App emits schema v5 only and treats a v4-, v3-, or v1-only endpoint as incompatible rather than silently downgrading. Schema v4 preserves its prior atomic overview and response shapes; schema v3 preserves its existing commands; schema v1 remains operator-only and returns a trusted `unsupported_schema` envelope to an unsupported frontend request.
 
-Current source uses SQLite v13 and serves frontend v5 with v4/v3 compatibility and operator v1. V13 separates current uv authority from retired v12 npm evidence; v11 clone results, v10 optional host ownership and earlier migrations remain intact. The reference installation is generation 36 on SQLite v11. Source migration is not installed acceptance: a v13 replacement needs its own transactional install/restart/rollback proof, restoring the v11 database before the old binary reopens it. [Current state](current-state.md) owns exact installed evidence.
+Current source uses SQLite v13 and serves frontend v5 with v4/v3 compatibility and operator v1. V13 separates current uv authority from retired v12 npm evidence; v11 clone results, v10 optional host ownership and earlier migrations remain intact. The reference installation is generation 39 on SQLite v13. Its same-artifact candidate generation 38 completed transactional install/restart/rollback proof, restoring v11 before the old generation-36 binary reopened it; fresh generation 39 repeated App/socket/restart checks before acceptance and arm. [Current state](current-state.md) owns exact installed evidence.
 
 The service retains the prior snapshot and exact generation identity after candidate readiness, blocks mode/install/uninstall mutations during the lease, and exposes explicit report-only restart, accept and rollback commands. A first install can roll back to the absence of a prior service; an upgrade restores the exact prior generation/database. Readiness, acceptance and enforcement are separate durable states.
 
@@ -333,4 +333,4 @@ ordinary observations must not recover an active cache attempt.
 Operator cleanup activity includes the separate cache activity; browser phase
 continues to describe browser/process work. Paths and raw native output are never
 persisted or sent over IPC. A pre-v13 binary requires rollback's restored database.
-Installed generation 36 remains v11 according to [dated evidence](current-state.md).
+Installed generation 39 uses v13 according to [dated evidence](current-state.md).

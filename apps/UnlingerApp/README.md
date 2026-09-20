@@ -69,22 +69,23 @@ Deterministic product-state QA can instead use `UNLINGER_FIXTURE=browser-clear|b
 
 ## Installed boundary
 
-The reference installation is the schema-v5 App against generation 36 / SQLite
-v11, with durable Chrome clone-result presentation and the native-popup memory
-repair. It does not contain the new source tool-cache section. The source App
-passes 103 Swift tests and release bundling; its fixture-only history/Accessibility
-gate completed 453 probes with no transient read failure, a 69,456 KiB maximum
-and 16,112 KiB final RSS. These are source checks, not installed-App acceptance.
+The reference installation is the schema-v5 App against generation 39 / SQLite
+v13, with the uv maintenance section, durable Chrome clone-result presentation
+and the native-popup memory repair. The `89001f5` App passes 104 Swift tests,
+release bundling and the fixture history/Accessibility gate: 448 probes, no
+transient read failure, maximum RSS 96,608 KiB and final 10,752 KiB. Those are
+fixture checks; installed daemon/App checks and runtime observations are
+recorded separately in [current-state](../../docs/current-state.md).
 
-The dated installed evidence includes a 180-sample Settings/Accessibility guard
-with a 37,520 KiB maximum, and the earlier exact `c17e60f` process's 2,400-sample
-guard and later 18h45m observation. Earlier displaced bundles remain recoverable.
-The intermittent runaway trigger and multi-day acceptance remain open. See
-[current-state](../../docs/current-state.md) for exact source, installation and
-field boundaries, and [installed dogfood](../../docs/INSTALLED_DOGFOOD.md) for the
-transactional install/restart/rollback procedure.
-
-The strongest installed claim remains bounded memory-repair evidence, an
-accepted private enforcement service and one historical per-candidate clone
-cleanup. No uv maintenance installation or live-cache result, signed
-distribution or public release is claimed.
+During the upgrade, the earlier `d383667` App instance became unresponsive with
+one core busy in SwiftUI lazy-layout/AttributeGraph updates. Its exact process
+was sampled and terminated; the final bundle was then installed and relaunched.
+The final process remained running during 27 sparse resource
+samples over 792 seconds, with RSS at most 36,272 KiB and CPU at most 6.7%;
+this does not prove window-interaction health. The trigger remains unresolved;
+passing the history fixture is not proof that
+this live Home-window path is fixed. The earlier dated 180-sample Settings guard
+and `c17e60f` observations remain historical memory-repair evidence. Earlier
+bundles remain recoverable. See the [installed dogfood runbook](../../docs/INSTALLED_DOGFOOD.md)
+for the transaction procedure. Multi-day App reliability, signing/notarization
+and public binary release remain unverified.
