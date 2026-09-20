@@ -1,71 +1,126 @@
-//! Bounded, native npm download-cache (`_cacache`) maintenance.
+//! Bounded, native uv cache (`~/.cache/uv`) maintenance.
 //!
 //! Unlinger does not implement cache garbage collection. This module discovers
-//! the *producer's own* bundled `cacache` library and invokes its public
-//! `verify(...)` API in-process through a tiny JavaScript driver
-//! (`tool_cache_driver.js`). The only first family is the default npm download
-//! content cache at `$HOME/.npm/_cacache` (npm 11.19.0 / cacache 20.0.4).
+//! the *producer's own* `uv` binary and invokes its public `uv cache prune`
+//! command through a small supervised child. The admitted family is the default
+//! uv cache at `$HOME/.cache/uv` (uv 0.11.20).
 //!
-//! The `_cacache` tree is a *rebuildable* content-addressed cache: a missing
-//! tarball is a cache miss that the producer re-fetches, so an unattended sweep
-//! needs no per-task registration. It is explicitly *not* the npx runtime tree
-//! (`_npx`), the log directory (`_logs`), or the whole `~/.npm` directory.
+//! Removal policy (exact uv 0.11.20 `Cache::prune`, see `uv-cache/src/lib.rs`):
+//! - `uv_distribution::prune` first removes obsolete source revisions using
+//!   revision pointers and a WalkDir traversal that does not follow symlinks;
+//! - top-level *stale buckets* that are not a known `CacheBucket` are removed;
+//! - every entry in `environments-v2/*` is removed wholesale (cached execution
+//!   environments are never referenced by symlinks);
+//! - every `archive-v0/*` entry is removed only when no `wheels-*`/`sdists-*`
+//!   symlink resolves to it; a referenced archive is kept;
+//! - internal `wheels-*`/`sdists-*` archive *symlinks* are legitimate and are
+//!   followed only to compute references, never deleted as their targets.
+//!
+//! `--ci` and `--force` are never passed: ordinary retention stays intact and
+//! in-use protection is never bypassed.
 //!
 //! Safety posture:
 //! - Diagnostics never carry raw paths outside transient memory; nothing here
 //!   persists a path, an argument, or native output.
-//! - The child is `env_clear`ed and given only fixed absolute paths, so
-//!   `NODE_OPTIONS`, `NODE_PATH`, `NODE_COMPILE_CACHE`, and user npm config can
-//!   never influence it.
-//! - The parent holds the child's stdin write end for the whole child lifetime;
-//!   the driver aborts on EOF, so a daemon crash cannot leave an indefinite GC.
-//! - Only the exact child we spawned is ever signalled and reaped.
+//! - The native child is `env_clear`ed and given only fixed absolute paths plus
+//!   the exact non-network knobs; no ambient config, proxy, or `UV_*` variable
+//!   can influence it.
+//! - The native mutator does not exit on stdin EOF, so a directly spawned `uv`
+//!   could outlive a crashed daemon. `start` therefore spawns *this same
+//!   executable* in a hidden supervisor mode that retains the exact `uv` child
+//!   and kills/reaps it on parent EOF or deadline. Only exact children are ever
+//!   signalled and reaped.
+//! - The producer's own cache lock protects concurrent `uv run` owners: while
+//!   any normal uv process holds the shared `.lock`, an exclusive `cache prune`
+//!   waits and, past `UV_LOCK_TIMEOUT`, refuses *before* mutating. That refusal
+//!   is the only `Busy` signal.
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::io::{self, Read};
 use std::os::fd::AsRawFd;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, ChildStdin, Command, Stdio};
 use std::time::{Duration, Instant};
 
 use unlinger_protocol::{ToolCacheAvailability, ToolCacheOutcome};
 
-/// Exact producer versions this adapter has been verified against. A mismatch is
-/// `Unsupported`, never a silent best-effort run: the native counter semantics
-/// and the containment assumptions are version-specific.
-const EXPECTED_NPM_VERSION: &str = "11.19.0";
-const EXPECTED_CACACHE_VERSION: &str = "20.0.4";
+/// Exact producer version this adapter has been verified against. A mismatch is
+/// `Unsupported`, never a silent best-effort run: the native removal semantics,
+/// the human summary, and the containment assumptions are version-specific.
+const EXPECTED_UV_VERSION: &str = "0.11.20";
 
 /// Fixed installation prefixes. No PATH is consulted; only these exact absolute
-/// roots are probed for a real `node` and the bundled npm package.
+/// roots are probed for a real `uv` binary.
 const FIXED_PREFIXES: [&str; 2] = ["/opt/homebrew/bin", "/usr/local/bin"];
 
 /// Fixed home-relative fallback prefix, used only when the sibling `bin` layout
-/// is observed to exist.
+/// is observed to exist. This is where a per-user uv installation lives.
 const HOME_PREFIX_BIN: &str = ".local/bin";
+
+/// The default uv cache directory relative to the effective user home.
+const HOME_CACHE_UV: &str = ".cache/uv";
 
 /// The child's only output is one small JSON object. Anything larger is a
 /// protocol violation and is refused rather than buffered.
 const STDOUT_CAP_BYTES: usize = 16 * 1024;
 
-/// Total wall-clock budget for one native maintenance run. `cacache.verify`
-/// walks the content tree and checksums live content; a few seconds is typical
-/// and larger caches may exceed the bound. Timeout is delivery-unknown.
+/// Upper bound on captured native stderr while parsing the human summary. The
+/// producer's summary is a handful of lines; anything larger is treated as a
+/// protocol violation and the run is not parsed.
+const STDERR_CAP_BYTES: usize = 64 * 1024;
+
+/// Total wall-clock budget for one native maintenance run. `uv cache prune`
+/// walks the cache buckets; larger caches may exceed the bound. Timeout is
+/// delivery-unknown.
 const DEFAULT_RUNTIME_BUDGET: Duration = Duration::from_secs(120);
+
+/// Bounded wait for the producer's exclusive cache lock. A normal `uv run`
+/// holder releases the shared lock only when its child exits; a bounded wait
+/// turns a still-held lock into a provable pre-mutation `Busy` refusal instead
+/// of an unbounded stall. Mirrored into `UV_LOCK_TIMEOUT`.
+const NATIVE_LOCK_TIMEOUT_SECS: u64 = 15;
+
+/// Extra grace the parent gives the supervisor to settle (reap its uv child)
+/// after the parent's stdin closes or the budget expires.
+const SUPERVISOR_SETTLE_GRACE: Duration = Duration::from_secs(NATIVE_LOCK_TIMEOUT_SECS + 10);
 
 /// Poll cadence while waiting for the child.
 const POLL_INTERVAL: Duration = Duration::from_millis(50);
 
-/// The fixed `_cacache` bucket entries that the native sweep touches. The
-/// preflight rejects a symlinked root or a symlinked entry in any of these
-/// fixed buckets; the producer never legitimately creates symlinks here, so a
-/// symlink is evidence of an unexpected cache shape and fails closed.
-const SCANNED_BUCKETS: [&str; 3] = ["content-v2", "index-v5", "tmp"];
+/// Exact stderr phase marker the producer prints *before* mutating when the
+/// cache is held by another uv process. Its absence rules out `Busy`.
+const BUSY_PHASE_MARKER: &str = "Cache is currently in-use, waiting for other uv processes";
+
+/// Exact stderr marker the producer prints when it refuses a held lock.
+const BUSY_TIMEOUT_MARKER: &str = "when waiting for lock on";
+
+/// Exact stderr marker the producer prints once it begins mutating. Its
+/// presence means a `Busy` classification must be rejected.
+const MUTATION_START_MARKER: &str = "Pruning cache at:";
+
+/// Exact successful no-work summary printed when nothing was unused.
+const SUMMARY_NO_UNUSED: &str = "No unused entries found";
+
+/// Exact successful summary printed when the cache root does not exist.
+const SUMMARY_NO_CACHE: &str = "No cache found at:";
+
+/// The `Removed <count> <noun> (<human>)` summary the producer prints on a
+/// successful non-empty prune.
+const SUMMARY_REMOVED_PREFIX: &str = "Removed ";
+
+/// The hidden argv flag the daemon intercepts before normal CLI parsing. Kept
+/// here so the adapter and the entry point cannot drift apart.
+pub const NATIVE_CACHE_CHILD_FLAG: &str = "--native-cache-child";
 
 /// A native maintenance result. `removed_entry_count`/`removed_logical_bytes`
-/// are the producer's own counters and are only ever present on a completed run;
-/// they are never a measured physical-space reclaim.
+/// are the producer's own summary numbers and are only ever present on a
+/// completed run whose summary line was recognized; they are never a measured
+/// physical-space reclaim. The count is what the producer reports; the byte
+/// figure is the producer's human-rounded value and is therefore approximate.
+///
+/// A successful run whose summary was *not* recognized yields `Completed` with
+/// `None` accounting — never an invented zero.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ToolCacheNativeResult {
     pub outcome: ToolCacheOutcome,
@@ -81,42 +136,61 @@ impl ToolCacheNativeResult {
             removed_logical_bytes: None,
         }
     }
+
+    fn failed() -> Self {
+        Self {
+            outcome: ToolCacheOutcome::Failed,
+            removed_entry_count: None,
+            removed_logical_bytes: None,
+        }
+    }
+
+    fn busy() -> Self {
+        Self {
+            outcome: ToolCacheOutcome::Busy,
+            removed_entry_count: None,
+            removed_logical_bytes: None,
+        }
+    }
 }
 
-/// A discovered, allowlisted npm producer bound to one exact `_cacache` root.
+/// A discovered, allowlisted uv producer bound to one exact cache root.
 ///
-/// Construction is the only place discovery runs. `start` revalidates the bound
-/// identity immediately before spawning.
+/// Construction is the only place discovery and version proof run. `start`
+/// revalidates only cheap metadata identity immediately before spawning, so it
+/// never runs discovery or waits while holding the daemon's IPC/status lock.
 #[derive(Clone, Debug)]
-pub struct NpmCacheMaintenance {
-    node_binary: PathBuf,
+pub struct UvCacheMaintenance {
+    uv_binary: PathBuf,
     binding: Option<ProducerBinding>,
     root_identity: Option<(u64, u64)>,
     initial_availability: ToolCacheAvailability,
-    cacache_package: PathBuf,
     cache_root: PathBuf,
     runtime_budget: Duration,
 }
 
-impl NpmCacheMaintenance {
-    /// Discover the current user's supported npm producer and its default
-    /// download cache. Never consults PATH, a shell, or user npm config.
+impl UvCacheMaintenance {
+    /// Discover the current user's supported uv producer and its default cache.
+    /// Never consults PATH, a shell, or ambient uv config. The version proof
+    /// (`uv --version`) runs here, outside any daemon lock.
     pub fn discover(should_cancel: impl Fn() -> bool) -> Result<Self, ToolCacheAvailability> {
         let home = PathBuf::from(
             crate::paths::effective_user_home(unsafe { libc::geteuid() })
                 .map_err(|_| ToolCacheAvailability::Unavailable)?,
         );
-        let cache_root = home.join(".npm").join("_cacache");
+        let cache_root = home.join(HOME_CACHE_UV);
 
-        let (node_binary, cacache_package) = discover_producer(&home)?;
+        let (uv_binary, proved_binding) = discover_producer(&home, &should_cancel)?;
 
         let maintenance = Self::from_paths(
-            node_binary,
-            cacache_package,
+            uv_binary,
             cache_root,
             DEFAULT_RUNTIME_BUDGET,
             &should_cancel,
         );
+        if maintenance.binding.as_ref() != Some(&proved_binding) {
+            return Err(ToolCacheAvailability::Unavailable);
+        }
         match maintenance.initial_availability {
             ToolCacheAvailability::Available => Ok(maintenance),
             other => Err(other),
@@ -124,18 +198,16 @@ impl NpmCacheMaintenance {
     }
 
     fn from_paths(
-        node_binary: PathBuf,
-        cacache_package: PathBuf,
+        uv_binary: PathBuf,
         cache_root: PathBuf,
         runtime_budget: Duration,
         should_cancel: &impl Fn() -> bool,
     ) -> Self {
         let mut maintenance = Self {
-            binding: ProducerBinding::capture(&node_binary, &cacache_package).ok(),
+            binding: ProducerBinding::capture(&uv_binary).ok(),
             root_identity: directory_identity(&cache_root),
             initial_availability: ToolCacheAvailability::Unavailable,
-            node_binary,
-            cacache_package,
+            uv_binary,
             cache_root,
             runtime_budget,
         };
@@ -143,8 +215,8 @@ impl NpmCacheMaintenance {
         maintenance
     }
 
-    /// Recompute the current availability without mutating anything. Bounded
-    /// to five seconds of local traversal; no native mutator is invoked.
+    /// Recompute the current availability without mutating anything. Only fixed paths are inspected; no native mutator is invoked. The
+    /// version proof is metadata-bound in this path (see `availability`).
     #[must_use]
     pub fn observe(&self, should_cancel: impl Fn() -> bool) -> ToolCacheAvailability {
         self.availability(&should_cancel)
@@ -154,10 +226,13 @@ impl NpmCacheMaintenance {
         if should_cancel() {
             return ToolCacheAvailability::Unavailable;
         }
-        if !self.producer_is_allowlisted() {
-            return ToolCacheAvailability::Unsupported;
-        }
-        if self.binding.is_none() {
+        // `observe` runs on the daemon observation path; it must not fork a
+        // subprocess under a lock. The initial version proof already ran during
+        // discovery and the producer binding pins the exact binary inode, so a
+        // later observe only revalidates that metadata identity.
+        if self.binding.is_none()
+            || self.binding.as_ref() != ProducerBinding::capture(&self.uv_binary).ok().as_ref()
+        {
             return ToolCacheAvailability::Unavailable;
         }
         match preflight_cache_root(&self.cache_root, should_cancel) {
@@ -167,41 +242,16 @@ impl NpmCacheMaintenance {
         }
     }
 
-    fn producer_is_allowlisted(&self) -> bool {
-        if !self.node_binary.is_absolute()
-            || !self.cacache_package.is_absolute()
-            || !self.node_binary.is_file()
-            || !self.cacache_package.is_dir()
-        {
-            return false;
-        }
-        if read_package_version(&self.cacache_package, "cacache").as_deref()
-            != Some(EXPECTED_CACACHE_VERSION)
-        {
-            return false;
-        }
-        // The cacache package must live inside a real bundled npm package at
-        // the allowlisted version. `cacache_package` is `<npm-root>/node_modules/cacache`,
-        // so the npm package root is two levels up.
-        let Some(npm_root) = self.cacache_package.parent().and_then(Path::parent) else {
-            return false;
-        };
-        read_package_version(npm_root, "npm").as_deref() == Some(EXPECTED_NPM_VERSION)
-    }
-
-    /// Revalidate identity and immediately spawn the native child. The caller is
-    /// responsible for the PREPARED record and for observing the returned
-    /// running handle; `start` never returns a partial success.
-    pub fn start(&self) -> io::Result<RunningNpmMaintenance> {
-        // Discovery has already checked the tree outside the IPC gate. Normal
-        // cacache writers do not introduce symlinks. Rebind the exact producer,
-        // root and fixed buckets here without a recursive walk under the gate.
+    /// Revalidate identity and immediately spawn the supervised native child. The
+    /// caller is responsible for the PREPARED record and for observing the
+    /// returned running handle; `start` never returns a partial success.
+    ///
+    /// Only cheap, metadata-bound identity is revalidated here; the exact
+    /// producer version was proved during discovery. Only the owned supervisor
+    /// spawn occurs under the caller's status/IPC lock; waiting happens outside it.
+    pub fn start(&self) -> io::Result<RunningUvMaintenance> {
         if self.initial_availability != ToolCacheAvailability::Available
-            || !self.producer_is_allowlisted()
-            || self.binding.as_ref()
-                != ProducerBinding::capture(&self.node_binary, &self.cacache_package)
-                    .ok()
-                    .as_ref()
+            || self.binding.as_ref() != ProducerBinding::capture(&self.uv_binary).ok().as_ref()
             || self.binding.is_none()
             || self.root_identity.is_none()
             || self.root_identity != directory_identity(&self.cache_root)
@@ -209,45 +259,48 @@ impl NpmCacheMaintenance {
         {
             return Err(io::Error::new(
                 io::ErrorKind::NotFound,
-                "npm cache maintenance is no longer available",
+                "uv cache maintenance is no longer available",
             ));
         }
 
-        let mut command = Command::new(&self.node_binary);
+        // The native mutator does not exit on stdin EOF, so spawn *ourselves* in
+        // the hidden supervisor mode. The supervisor retains the exact uv child
+        // and reaps it on parent EOF or deadline.
+        let supervisor = std::env::current_exe()?;
+        let mut command = Command::new(supervisor);
         command
-            .arg("-e")
-            .arg(include_str!("tool_cache_driver.js"))
-            .arg("--")
-            .arg(&self.cacache_package)
+            .arg(NATIVE_CACHE_CHILD_FLAG)
+            .arg(&self.uv_binary)
             .arg(&self.cache_root)
             .env_clear()
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null());
 
-        Ok(RunningNpmMaintenance::from_child(
+        Ok(RunningUvMaintenance::from_child(
             command.spawn()?,
             self.runtime_budget,
         ))
     }
 }
 
-/// An owned, running native maintenance child. Only this exact child is ever
+/// An owned, running supervised maintenance child. Only this exact child is ever
 /// signalled and reaped.
 #[derive(Debug)]
-pub struct RunningNpmMaintenance {
+pub struct RunningUvMaintenance {
     child: Child,
     stdout: std::process::ChildStdout,
     output: Vec<u8>,
     readable: bool,
-    /// Retained to keep the driver's stdin write end open. Dropped when `wait`
-    /// consumes the handle (including on the cancel/timeout paths).
-    _stdin: std::process::ChildStdin,
+    /// The supervisor's stdin write end, retained for the whole child lifetime.
+    /// Taking it (and dropping it) is how the parent tells the supervisor it is
+    /// gone so the supervisor reaps the exact uv child.
+    stdin: Option<ChildStdin>,
     started_at: Instant,
     runtime_budget: Duration,
 }
 
-impl RunningNpmMaintenance {
+impl RunningUvMaintenance {
     fn from_child(mut child: Child, runtime_budget: Duration) -> Self {
         let stdin = child.stdin.take().expect("requested piped stdin");
         let stdout = child.stdout.take().expect("requested piped stdout");
@@ -260,28 +313,32 @@ impl RunningNpmMaintenance {
             stdout,
             output: Vec::new(),
             readable,
-            _stdin: stdin,
+            stdin: Some(stdin),
             started_at: Instant::now(),
             runtime_budget,
         }
     }
 
-    /// Wait for the child, polling `should_cancel` between reads. The callback is
-    /// how the caller aborts an exact running child on a lifecycle change.
+    /// Wait for the supervised child, polling `should_cancel` between reads. The
+    /// callback is how the caller aborts an exact running child on a lifecycle
+    /// change.
     ///
-    /// Result semantics:
-    /// - exit 0 with a well-formed JSON object → `Completed` (all-zero counters
-    ///   are reported as `NoOp`) with the native counters;
+    /// Result semantics, from the supervisor's typed terminal object:
+    /// - exit 0 with a well-formed object → the produced outcome
+    ///   (`Completed`, including all-zero counters, or pre-mutation `Busy`);
     /// - spawn/exec failure or a refused preflight → `Failed` with no counters;
-    /// - non-zero exit → `Failed` (partial effects possible);
-    /// - timeout, cancel, or unparsable output → `DeliveryUnknown`
-    ///   with no counters, because the native run may have deleted content.
+    /// - non-zero exit, timeout, cancel, or unparsable/oversized output →
+    ///   `DeliveryUnknown` with no counters, because the native run may have
+    ///   deleted content.
+    ///
+    /// On cancel or timeout the parent first closes the supervisor's stdin (so
+    /// the supervisor reaps the exact uv child) and waits a bounded settle grace
+    /// before only then killing the supervisor.
     pub fn wait(mut self, mut should_cancel: impl FnMut() -> bool) -> ToolCacheNativeResult {
         let deadline = self.started_at + self.runtime_budget;
         loop {
             if !self.readable || !self.drain_output() {
-                self.kill_and_reap();
-                return ToolCacheNativeResult::delivery_unknown();
+                return self.settle_and_reap(ToolCacheNativeResult::delivery_unknown());
             }
             match self.child.try_wait() {
                 Ok(Some(status)) => {
@@ -289,25 +346,21 @@ impl RunningNpmMaintenance {
                         return ToolCacheNativeResult::delivery_unknown();
                     }
                     return if status.success() {
-                        parse_native_result(&self.output)
+                        parse_supervisor_result(&self.output)
                             .unwrap_or_else(ToolCacheNativeResult::delivery_unknown)
                     } else {
-                        ToolCacheNativeResult {
-                            outcome: ToolCacheOutcome::Failed,
-                            removed_entry_count: None,
-                            removed_logical_bytes: None,
-                        }
+                        ToolCacheNativeResult::delivery_unknown()
                     };
                 }
                 Ok(None) => {}
                 Err(_) => {
-                    self.kill_and_reap();
-                    return ToolCacheNativeResult::delivery_unknown();
+                    return self.settle_and_reap(ToolCacheNativeResult::delivery_unknown());
                 }
             }
             if should_cancel() || Instant::now() >= deadline {
-                self.kill_and_reap();
-                return ToolCacheNativeResult::delivery_unknown();
+                // Request settlement: close stdin so the supervisor reaps its own
+                // uv child, then wait a bounded grace before signalling.
+                return self.settle_and_reap(ToolCacheNativeResult::delivery_unknown());
             }
             std::thread::sleep(POLL_INTERVAL);
         }
@@ -331,75 +384,440 @@ impl RunningNpmMaintenance {
         }
     }
 
-    fn kill_and_reap(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-    }
-}
-
-impl Drop for RunningNpmMaintenance {
-    fn drop(&mut self) {
-        if !matches!(self.child.try_wait(), Ok(Some(_))) {
-            self.kill_and_reap();
+    /// Ask the supervisor to settle (by closing its stdin) and give it a bounded
+    /// grace to reap its own uv child before, as a last resort, killing the
+    /// supervisor. Returns `result` unchanged.
+    fn settle_and_reap(&mut self, result: ToolCacheNativeResult) -> ToolCacheNativeResult {
+        drop(self.stdin.take());
+        let deadline = Instant::now() + SUPERVISOR_SETTLE_GRACE;
+        loop {
+            if matches!(self.child.try_wait(), Ok(Some(_))) {
+                return result;
+            }
+            if Instant::now() >= deadline {
+                let _ = self.child.kill();
+                let _ = self.child.wait();
+                return result;
+            }
+            std::thread::sleep(POLL_INTERVAL);
         }
     }
 }
 
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct NativeCounters {
-    reclaimed_count: u64,
-    reclaimed_size: u64,
-    bad_content_count: u64,
+impl Drop for RunningUvMaintenance {
+    fn drop(&mut self) {
+        if !matches!(self.child.try_wait(), Ok(Some(_))) {
+            // Ordinary cancel/drop: close stdin so the supervisor reaps the exact
+            // uv child, and wait a bounded grace before only then killing the
+            // supervisor itself.
+            let _ = self.settle_and_reap(ToolCacheNativeResult::delivery_unknown());
+        }
+    }
 }
 
-fn parse_native_result(bytes: &[u8]) -> Option<ToolCacheNativeResult> {
-    let stats: NativeCounters = serde_json::from_slice(bytes).ok()?;
-    if stats.bad_content_count > stats.reclaimed_count {
+/// The single typed object the supervisor writes on stdout.
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct SupervisorResult {
+    pub(crate) outcome: String,
+    #[serde(default)]
+    pub(crate) removed_entry_count: Option<u64>,
+    #[serde(default)]
+    pub(crate) removed_logical_bytes: Option<u64>,
+}
+
+/// Translate the supervisor's typed terminal object into a native result.
+///
+/// Consistency is enforced strictly: `busy` and `failed` may not carry counts,
+/// `completed` may carry counts only if both are present, and any unknown
+/// outcome is refused (delivery-unknown), never reinterpreted.
+fn parse_supervisor_result(bytes: &[u8]) -> Option<ToolCacheNativeResult> {
+    if bytes.is_empty() || bytes.len() > STDOUT_CAP_BYTES {
         return None;
     }
-    Some(ToolCacheNativeResult {
-        outcome: if stats.reclaimed_count == 0 && stats.reclaimed_size == 0 {
-            ToolCacheOutcome::NoOp
-        } else {
-            ToolCacheOutcome::Completed
+    let parsed: SupervisorResult = serde_json::from_slice(bytes).ok()?;
+    match parsed.outcome.as_str() {
+        "completed" => match (parsed.removed_entry_count, parsed.removed_logical_bytes) {
+            (None, None) => Some(ToolCacheNativeResult {
+                outcome: ToolCacheOutcome::Completed,
+                removed_entry_count: None,
+                removed_logical_bytes: None,
+            }),
+            (Some(count), Some(bytes)) => Some(ToolCacheNativeResult {
+                outcome: ToolCacheOutcome::Completed,
+                removed_entry_count: Some(count),
+                removed_logical_bytes: Some(bytes),
+            }),
+            _ => None,
         },
-        removed_entry_count: Some(stats.reclaimed_count),
-        removed_logical_bytes: Some(stats.reclaimed_size),
-    })
+        "busy"
+            if parsed.removed_entry_count.is_none() && parsed.removed_logical_bytes.is_none() =>
+        {
+            Some(ToolCacheNativeResult::busy())
+        }
+        "failed"
+            if parsed.removed_entry_count.is_none() && parsed.removed_logical_bytes.is_none() =>
+        {
+            Some(ToolCacheNativeResult::failed())
+        }
+        _ => None,
+    }
+}
+
+/// The result of parsing the producer's human summary.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum HumanSummary {
+    /// A recognized non-empty removal: exact count plus the producer's rounded
+    /// byte figure.
+    Removed { count: u64, bytes: u64 },
+    /// A recognized successful no-op (`No unused entries found` /
+    /// `No cache found at:`), which is a Completed run with zero entries removed.
+    NoWork,
+    /// A successful run whose summary line was not recognized. The run finished
+    /// but removed an unknown amount; never an invented zero.
+    Unrecognized,
+}
+
+/// Parse the producer's own human summary from captured stderr.
+///
+/// The exact uv 0.11.20 summary lines (stderr) are:
+/// - `Pruning cache at: <path>` (diagnostic; the path is never persisted)
+/// - `Removed <N> file(s) (<human>)` or `Removed <N> directory(ies) (<human>)`
+/// - `No unused entries found`
+/// - `No cache found at: <path>` — the absence case; nothing was removed.
+///
+/// Only these exact shapes are recognized. A `Removed` line whose noun or byte
+/// figure is not exactly understood is `Unrecognized`, never fabricated as
+/// zero. The byte figure is the producer's human-rounded value, so it is
+/// approximate, never a measured reclaim. No raw path or raw output is returned.
+fn parse_human_summary(stderr: &str) -> HumanSummary {
+    let mut has_no_unused = false;
+    let mut has_no_cache = false;
+    for line in stderr.lines() {
+        let line = line.trim();
+        if line == SUMMARY_NO_UNUSED {
+            has_no_unused = true;
+            continue;
+        }
+        if line.starts_with(SUMMARY_NO_CACHE) {
+            has_no_cache = true;
+            continue;
+        }
+        let Some(rest) = line.strip_prefix(SUMMARY_REMOVED_PREFIX) else {
+            continue;
+        };
+        match parse_removed_line(rest) {
+            Some(pair) => {
+                return HumanSummary::Removed {
+                    count: pair.0,
+                    bytes: pair.1,
+                };
+            }
+            // A `Removed ...` line we cannot parse exactly is not a zero.
+            None => return HumanSummary::Unrecognized,
+        }
+    }
+    if has_no_unused || has_no_cache {
+        HumanSummary::NoWork
+    } else {
+        HumanSummary::Unrecognized
+    }
+}
+
+/// Parse the remainder of a `Removed ...` line: `<count> <noun> (<human>)`.
+/// The noun must be exactly `file`/`files`/`directory`/`directories`, and the
+/// parenthesised byte figure must be a finite, non-negative recognized unit.
+fn parse_removed_line(rest: &str) -> Option<(u64, u64)> {
+    let mut parts = rest.splitn(2, ' ');
+    let count_text = parts.next()?;
+    let remainder = parts.next()?.trim();
+    let count: u64 = count_text.parse().ok()?;
+    let open = remainder.find('(')?;
+    let close = remainder.find(')')?;
+    if close <= open || close + 1 != remainder.len() {
+        return None;
+    }
+    let noun = remainder[..open].trim();
+    if !matches!(noun, "file" | "files" | "directory" | "directories") {
+        return None;
+    }
+    let bytes = parse_human_bytes(&remainder[open + 1..close])?;
+    Some((count, bytes))
+}
+
+/// Parse the producer's human byte figure (`11B`, `2.0KiB`, `6.0MiB`). Rejects
+/// unknown units, negative values, and non-finite numbers.
+fn parse_human_bytes(text: &str) -> Option<u64> {
+    let text = text.trim();
+    let split = text
+        .find(|c: char| c.is_ascii_alphabetic())
+        .unwrap_or(text.len());
+    let (number, unit) = text.split_at(split);
+    let value: f64 = number.trim().parse().ok()?;
+    if !value.is_finite() || value < 0.0 {
+        return None;
+    }
+    let multiplier: f64 = match unit.trim() {
+        "B" => 1.0,
+        "KiB" => 1024.0,
+        "MiB" => 1024.0 * 1024.0,
+        "GiB" => 1024.0 * 1024.0 * 1024.0,
+        "TiB" => 1024.0 * 1024.0 * 1024.0 * 1024.0,
+        _ => return None,
+    };
+    let bytes = value * multiplier;
+    if bytes > u64::MAX as f64 {
+        return None;
+    }
+    Some(bytes as u64)
+}
+
+/// The supervisor entry point, called by the daemon binary before normal CLI
+/// parsing when argv carries [`NATIVE_CACHE_CHILD_FLAG`].
+///
+/// Contract (matching `main`, which strips the flag before calling):
+///   args[0] = absolute uv binary
+///   args[1] = absolute uv cache root
+///   stdout  = one small JSON object on success; nothing otherwise
+///   exit 0  = supervisor settled and emitted a typed result
+///   exit 7  = supervisor could not spawn or parse; no result emitted
+///
+/// The supervisor holds the exact uv child, polls stdin closure and the native
+/// deadline, and kills/reaps the uv child before returning. It never touches
+/// daemon, IPC, store, or service state.
+pub fn run_uv_supervisor(args: &[std::ffi::OsString]) -> i32 {
+    let [binary, cache_root] = args else {
+        return 7;
+    };
+    let binary = PathBuf::from(binary);
+    let cache_root = PathBuf::from(cache_root);
+    if !binary.is_absolute() || !cache_root.is_absolute() {
+        return 7;
+    }
+    // Fail before spawning if parent EOF cannot be observed without blocking.
+    if set_fd_nonblocking(libc::STDIN_FILENO).is_err() {
+        return 7;
+    }
+    let stdin = NonblockingStdin {
+        fd: libc::STDIN_FILENO,
+    };
+    match supervise(stdin, &binary, &cache_root, DEFAULT_RUNTIME_BUDGET) {
+        Some(result) => {
+            let Ok(json) = serde_json::to_string(&result) else {
+                return 7;
+            };
+            print!("{json}");
+            0
+        }
+        None => 7,
+    }
+}
+
+fn set_fd_nonblocking(fd: i32) -> io::Result<()> {
+    let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+    if flags < 0 || unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+/// Borrows process-owned stdin, already verified nonblocking before spawning.
+struct NonblockingStdin {
+    fd: i32,
+}
+
+/// Reap the exact retained child on cancellation, error, or unwinding.
+struct OwnedChild(Child);
+impl Drop for OwnedChild {
+    fn drop(&mut self) {
+        if !matches!(self.0.try_wait(), Ok(Some(_))) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+}
+
+impl Read for NonblockingStdin {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let result =
+            unsafe { libc::read(self.fd, buf.as_mut_ptr().cast::<libc::c_void>(), buf.len()) };
+        if result < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(result as usize)
+    }
+}
+
+/// Retain and supervise one exact `uv cache prune` child. Returns `None` only if
+/// the child could not be spawned at all.
+fn supervise(
+    stdin: impl Read,
+    binary: &Path,
+    cache_root: &Path,
+    budget: Duration,
+) -> Option<SupervisorResult> {
+    let mut command = Command::new(binary);
+    command
+        .arg("cache")
+        .arg("prune")
+        .arg("--no-config")
+        .arg("--no-progress")
+        .arg("--cache-dir")
+        .arg(cache_root)
+        // `env_clear` drops any ambient environment (proxies, `UV_*` knobs,
+        // credentials); the mutator needs only the fixed absolute cache root
+        // plus the non-network knobs below.
+        .env_clear()
+        .env("UV_OFFLINE", "1")
+        .env("UV_NO_CONFIG", "1")
+        .env("UV_NO_PROGRESS", "1")
+        .env("UV_PYTHON_DOWNLOADS", "never")
+        .env("UV_LOCK_TIMEOUT", NATIVE_LOCK_TIMEOUT_SECS.to_string())
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped());
+
+    let child = command.spawn().ok()?;
+    Some(execute_supervisor(child, stdin, budget))
+}
+
+/// Poll native stderr and the nonblocking parent pipe in one loop. The child is
+/// retained before any fallible pipe setup, and reaped before every return.
+fn execute_supervisor(child: Child, mut stdin: impl Read, budget: Duration) -> SupervisorResult {
+    let unknown = || SupervisorResult {
+        outcome: "deliveryUnknown".to_owned(),
+        removed_entry_count: None,
+        removed_logical_bytes: None,
+    };
+    let mut child = OwnedChild(child);
+    let Some(mut stderr_reader) = child.0.stderr.take().and_then(NonblockingPipe::new) else {
+        return unknown();
+    };
+    let deadline = Instant::now() + budget;
+    let mut captured = Vec::new();
+    let mut parent_byte = [0_u8; 1];
+    let status = loop {
+        if stderr_reader.drain(&mut captured).is_err() {
+            return unknown();
+        }
+        match child.0.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) => {}
+            Err(_) => return unknown(),
+        }
+        match stdin.read(&mut parent_byte) {
+            Ok(0) => return unknown(),
+            Ok(_) => {}
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted
+                ) => {}
+            Err(_) => return unknown(),
+        }
+        if Instant::now() >= deadline {
+            return unknown();
+        }
+        std::thread::sleep(POLL_INTERVAL);
+    };
+    // The child's final write may race the preceding drain. A final over-cap
+    // or unreadable result must not turn truncated output into success.
+    if stderr_reader.drain(&mut captured).is_err() {
+        return unknown();
+    }
+    let stderr_text = String::from_utf8_lossy(&captured);
+    if !status.success() {
+        // A pre-mutation lock refusal is the only Busy signal: the producer
+        // warned it was in use, refused on the lock, and never printed the
+        // mutation-start marker.
+        if status.code() == Some(2)
+            && stderr_text.contains(BUSY_PHASE_MARKER)
+            && stderr_text.contains(BUSY_TIMEOUT_MARKER)
+            && !stderr_text.contains(MUTATION_START_MARKER)
+        {
+            return SupervisorResult {
+                outcome: "busy".to_owned(),
+                removed_entry_count: None,
+                removed_logical_bytes: None,
+            };
+        }
+        // A native error may follow partial removal; only the exact lock
+        // refusal above proves that mutation did not begin.
+        return unknown();
+    }
+    match parse_human_summary(&stderr_text) {
+        HumanSummary::Removed { count, bytes } => SupervisorResult {
+            outcome: "completed".to_owned(),
+            removed_entry_count: Some(count),
+            removed_logical_bytes: Some(bytes),
+        },
+        // A recognized successful no-work run is Completed with zero counters.
+        HumanSummary::NoWork => SupervisorResult {
+            outcome: "completed".to_owned(),
+            removed_entry_count: Some(0),
+            removed_logical_bytes: Some(0),
+        },
+        // A successful run whose summary was not recognized: Completed with no
+        // invented accounting.
+        HumanSummary::Unrecognized => SupervisorResult {
+            outcome: "completed".to_owned(),
+            removed_entry_count: None,
+            removed_logical_bytes: None,
+        },
+    }
+}
+
+/// A nonblocking reader around a pipe fd, draining into a bounded buffer.
+struct NonblockingPipe {
+    file: std::fs::File,
+}
+
+impl NonblockingPipe {
+    fn new<T: std::os::fd::IntoRawFd>(pipe: T) -> Option<Self> {
+        use std::os::fd::FromRawFd;
+        let raw = pipe.into_raw_fd();
+        // SAFETY: `raw` was just transferred to us by `into_raw_fd`, so we hold
+        // the only owner of this fd.
+        let file = unsafe { std::fs::File::from_raw_fd(raw) };
+        set_fd_nonblocking(file.as_raw_fd()).ok()?;
+        Some(Self { file })
+    }
+
+    /// Drain available bytes into `buffer`, capped at `STDERR_CAP_BYTES`.
+    fn drain(&mut self, buffer: &mut Vec<u8>) -> io::Result<()> {
+        use std::io::Read;
+        let mut chunk = [0_u8; 4096];
+        loop {
+            if buffer.len() > STDERR_CAP_BYTES {
+                return Err(io::Error::other("stderr over cap"));
+            }
+            match self.file.read(&mut chunk) {
+                Ok(0) => return Ok(()),
+                Ok(count) => buffer.extend_from_slice(&chunk[..count]),
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => return Ok(()),
+                Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+                Err(error) => return Err(error),
+            }
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct ProducerBinding(Vec<(u64, u64, u64, i64, i64)>);
 impl ProducerBinding {
-    fn capture(node: &Path, package: &Path) -> io::Result<Self> {
-        let npm = package
-            .parent()
-            .and_then(Path::parent)
-            .ok_or_else(|| io::Error::other("invalid producer layout"))?;
-        let paths = [
-            node.to_path_buf(),
-            npm.join("package.json"),
-            package.join("package.json"),
-            package.join("lib/index.js"),
-            package.join("lib/verify.js"),
-        ];
+    fn capture(binary: &Path) -> io::Result<Self> {
         let uid = unsafe { libc::geteuid() };
-        let mut facts = Vec::new();
-        for path in paths {
-            let meta = std::fs::metadata(path)?;
-            if !meta.is_file() || ![0, uid].contains(&meta.uid()) || meta.mode() & 0o022 != 0 {
-                return Err(io::Error::other("unsafe producer identity"));
-            }
-            facts.push((
-                meta.dev(),
-                meta.ino(),
-                meta.len(),
-                meta.mtime(),
-                meta.mtime_nsec(),
-            ));
+        let meta = std::fs::metadata(binary)?;
+        if !meta.is_file() || ![0, uid].contains(&meta.uid()) || meta.mode() & 0o022 != 0 {
+            return Err(io::Error::other("unsafe producer identity"));
         }
-        Ok(Self(facts))
+        Ok(Self(vec![(
+            meta.dev(),
+            meta.ino(),
+            meta.len(),
+            meta.mtime(),
+            meta.mtime_nsec(),
+        )]))
     }
 }
 
@@ -408,11 +826,34 @@ fn directory_identity(path: &Path) -> Option<(u64, u64)> {
     (meta.is_dir() && !meta.file_type().is_symlink()).then_some((meta.dev(), meta.ino()))
 }
 
+/// Reject a cache root whose `.lock`, marker files, or fixed buckets are not
+/// exactly the producer's expected plain in-cache shapes, and whose ancestors
+/// include a symlink that could redirect the whole tree.
+///
+/// The producer holds `.lock` as an ordinary file and rewrites it in place; a
+/// symlinked or hardlinked `.lock` would let the native run mutate an object
+/// outside the cache. Internal `wheels-*`/`sdists-*` archive symlinks are the
+/// producer's legitimate shape and are *not* rejected here; only bucket *roots*
+/// must be real directories.
 fn fixed_cache_shape_safe(root: &Path) -> bool {
     let uid = unsafe { libc::geteuid() };
     let Some(parent) = root.parent() else {
         return false;
     };
+    // No ancestor from the root's parent up to the filesystem root may be a
+    // symlink: a symlinked `~/.cache` would redirect the entire sweep.
+    let mut ancestor = Some(parent);
+    while let Some(path) = ancestor {
+        match std::fs::symlink_metadata(path) {
+            Ok(meta) => {
+                if meta.file_type().is_symlink() || !meta.is_dir() {
+                    return false;
+                }
+            }
+            Err(_) => return false,
+        }
+        ancestor = path.parent();
+    }
     for path in [parent.to_path_buf(), root.to_path_buf()] {
         let Ok(meta) = std::fs::symlink_metadata(path) else {
             return false;
@@ -425,18 +866,23 @@ fn fixed_cache_shape_safe(root: &Path) -> bool {
             return false;
         }
     }
-    // verify writes this marker and truncates index buckets. Unlike content
-    // unlinking, those writes could affect a linked object outside the cache.
-    match std::fs::symlink_metadata(root.join("_lastverified")) {
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-        Ok(meta)
-            if meta.is_file()
-                && !meta.file_type().is_symlink()
-                && meta.uid() == uid
-                && meta.nlink() == 1
-                && meta.mode() & 0o022 == 0 => {}
-        _ => return false,
+    // The producer's marker files and its exclusive lock must be plain,
+    // single-link, owned regular files where present.
+    for name in ["CACHEDIR.TAG", ".gitignore", ".lock"] {
+        match std::fs::symlink_metadata(root.join(name)) {
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Ok(meta)
+                if meta.is_file()
+                    && !meta.file_type().is_symlink()
+                    && meta.uid() == uid
+                    && meta.nlink() == 1
+                    && meta.mode() & 0o022 == 0 => {}
+            _ => return false,
+        }
     }
+    // Every fixed bucket that exists must be a real owned directory, never a
+    // symlink: an escaped bucket root would let the native sweep delete outside
+    // the cache.
     SCANNED_BUCKETS
         .iter()
         .all(|name| match std::fs::symlink_metadata(root.join(name)) {
@@ -450,15 +896,34 @@ fn fixed_cache_shape_safe(root: &Path) -> bool {
         })
 }
 
+/// The fixed cache bucket directories the native sweep may touch. A symlinked
+/// or foreign-owned bucket root fails the preflight; a stale bucket name that is
+/// *not* in this list is removed wholesale by the producer, which the containment
+/// contract accounts for by rejecting symlinked root/ancestors and foreign
+/// ownership of the root itself.
+const SCANNED_BUCKETS: [&str; 12] = [
+    "archive-v0",
+    "environments-v2",
+    "wheels-v6",
+    "sdists-v9",
+    "builds-v0",
+    "git-v0",
+    "interpreter-v4",
+    "simple-v21",
+    "flat-index-v2",
+    "python-v0",
+    "binaries-v0",
+    "osv-v0",
+];
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum CacheRootState {
     Present,
     Absent,
 }
 
-/// Reject a cache root that is a symlink, not owned by the current user, or that
-/// contains a symlink in any fixed bucket the native sweep touches. The producer
-/// never legitimately creates these symlinks, so their presence fails closed.
+/// Reject a cache root that is a symlink, has a symlinked ancestor, is not owned
+/// by the current user, or whose fixed buckets/`.lock` are unexpected shapes.
 fn preflight_cache_root(
     root: &Path,
     should_cancel: &impl Fn() -> bool,
@@ -474,71 +939,15 @@ fn preflight_cache_root(
     if !fixed_cache_shape_safe(root) {
         return Err(());
     }
-    let deadline = Instant::now() + Duration::from_secs(5);
-    let mut visited = 0_usize;
-    for bucket in SCANNED_BUCKETS {
-        let path = root.join(bucket);
-        if path.exists() {
-            check_tree(
-                &path,
-                deadline,
-                &mut visited,
-                0,
-                bucket == "index-v5",
-                should_cancel,
-            )?;
-        }
-    }
     Ok(CacheRootState::Present)
 }
 
-fn check_tree(
-    path: &Path,
-    deadline: Instant,
-    visited: &mut usize,
-    depth: usize,
-    writable_index: bool,
+/// Locate a real uv binary under the fixed prefixes, using symlink resolution
+/// against known shapes only, and require the exact reviewed version.
+fn discover_producer(
+    home: &Path,
     should_cancel: &impl Fn() -> bool,
-) -> Result<(), ()> {
-    if depth > 64 || should_cancel() {
-        return Err(());
-    }
-    let uid = unsafe { libc::geteuid() };
-    for entry in std::fs::read_dir(path).map_err(|_| ())? {
-        *visited += 1;
-        if *visited > 1_000_000 || Instant::now() > deadline || should_cancel() {
-            return Err(());
-        }
-        let entry = entry.map_err(|_| ())?;
-        let meta = match std::fs::symlink_metadata(entry.path()) {
-            Ok(meta) => meta,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => continue, // normal concurrent cache writer/GC
-            Err(_) => return Err(()),
-        };
-        if meta.file_type().is_symlink()
-            || meta.uid() != uid
-            || (!meta.is_file() && !meta.is_dir())
-            || (writable_index && meta.is_file() && meta.nlink() != 1)
-        {
-            return Err(());
-        }
-        if meta.is_dir() {
-            check_tree(
-                &entry.path(),
-                deadline,
-                visited,
-                depth + 1,
-                writable_index,
-                should_cancel,
-            )?;
-        }
-    }
-    Ok(())
-}
-
-/// Locate a real node binary and the bundled cacache package under the fixed
-/// prefixes, using symlink resolution against known package shapes only.
-fn discover_producer(home: &Path) -> Result<(PathBuf, PathBuf), ToolCacheAvailability> {
+) -> Result<(PathBuf, ProducerBinding), ToolCacheAvailability> {
     let mut prefixes: Vec<PathBuf> = FIXED_PREFIXES.iter().map(PathBuf::from).collect();
     let home_prefix = home.join(HOME_PREFIX_BIN);
     if home_prefix.is_dir() {
@@ -547,30 +956,27 @@ fn discover_producer(home: &Path) -> Result<(PathBuf, PathBuf), ToolCacheAvailab
 
     let mut saw_any_producer = false;
     for prefix in prefixes {
-        let node = prefix.join("node");
-        let npm = prefix.join("npm");
-
-        let Some(node_real) = resolve_regular_file(&node) else {
-            continue;
-        };
-        let Some(npm_cli) = resolve_regular_file(&npm) else {
+        if should_cancel() {
+            return Err(ToolCacheAvailability::Unavailable);
+        }
+        let candidate = prefix.join("uv");
+        let Some(uv_real) = resolve_regular_file(&candidate) else {
             continue;
         };
         saw_any_producer = true;
-
-        // npm's package root contains `bin/npm-cli.js`, so it is the parent of
-        // `bin`.
-        let Some(npm_root) = npm_cli.parent().and_then(Path::parent) else {
+        let Ok(binding) = ProducerBinding::capture(&uv_real) else {
             continue;
         };
-        let cacache = npm_root.join("node_modules").join("cacache");
-        if read_package_version(npm_root, "npm").as_deref() != Some(EXPECTED_NPM_VERSION) {
-            continue;
+        match producer_version(&uv_real, should_cancel) {
+            Some(version)
+                if version == EXPECTED_UV_VERSION
+                    && ProducerBinding::capture(&uv_real).ok().as_ref() == Some(&binding) =>
+            {
+                return Ok((uv_real, binding));
+            }
+            Some(_) => continue,
+            None => continue,
         }
-        if read_package_version(&cacache, "cacache").as_deref() != Some(EXPECTED_CACACHE_VERSION) {
-            continue;
-        }
-        return Ok((node_real, cacache));
     }
 
     Err(if saw_any_producer {
@@ -591,20 +997,78 @@ fn resolve_regular_file(path: &Path) -> Option<PathBuf> {
     }
 }
 
-#[derive(Deserialize)]
-struct PackageVersion {
-    name: String,
-    version: String,
-}
-fn read_package_version(package_dir: &Path, expected_name: &str) -> Option<String> {
-    let file = std::fs::File::open(package_dir.join("package.json")).ok()?;
-    if file.metadata().ok()?.len() > 64 * 1024 {
+/// Run `<uv> --version` for the discovered binary and return the exact version.
+/// No network, no config, no mutation. Bounded: the child is spawned and reaped
+/// with a deadline and a capped output read; on overrun or spawn failure the
+/// child is killed and the version is `None`.
+fn producer_version(binary: &Path, should_cancel: &impl Fn() -> bool) -> Option<String> {
+    // Bind safety before executing even the read-only version command.
+    ProducerBinding::capture(binary).ok()?;
+    let mut child = OwnedChild(
+        Command::new(binary)
+            .arg("--version")
+            .env_clear()
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .ok()?,
+    );
+    let stdout = child.0.stdout.take()?;
+    let mut reader = NonblockingPipe::new(stdout)?;
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut captured = Vec::new();
+    loop {
+        if reader.drain(&mut captured).is_err() {
+            let _ = child.0.kill();
+            let _ = child.0.wait();
+            return None;
+        }
+        match child.0.try_wait() {
+            Ok(Some(status)) if status.success() => break,
+            Ok(Some(_)) => {
+                let _ = child.0.wait();
+                return None;
+            }
+            Ok(None) => {}
+            Err(_) => {
+                let _ = child.0.kill();
+                let _ = child.0.wait();
+                return None;
+            }
+        }
+        if should_cancel() || Instant::now() >= deadline || captured.len() > 4096 {
+            let _ = child.0.kill();
+            let _ = child.0.wait();
+            return None;
+        }
+        std::thread::sleep(POLL_INTERVAL);
+    }
+    reader.drain(&mut captured).ok()?;
+    if captured.len() > 4096 {
         return None;
     }
-    let value: PackageVersion = serde_json::from_reader(file.take(64 * 1024)).ok()?;
-    (value.name == expected_name).then_some(value.version)
+    let text = String::from_utf8(captured).ok()?;
+    // `uv 0.11.20 (9252ba6b5 2026-06-10 aarch64-apple-darwin)`
+    let mut words = text.split_whitespace();
+    (words.next()? == "uv")
+        .then(|| words.next().map(str::to_owned))
+        .flatten()
 }
 
 #[cfg(test)]
 #[path = "tool_cache_tests.rs"]
 mod tests;
+
+/// Test-only synchronous wrapper around [`supervise`] with an explicit budget, so
+/// the fragment tests can drive the real supervisor routine against a real
+/// parent pipe without needing the daemon binary to host the hidden entry.
+#[cfg(test)]
+pub(crate) fn supervise_sync_for_tests(
+    stdin: impl Read,
+    uv: &Path,
+    cache: &Path,
+) -> SupervisorResult {
+    supervise(stdin, uv, cache, DEFAULT_RUNTIME_BUDGET)
+        .expect("supervisor must spawn the uv binary")
+}

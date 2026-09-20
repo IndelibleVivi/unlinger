@@ -378,8 +378,10 @@ requiring each task to register. Unlinger schedules a fixed, version-supported
 native maintenance operation; the producer's own reference and retention rules
 decide which cache entries are disposable. Being outside Git, old, large, named
 `tmp`, or not currently open does not authorize deletion. Arbitrary workspaces,
-source clones, transcripts, delivered artifacts and executable environments are
-not admitted by this extension.
+source clones, transcripts and delivered artifacts are not admitted. The owner
+additionally approved producer-owned, rebuildable uv cached execution environments
+on 2026-09-20, under uv's native cache lock. Project `.venv`, user-created
+execution environments and environments outside that cache remain excluded.
 
 Each supported operation must have an inspected producer contract for concurrent
 use, reference preservation and deletion containment. A native command's name
@@ -397,6 +399,13 @@ turns it into success. A failed command may have made partial changes. Native
 reported logical bytes are estimates, not measured physical APFS reclaim, and
 are never added to browser/process cleanup impact. Stored and public facts contain
 only typed statuses, timestamps and aggregate counts, never paths or raw output.
+
+Slow native maintenance must not block process observation. One owned cache
+worker has separate activity and attempt ownership; lifecycle quiescence includes
+both process cleanup and cache maintenance. A proved producer-lock refusal before
+mutation may retry at the next 15-minute opportunity. Unknown delivery and other
+failures do not take that short retry path. A successful operation with zero
+reported removals means maintenance completed, not that it had no side effects.
 
 The App and CLI consume daemon-owned facts. An additive optional frontend-v5
 summary preserves old v5 payloads and v4/v3 behavior; the App performs presentation

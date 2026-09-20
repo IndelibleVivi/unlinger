@@ -10,7 +10,7 @@ Unlinger maintains abandoned automation resources on macOS: verified browser-pro
 
 ## What you can do
 
-- **Maintain npm download caches automatically.** Source supports the default `~/.npm/_cacache` through npm `11.19.0` / bundled cacache `20.0.4` native verification and garbage collection. Healthy enforce mode runs upkeep at most weekly; report-only never runs it. The App and `unlinger browser status` show independent availability and the latest durable native result. Unsupported installations remain observation-only. This source capability is not installed or field-accepted; it never cleans npx environments, project dependencies or arbitrary temporary directories.
+- **Maintain uv caches automatically.** Source supports native `uv 0.11.20 cache prune` for the default `~/.cache/uv`, including uv-owned cached execution environments. The producer's lock protects active uv work; a busy cache is deferred for 15 minutes. Healthy enforce mode schedules ordinary upkeep weekly, while process observation continues on its own schedule. App/CLI show independent availability and durable native results. This source capability is not installed or field-accepted. It does not upgrade uv, adopt custom cache locations, or clean project `.venv` directories and user artifacts.
 
 - **See browser leftovers and their explanation.** Native snapshots, explicit compatibility, protection reasons and redacted local history.
 - **Track a command's browser lifetime.** `unlinger task run -- COMMAND` registers an exact command owner. Its compatible Playwright CLI sessions become candidates after the task ends; release alone never authorizes cleanup.
@@ -29,7 +29,7 @@ Unlinger maintains abandoned automation resources on macOS: verified browser-pro
 
 [Support truth](docs/SUPPORT.md) distinguishes recognition, automatic eligibility and field evidence.
 
-pnpm `11.21.0` is excluded from unattended cache maintenance: a controlled native-prune test interrupted an active Git dependency installation. The [cache safety guide](docs/SAFETY.md#why-pnpm-11210-is-not-admitted) includes the exact boundary and an isolated reproducer.
+npm `11.19.0` / cacache `20.0.4` verification is retired after an exact concurrency counterexample; [npm evidence](docs/SAFETY.md#why-npm-verification-is-retired) also demonstrates why zero native counters do not prove no side effects. pnpm `11.21.0` is excluded from unattended cache maintenance: a controlled native-prune test interrupted an active Git dependency installation. The [cache safety guide](docs/SAFETY.md#why-pnpm-11210-is-not-admitted) includes the exact boundary and an isolated reproducer.
 
 ## Try it without installing a service
 

@@ -215,7 +215,7 @@ fn project_browser_overview(
     } else {
         None
     };
-    let tool_cache_maintenance = if schema_version == public::SCHEMA_VERSION {
+    let uv_cache_maintenance = if schema_version == public::SCHEMA_VERSION {
         control
             .store()
             .latest_tool_cache_maintenance()?
@@ -230,6 +230,11 @@ fn project_browser_overview(
                     && crate::ipc::storage_cleanup_gate_open(&source.status);
                 cache
             })
+    } else {
+        None
+    };
+    let tool_cache_maintenance = if schema_version == public::SCHEMA_VERSION {
+        control.store().retired_npm_cache_maintenance()?
     } else {
         None
     };
@@ -335,6 +340,7 @@ fn project_browser_overview(
             storage_residue,
             storage_cleanup_result,
             tool_cache_maintenance,
+            uv_cache_maintenance,
             attention: projected_status.attention,
             protection: projected_status.protection,
             support_catalog,
@@ -440,7 +446,7 @@ fn browser_overview_phase(
     {
         return public::BrowserOverviewPhase::Attention;
     }
-    if status.cleanup_in_progress
+    if status.browser_cleanup_in_progress()
         || roster
             .reports
             .iter()
@@ -1225,10 +1231,10 @@ mod tests {
             .unwrap();
         let control = ControlPlane::new(store, ready_status()).unwrap();
         let state = overview(&control, public::SCHEMA_VERSION)
-            .tool_cache_maintenance
+            .uv_cache_maintenance
             .unwrap();
         assert!(!state.automatic_maintenance_eligible);
-        assert_eq!(state.kind, public::ToolCacheKind::NpmDownloadCache);
+        assert_eq!(state.kind, public::ToolCacheKind::UvCache);
         assert!(state.last_attempt.is_none());
         let json = serde_json::to_string(&state).unwrap();
         assert!(!json.contains('/'));
@@ -1237,11 +1243,7 @@ mod tests {
             public::PREVIOUS_SCHEMA_VERSION,
             public::LEGACY_SCHEMA_VERSION,
         ] {
-            assert!(
-                overview(&control, previous)
-                    .tool_cache_maintenance
-                    .is_none()
-            );
+            assert!(overview(&control, previous).uv_cache_maintenance.is_none());
         }
     }
 

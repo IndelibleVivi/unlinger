@@ -501,9 +501,16 @@ fn browser_status_lines(overview: &BrowserOverviewSnapshot) -> Vec<String> {
         overview.support_catalog.support_revision,
         overview.support_catalog.families.len()
     ));
-    if let Some(cache) = &overview.tool_cache_maintenance {
+    for cache in [
+        &overview.tool_cache_maintenance,
+        &overview.uv_cache_maintenance,
+    ]
+    .into_iter()
+    .flatten()
+    {
         lines.push(format!(
-            "npm download-cache maintenance: {:?}; automatic upkeep {}; checked at Unix ms {}",
+            "{:?} maintenance: {:?}; automatic upkeep {}; checked at Unix ms {}",
+            cache.kind,
             cache.availability,
             if cache.automatic_maintenance_eligible {
                 "eligible"
@@ -515,11 +522,18 @@ fn browser_status_lines(overview: &BrowserOverviewSnapshot) -> Vec<String> {
         if let Some(attempt) = &cache.last_attempt {
             lines.push(format!("Latest native maintenance: {:?}; prepared at Unix ms {}; completed at Unix ms {:?}",
                 attempt.outcome, attempt.prepared_at_unix_millis, attempt.completed_at_unix_millis));
-            if let (Some(count), Some(bytes)) = (
-                attempt.native_removed_entry_count,
-                attempt.native_removed_logical_bytes,
-            ) {
-                lines.push(format!("Native report: {count} content entries, {bytes} logical bytes removed (not physical disk-space savings)."));
+            if let Some(count) = attempt.native_removed_entry_count {
+                lines.push(format!(
+                    "Native report: {count} native summary items removed."
+                ));
+            }
+            if let Some(bytes) = attempt.native_removed_logical_bytes {
+                lines.push(format!("Native report: approximately {bytes} logical bytes removed (not physical disk-space savings)."));
+            }
+            if attempt.native_removed_entry_count.is_some()
+                || attempt.native_removed_logical_bytes.is_some()
+            {
+                lines.push("Native counts use the producer's summary units; zero counts do not prove no effects.".into());
             }
         }
     }
@@ -1527,10 +1541,16 @@ mod tests {
             panic!("cache fixture")
         };
         let lines = browser_status_lines(&overview);
-        assert!(lines.iter().any(
-            |line| line.contains("2 content entries, 4096 logical bytes")
-                && line.contains("not physical")
-        ));
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.contains("2 native summary items"))
+        );
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.contains("4096 logical bytes") && line.contains("not physical"))
+        );
         let attempt = overview
             .tool_cache_maintenance
             .as_mut()

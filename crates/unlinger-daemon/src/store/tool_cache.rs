@@ -20,6 +20,12 @@ pub struct PreparedToolCacheAttempt {
     prepared_at_unix_millis: u64,
 }
 
+impl PreparedToolCacheAttempt {
+    pub(crate) fn token(&self) -> &str {
+        &self.token
+    }
+}
+
 impl HistoryStore {
     pub fn record_tool_cache_observation(
         &self,
@@ -50,7 +56,7 @@ impl HistoryStore {
             .optional()?;
         row.map(|(observed, availability, attempt)| {
             Ok(ToolCacheMaintenanceSummary {
-                kind: ToolCacheKind::NpmDownloadCache,
+                kind: ToolCacheKind::UvCache,
                 observed_at_unix_millis: parse_nonnegative_millis(observed, "cache observation")?,
                 availability: serde_json::from_str(&availability)?,
                 // Eligibility is a current lifecycle decision, never durable authority.
@@ -58,6 +64,37 @@ impl HistoryStore {
                 last_attempt: attempt
                     .map(|json| serde_json::from_str(&json))
                     .transpose()?,
+            })
+        })
+        .transpose()
+    }
+
+    /// Compatibility evidence from the retired v12 npm adapter. It can never
+    /// become eligible or feed the uv retry clock/accounting.
+    pub fn retired_npm_cache_maintenance(
+        &self,
+    ) -> Result<Option<ToolCacheMaintenanceSummary>, StoreError> {
+        let connection = self.connection()?;
+        let row = connection.query_row(
+            "SELECT observed_at_ms, attempt_json FROM retired_npm_cache_latest WHERE singleton = 1",
+            [], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, Option<String>>(1)?)),
+        ).optional()?;
+        row.map(|(observed, attempt)| {
+            let mut attempt = attempt
+                .map(|value| serde_json::from_str::<ToolCacheAttemptSummary>(&value))
+                .transpose()?;
+            if let Some(result) = &mut attempt {
+                // Legacy zero GC counters never proved that verify had no side effects.
+                if result.outcome == ToolCacheOutcome::NoOp {
+                    result.outcome = ToolCacheOutcome::Completed;
+                }
+            }
+            Ok(ToolCacheMaintenanceSummary {
+                kind: ToolCacheKind::NpmDownloadCache,
+                observed_at_unix_millis: parse_nonnegative_millis(observed, "cache observation")?,
+                availability: ToolCacheAvailability::Unsupported,
+                automatic_maintenance_eligible: false,
+                last_attempt: attempt,
             })
         })
         .transpose()
@@ -127,12 +164,11 @@ impl HistoryStore {
             result.outcome,
             ToolCacheOutcome::Completed | ToolCacheOutcome::NoOp
         );
-        if result.outcome == ToolCacheOutcome::Running
-            || result.prepared_at_unix_millis != prepared.prepared_at_unix_millis
+        if matches!(
+            result.outcome,
+            ToolCacheOutcome::Running | ToolCacheOutcome::NoOp
+        ) || result.prepared_at_unix_millis != prepared.prepared_at_unix_millis
             || completed < prepared.prepared_at_unix_millis
-            || (success
-                && (result.native_removed_entry_count.is_none()
-                    || result.native_removed_logical_bytes.is_none()))
             || (!success
                 && (result.native_removed_entry_count.is_some()
                     || result.native_removed_logical_bytes.is_some()))
@@ -160,10 +196,18 @@ impl HistoryStore {
     }
 
     pub fn recover_tool_cache_attempt(&self, now: u64) -> Result<bool, StoreError> {
+        self.recover_cache_attempt_in("tool_cache_latest", now)
+    }
+
+    pub fn recover_retired_npm_cache_attempt(&self, now: u64) -> Result<bool, StoreError> {
+        self.recover_cache_attempt_in("retired_npm_cache_latest", now)
+    }
+
+    fn recover_cache_attempt_in(&self, table: &str, now: u64) -> Result<bool, StoreError> {
         let mut connection = self.connection()?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let json: Option<String> = transaction.query_row(
-            "SELECT attempt_json FROM tool_cache_latest WHERE singleton = 1 AND attempt_token IS NOT NULL",
+            &format!("SELECT attempt_json FROM {table} WHERE singleton = 1 AND attempt_token IS NOT NULL"),
             [], |row| row.get(0),
         ).optional()?;
         let Some(json) = json else { return Ok(false) };
@@ -173,7 +217,9 @@ impl HistoryStore {
         result.native_removed_entry_count = None;
         result.native_removed_logical_bytes = None;
         transaction.execute(
-            "UPDATE tool_cache_latest SET attempt_token = NULL, attempt_json = ?1 WHERE singleton = 1",
+            &format!(
+                "UPDATE {table} SET attempt_token = NULL, attempt_json = ?1 WHERE singleton = 1"
+            ),
             [serde_json::to_string(&result)?],
         )?;
         transaction.commit()?;
@@ -227,6 +273,94 @@ mod tests {
     }
 
     #[test]
+    fn v12_migration_keeps_npm_history_separate_from_uv_and_recovers_its_pending_delivery() {
+        let temp = TempStore::new();
+        let old = ToolCacheAttemptSummary {
+            outcome: ToolCacheOutcome::NoOp,
+            prepared_at_unix_millis: 100,
+            completed_at_unix_millis: Some(101),
+            native_removed_entry_count: Some(0),
+            native_removed_logical_bytes: Some(0),
+        };
+        let connection = temp.store.connection().unwrap();
+        connection.execute_batch("DROP TABLE tool_cache_latest; ALTER TABLE retired_npm_cache_latest RENAME TO tool_cache_latest; PRAGMA user_version = 12;").unwrap();
+        connection
+            .execute(
+                "INSERT INTO tool_cache_latest VALUES(1, 101, ?1, NULL, ?2)",
+                params![
+                    serde_json::to_string(&ToolCacheAvailability::Available).unwrap(),
+                    serde_json::to_string(&old).unwrap()
+                ],
+            )
+            .unwrap();
+        drop(connection);
+        let migrated = HistoryStore::open(temp.store.path()).unwrap();
+        assert!(migrated.latest_tool_cache_maintenance().unwrap().is_none());
+        let retired = migrated.retired_npm_cache_maintenance().unwrap().unwrap();
+        assert_eq!(retired.kind, ToolCacheKind::NpmDownloadCache);
+        assert_eq!(retired.availability, ToolCacheAvailability::Unsupported);
+        assert!(!retired.automatic_maintenance_eligible);
+        assert_eq!(
+            retired.last_attempt.unwrap().outcome,
+            ToolCacheOutcome::Completed
+        );
+        // Legacy PREPARED cannot remain running forever after retirement.
+        let mut pending = old;
+        pending.outcome = ToolCacheOutcome::Running;
+        pending.completed_at_unix_millis = None;
+        pending.native_removed_entry_count = None;
+        pending.native_removed_logical_bytes = None;
+        migrated
+            .connection()
+            .unwrap()
+            .execute(
+                "UPDATE retired_npm_cache_latest SET attempt_json=?1, attempt_token='legacy'",
+                [serde_json::to_string(&pending).unwrap()],
+            )
+            .unwrap();
+        assert!(migrated.recover_retired_npm_cache_attempt(200).unwrap());
+        assert_eq!(
+            migrated
+                .retired_npm_cache_maintenance()
+                .unwrap()
+                .unwrap()
+                .last_attempt
+                .unwrap()
+                .outcome,
+            ToolCacheOutcome::DeliveryUnknown
+        );
+        let uv = migrated.begin_tool_cache_attempt(201).unwrap();
+        let busy = ToolCacheAttemptSummary {
+            outcome: ToolCacheOutcome::Busy,
+            prepared_at_unix_millis: 201,
+            completed_at_unix_millis: Some(202),
+            native_removed_entry_count: None,
+            native_removed_logical_bytes: None,
+        };
+        migrated
+            .complete_tool_cache_attempt(&uv, &busy, ToolCacheAvailability::Available)
+            .unwrap();
+        assert_eq!(
+            migrated
+                .latest_tool_cache_maintenance()
+                .unwrap()
+                .unwrap()
+                .kind,
+            ToolCacheKind::UvCache
+        );
+        assert_eq!(
+            migrated
+                .retired_npm_cache_maintenance()
+                .unwrap()
+                .unwrap()
+                .last_attempt
+                .unwrap()
+                .prepared_at_unix_millis,
+            100
+        );
+    }
+
+    #[test]
     fn v12_requires_cache_authority_on_reopen() {
         let temp = TempStore::new();
         let connection = temp.store.connection().unwrap();
@@ -262,7 +396,7 @@ mod tests {
     }
 
     #[test]
-    fn terminal_result_requires_native_accounting_and_masks_previous_success() {
+    fn terminal_result_preserves_available_accounting_and_masks_previous_success() {
         let temp = TempStore::new();
         let store = &temp.store;
         let prepared = store.begin_tool_cache_attempt(100).unwrap();
@@ -317,10 +451,10 @@ mod tests {
         temp.store
             .connection()
             .unwrap()
-            .execute_batch("DROP TABLE tool_cache_latest; PRAGMA user_version = 11;")
+            .execute_batch("DROP TABLE tool_cache_latest; DROP TABLE retired_npm_cache_latest; PRAGMA user_version = 11;")
             .unwrap();
         let migrated = HistoryStore::open(temp.store.path()).unwrap();
-        assert_eq!(HistoryStore::schema_version(), 12);
+        assert_eq!(HistoryStore::schema_version(), 13);
         assert_eq!(migrated.pause_until().unwrap(), Some(500));
         assert!(migrated.latest_tool_cache_maintenance().unwrap().is_none());
         let prepared = migrated.begin_tool_cache_attempt(100).unwrap();

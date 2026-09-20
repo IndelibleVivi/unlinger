@@ -83,12 +83,18 @@ assert_cache_observation_only() {
 import json
 import sqlite3
 import sys
+import time
 
 with sqlite3.connect(f"file:{sys.argv[1]}?mode=ro", uri=True) as connection:
-    assert connection.execute("PRAGMA user_version").fetchone() == (12,)
-    row = connection.execute(
-        "SELECT availability_json, attempt_token, attempt_json FROM tool_cache_latest"
-    ).fetchone()
+    assert connection.execute("PRAGMA user_version").fetchone() == (13,)
+    deadline = time.monotonic() + 10
+    while True:
+        row = connection.execute(
+            "SELECT availability_json, attempt_token, attempt_json FROM tool_cache_latest"
+        ).fetchone()
+        if row is not None or time.monotonic() >= deadline:
+            break
+        time.sleep(0.1)
     assert row is not None, "report-only daemon did not observe tool-cache availability"
     assert json.loads(row[0]) in {"available", "absent", "unsupported", "unavailable"}
     assert row[1:] == (None, None), "report-only daemon prepared cache maintenance"

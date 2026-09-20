@@ -676,14 +676,17 @@ pub enum ToolCacheAvailability {
 #[serde(rename_all = "snake_case")]
 pub enum ToolCacheKind {
     NpmDownloadCache,
+    UvCache,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ToolCacheOutcome {
     Running,
+    /// Historical npm wire value; never emitted by current native maintenance.
     NoOp,
     Completed,
+    Busy,
     Failed,
     DeliveryUnknown,
 }
@@ -738,6 +741,9 @@ pub struct BrowserOverviewSnapshot {
     pub storage_cleanup_result: Option<StorageCleanupResultSummary>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_cache_maintenance: Option<ToolCacheMaintenanceSummary>,
+    /// Separate additive field keeps old v5 clients from decoding a new kind.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uv_cache_maintenance: Option<ToolCacheMaintenanceSummary>,
     pub attention: AttentionProjection,
     pub protection: ProtectionProjection,
     pub support_catalog: BrowserSupportCatalog,
@@ -1052,6 +1058,7 @@ mod tests {
             }),
             storage_cleanup_result: None,
             tool_cache_maintenance: None,
+            uv_cache_maintenance: None,
             attention: AttentionProjection::default(),
             protection: ProtectionProjection::default(),
             support_catalog: BrowserSupportCatalog {
@@ -1229,6 +1236,7 @@ mod tests {
             fixture!("browser-overview-impact-empty"),
             fixture!("browser-overview-impact-residue"),
             fixture!("browser-overview-cache-maintenance"),
+            fixture!("browser-overview-uv-cache-maintenance"),
             fixture!("history-observation-span"),
         ] {
             let decoded: ResponseEnvelope =

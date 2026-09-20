@@ -2,6 +2,7 @@ import Foundation
 
 public enum ToolCacheKind: String, Codable, Equatable, Sendable {
     case npmDownloadCache = "npm_download_cache"
+    case uvCache = "uv_cache"
 }
 
 public enum ToolCacheAvailability: String, Codable, Equatable, Sendable {
@@ -9,7 +10,7 @@ public enum ToolCacheAvailability: String, Codable, Equatable, Sendable {
 }
 
 public enum ToolCacheOutcome: String, Codable, Equatable, Sendable {
-    case running, completed, failed
+    case running, completed, failed, busy
     case noOp = "no_op"
     case deliveryUnknown = "delivery_unknown"
 }

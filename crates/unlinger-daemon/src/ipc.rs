@@ -195,6 +195,12 @@ pub struct DaemonStatus {
     pub pid: u32,
     pub scan_in_progress: bool,
     pub cleanup_in_progress: bool,
+    /// Internal activity owner. Public lifecycle status ORs this into cleanup;
+    /// browser phase continues to describe browser/process work only.
+    #[serde(skip)]
+    cache_activity: Option<ToolCacheActivity>,
+    #[serde(skip)]
+    process_activity: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub paused_until_unix_millis: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -209,6 +215,46 @@ pub struct DaemonStatus {
     pub most_recent_reclaim: Option<RecentReclaim>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_error: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ToolCacheActivity {
+    token: String,
+    epoch: String,
+    cancel_requested: bool,
+}
+
+impl DaemonStatus {
+    fn refresh_cleanup_activity(&mut self) {
+        self.cleanup_in_progress = self.process_activity.is_some() || self.cache_activity.is_some();
+    }
+    pub(crate) fn browser_cleanup_in_progress(&self) -> bool {
+        if self.cache_activity.is_some() {
+            self.process_activity.is_some()
+        } else {
+            self.cleanup_in_progress
+        }
+    }
+    fn cancel_cache_activity(&mut self) {
+        if let Some(activity) = &mut self.cache_activity {
+            activity.cancel_requested = true;
+        }
+    }
+}
+
+pub(crate) struct ProcessCleanupActivity {
+    control: ControlPlane,
+    token: String,
+}
+impl Drop for ProcessCleanupActivity {
+    fn drop(&mut self) {
+        if let Ok(mut status) = self.control.lock_status()
+            && status.process_activity.as_deref() == Some(self.token.as_str())
+        {
+            status.process_activity = None;
+            status.refresh_cleanup_activity();
+        }
+    }
 }
 
 impl DaemonStatus {
@@ -242,6 +288,8 @@ impl DaemonStatus {
             pid,
             scan_in_progress: false,
             cleanup_in_progress: false,
+            cache_activity: None,
+            process_activity: None,
             paused_until_unix_millis: None,
             cycle_started_at_unix_millis: None,
             latest_observation_at_unix_millis: None,
@@ -732,7 +780,8 @@ impl ControlPlane {
         };
         match result {
             unlinger_protocol::MutationResult::Paused { until_unix_millis } => {
-                status.paused_until_unix_millis = Some(*until_unix_millis)
+                status.paused_until_unix_millis = Some(*until_unix_millis);
+                status.cancel_cache_activity();
             }
             unlinger_protocol::MutationResult::Resumed => {
                 status.paused_until_unix_millis = None;
@@ -938,6 +987,7 @@ impl ControlPlane {
     ) -> Result<(), ControlError> {
         let message = bounded_message(&message.into());
         let mut status = self.lock_status()?;
+        status.cancel_cache_activity();
         let durable_result = if status.managed {
             managed_identity(&status).and_then(|(generation, instance_id)| {
                 self.store
@@ -1047,21 +1097,74 @@ impl ControlPlane {
             .clone()
             .expect("ready gate requires epoch");
         let child = start();
-        status.cleanup_in_progress = child.is_ok();
+        if child.is_ok() {
+            status.cache_activity = Some(ToolCacheActivity {
+                token: prepared.token().to_owned(),
+                epoch: epoch.clone(),
+                cancel_requested: false,
+            });
+            status.refresh_cleanup_activity();
+        }
         Ok(Some((prepared, child, epoch)))
     }
 
-    pub fn tool_cache_action_may_continue(&self, epoch: &str) -> bool {
+    pub fn tool_cache_action_may_continue(
+        &self,
+        prepared: &crate::PreparedToolCacheAttempt,
+        epoch: &str,
+    ) -> bool {
         self.status.lock().is_ok_and(|status| {
+            if !status.cache_activity.as_ref().is_some_and(|activity| {
+                activity.token == prepared.token()
+                    && activity.epoch == epoch
+                    && !activity.cancel_requested
+            }) {
+                return false;
+            }
             let mut gate = status.clone();
-            gate.cleanup_in_progress = false;
+            gate.cache_activity = None;
+            gate.process_activity = None;
+            gate.scan_in_progress = false;
+            gate.refresh_cleanup_activity();
             storage_cleanup_gate_open(&gate) && gate.enforcement_epoch.as_deref() == Some(epoch)
         })
     }
 
-    pub fn finish_tool_cache_action(&self) -> Result<(), ControlError> {
-        self.lock_status()?.cleanup_in_progress = false;
+    pub fn finish_tool_cache_action(
+        &self,
+        prepared: &crate::PreparedToolCacheAttempt,
+    ) -> Result<(), ControlError> {
+        let mut status = self.lock_status()?;
+        if status
+            .cache_activity
+            .as_ref()
+            .is_some_and(|activity| activity.token != prepared.token())
+        {
+            return Err(ControlError::Unavailable(
+                "cache activity belongs to another attempt".into(),
+            ));
+        }
+        status.cache_activity = None;
+        status.refresh_cleanup_activity();
         Ok(())
+    }
+
+    pub(crate) fn begin_process_cleanup_activity(
+        &self,
+        token: &str,
+    ) -> Result<ProcessCleanupActivity, ControlError> {
+        let mut status = self.lock_status()?;
+        if status.process_activity.is_some() {
+            return Err(ControlError::Unavailable(
+                "process cleanup already active".into(),
+            ));
+        }
+        status.process_activity = Some(token.to_owned());
+        status.refresh_cleanup_activity();
+        Ok(ProcessCleanupActivity {
+            control: self.clone(),
+            token: token.to_owned(),
+        })
     }
 
     #[must_use]
@@ -1489,6 +1592,7 @@ impl ControlPlane {
                 let mut status = self.lock_status()?;
                 self.store.set_pause_until(Some(deadline))?;
                 status.paused_until_unix_millis = Some(deadline);
+                status.cancel_cache_activity();
                 self.cleanup_policy_revision.fetch_add(1, Ordering::AcqRel);
                 Ok(IpcPayload::Pause {
                     until_unix_millis: deadline,
@@ -1745,7 +1849,7 @@ mod control_plane_tests {
             status.set_effective_mode(DaemonMode::Enforce);
             status.enforcement_epoch = Some("cache-test-epoch".to_owned());
         }
-        let (_, child, epoch) = control
+        let (prepared, child, epoch) = control
             .start_tool_cache_if_ready_enforce(20, || {
                 assert_eq!(
                     control
@@ -1763,8 +1867,38 @@ mod control_plane_tests {
             .unwrap()
             .unwrap();
         assert!(child.is_ok());
-        assert!(control.tool_cache_action_may_continue(&epoch));
+        assert!(control.tool_cache_action_may_continue(&prepared, &epoch));
         assert!(control.status().unwrap().cleanup_in_progress);
+        // Observation starts and finishes without cancelling/recovering GC or
+        // clearing its independent activity. Operator quiescence stays false.
+        control
+            .update_status(|status| status.scan_in_progress = true)
+            .unwrap();
+        assert!(control.tool_cache_action_may_continue(&prepared, &epoch));
+        let process_activity = control
+            .begin_process_cleanup_activity("test-process-cycle")
+            .unwrap();
+        assert!(control.tool_cache_action_may_continue(&prepared, &epoch));
+        drop(process_activity);
+        control
+            .update_status(|status| status.scan_in_progress = false)
+            .unwrap();
+        assert!(control.status().unwrap().cleanup_in_progress);
+        assert!(
+            !control
+                .browser_source_snapshot_at(20)
+                .unwrap()
+                .status
+                .browser_cleanup_in_progress()
+        );
+        assert!(
+            control
+                .start_tool_cache_if_ready_enforce(20, || -> std::io::Result<()> {
+                    panic!("overlapping cache action")
+                })
+                .unwrap()
+                .is_none()
+        );
         control
             .handle_at(
                 IpcCommand::Pause {
@@ -1773,8 +1907,9 @@ mod control_plane_tests {
                 21,
             )
             .unwrap();
-        assert!(!control.tool_cache_action_may_continue(&epoch));
-        control.finish_tool_cache_action().unwrap();
+        control.handle_at(IpcCommand::Resume, 22).unwrap();
+        assert!(!control.tool_cache_action_may_continue(&prepared, &epoch));
+        control.finish_tool_cache_action(&prepared).unwrap();
         assert!(!control.status().unwrap().cleanup_in_progress);
     }
 
@@ -2239,6 +2374,9 @@ fn require_exact_status_identity(
 }
 
 fn apply_managed_lifecycle(status: &mut DaemonStatus, lifecycle: &ManagedLifecycle) {
+    if !lifecycle.effective_enforce {
+        status.cancel_cache_activity();
+    }
     status.managed = true;
     status.activation_generation = Some(lifecycle.activation_generation);
     status.instance_id.clone_from(&lifecycle.instance_id);

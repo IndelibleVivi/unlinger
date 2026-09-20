@@ -87,7 +87,7 @@
 "browser.storage_residue.unavailable" = "The Chrome code-signing clone location could not be verified safely.";
 "browser.storage_residue.clear" = "No Chrome code-signing clone leftovers are currently present.";
 "browser.storage_cleanup.title" = "Latest storage cleanup";
-"cache.maintenance.title" = "Tool cache maintenance";
+"cache.maintenance.title" = "npm maintenance history";
 "cache.maintenance.enabled" = "npm download cache · automatic upkeep enabled";
 "cache.maintenance.observing" = "npm download cache · observation only or waiting";
 "cache.maintenance.absent" = "No default npm download cache found.";
@@ -95,13 +95,12 @@
 "cache.maintenance.unavailable" = "The cache could not be checked safely.";
 "cache.maintenance.observed" = "Last checked: %@";
 "cache.maintenance.running" = "Native maintenance is running.";
-"cache.maintenance.no_op" = "Maintenance completed; no content was reclaimed.";
+"cache.maintenance.no_op" = "Native maintenance completed";
 "cache.maintenance.completed" = "Native maintenance completed.";
 "cache.maintenance.failed" = "Maintenance failed; partial changes may have occurred.";
 "cache.maintenance.delivery_unknown" = "The maintenance result is unknown.";
-"cache.maintenance.native_result" = "The tool reported %llu content entries removed (%@ logical size).";
-"cache.maintenance.estimate" = "Native accounting is not measured physical disk-space savings.";
-"cache.maintenance.scope" = "Uses npm’s cache verification and retention rules. Download content only; npx environments are excluded.";
+"cache.maintenance.estimate" = "Native accounting is not measured physical disk-space savings. Zero counters do not prove no side effects.";
+"cache.maintenance.scope" = "Historical npm maintenance evidence. Automatic npm verification is retired because it can disrupt concurrent installs.";
 "browser.storage_cleanup.complete" = "Automatic cleanup completed; the immediate rescan proved every planned clone absent.";
 "browser.storage_cleanup.partial" = "Automatic cleanup removed every planned clone; residue outside that removal plan remains.";
 "browser.storage_cleanup.failed" = "Automatic cleanup did not prove every planned clone absent.";
@@ -305,3 +304,15 @@
 "outcome.ended_without_intervention" = "Ended without intervention";
 
 "detail.cleanup.without_intervention" = "The session ended without Unlinger sending a cleanup signal. It is not counted as a reclaim.";
+
+"cache.uv.title" = "uv cache maintenance";
+"cache.uv.scope" = "Native uv prune maintains unused cache entries and uv-owned cached environments. Busy caches retry after 15 minutes. Project environments are outside this operation.";
+"cache.maintenance.busy" = "Cache in use · maintenance deferred";
+"cache.maintenance.native_count" = "Native report: %llu items removed.";
+"cache.maintenance.native_size" = "Approximate native logical size removed: %@.";
+
+"cache.uv.estimate" = "Native summary counts files, or directories when there are no files; size is a rounded logical estimate, not measured physical disk-space savings. Zero counters do not prove no side effects.";
+"cache.uv.enabled" = "Automatic upkeep enabled";
+"cache.uv.observing" = "Observation only or waiting for maintenance";
+"cache.uv.absent" = "No default uv cache found.";
+"cache.uv.unsupported" = "This uv installation is not supported; native maintenance requires uv 0.11.20.";

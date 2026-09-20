@@ -50,18 +50,21 @@ Raw arguments, executable/profile paths and frozen signal targets stay transient
 ## Producer-native cache lane / 原生缓存维护路径
 
 Tool-cache maintenance is separate from the browser and Chrome paths above.
-Source SQLite v12 adds latest-attempt authority without changing their gates.
+Source SQLite v13 separates uv latest-attempt authority from retired npm evidence.
+A single cache worker runs independently of process observation; exact activity
+owners project lifecycle quiescence and preserve sticky cancellation.
 
 ```mermaid
 flowchart LR
-  probe["Default npm cache + exact installed producer"] --> gate["Daemon report-only / ready-enforce gate"]
-  gate -->|observe only| db[("SQLite v12 latest observation")]
-  gate -->|weekly, durable PREPARED| native["Bounded cacache.verify child"]
-  native -->|native counts or unknown; atomic settlement| db
-  db --> view["Optional v5 summary → App / CLI"]
+  probe["Default uv cache + exact 0.11.20 producer"] --> gate["Daemon report-only / ready-enforce gate"]
+  gate -->|observe only| db[("SQLite v13 uv observation")]
+  gate -->|weekly, durable PREPARED| native["Owned supervisor + native locked prune"]
+  native -->|completed / busy / unknown; atomic settlement| db
+  db --> view["Optional v5 uv summary → App / CLI"]
   pause["Pause / disarm / drain"] -->|cancel owned child| native
 ```
 
-生产工具决定哪些下载内容不再被索引引用；daemon 决定能否执行，并负责耐久结果。
-App 不重算删除资格。普通缓存 miss 可重新下载，不等于 npx 等共享运行环境可以删除。
+生产工具按自己的引用与保留规则回收缓存；已授权范围包括 uv 自己的缓存环境，
+不包括项目 `.venv` 或用户成果。原生锁忙碌时延后，暂停请求绑定到具体 attempt，
+快速恢复也不能取消旧 child 的停止请求。App 不重算删除资格。
 这条 source lane 尚未安装；其结果不加入浏览器 cleanup impact。

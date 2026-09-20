@@ -34,7 +34,7 @@ pub use session_owners::{SessionOwnerLease, SessionOwnerStatus};
 pub use tasks::{TaskLease, TaskPhase, TaskStatus};
 pub use tool_cache::PreparedToolCacheAttempt;
 
-const SCHEMA_VERSION: i64 = 12;
+const SCHEMA_VERSION: i64 = 13;
 const CLEANUP_DETAIL_RETENTION_MILLIS: u64 = 14 * 24 * 60 * 60 * 1_000;
 const MAX_ATTENTION_SUMMARIES: usize = 50;
 const MAX_MUTATION_RECEIPTS: usize = 10_000;
@@ -3903,6 +3903,16 @@ fn validate_required_schema(connection: &Connection) -> Result<(), StoreError> {
                 "attempt_json",
             ],
         ),
+        (
+            "retired_npm_cache_latest",
+            &[
+                "singleton",
+                "observed_at_ms",
+                "availability_json",
+                "attempt_token",
+                "attempt_json",
+            ],
+        ),
         ("mutation_authority", &["singleton", "namespace_token"]),
         (
             "impact_attribution_legacy",
@@ -4202,6 +4212,13 @@ fn initialize_schema(connection: &mut Connection) -> Result<(), StoreError> {
         transaction.execute_batch(STORAGE_CLEANUP_ATTEMPT_SCHEMA_SQL)?;
     }
     if user_version < 12 {
+        transaction.execute_batch(tool_cache::SCHEMA_SQL)?;
+    }
+    if user_version < 13 {
+        // v12 was the npm-only source candidate. Preserve its evidence in its
+        // own namespace; no npm observation or result may become a uv result.
+        transaction
+            .execute_batch("ALTER TABLE tool_cache_latest RENAME TO retired_npm_cache_latest;")?;
         transaction.execute_batch(tool_cache::SCHEMA_SQL)?;
     }
     transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;

@@ -108,48 +108,87 @@ and report-only rollback must retain their exact prior-schema backup contract.
 
 ## Native tool-cache maintenance
 
-The first source family is the default npm download cache, via the inspected
-npm `11.19.0` bundled cacache `20.0.4` public `verify` API. It applies upstream
-index reachability and integrity rules, not Unlinger mtime heuristics. Cached
-content may disappear and be fetched again under npm's documented cache-miss
-contract; this does not authorize deleting executable npx environments. No
-whole-cache purge, custom entry filter, force mode, project script, network
-request or tool installation is part of maintenance. Other producer families
-(including uv `0.11.19`) are not admitted.
+The active source adapter uses exact `uv 0.11.20 cache prune` on the default
+`~/.cache/uv`. Native reference rules decide archive removal; native policy also
+removes obsolete source-distribution revisions, outdated cache buckets and
+uv-owned cached execution environments. The
+owner admitted those rebuildable environments explicitly. Project `.venv` and
+user artifacts are outside this operation. No force, CI retention, whole-cache
+purge, project script, network request or tool upgrade is part of maintenance.
+Other uv versions are unsupported; `0.11.19` predates the upstream symlink fix.
 
-The adapter binds the discovered runtime/module and default cache location,
-rejects symlinked cache structure, linked native write targets and unsupported versions, and revalidates
-before spawn. It does not claim to resist a deliberately racing hostile process
-with the same UID. The ordinary report-only path only observes. Healthy ready
-enforce may start a durable PREPARED attempt at most weekly. Child execution is
-bounded and observes pause/disarm/drain without holding the IPC status lock;
-cancellation/timeout is unknown delivery, never a no-op. A native nonzero exit
-may have partially changed the cache. Only native successful accounting is
-published, separately from Chrome results and process impact. All validation
-mutations use test-created caches and canaries, never a user's live cache.
+The producer's shared/exclusive cache lock protects cooperating uv operations.
+A native exit-2 lock timeout with the in-use warning and no mutation-start marker
+is `busy`, with a 15-minute retry
+opportunity. Busy is distinct from unknown delivery. A nonzero exit after native
+work may mean partial changes; cancellation, timeout or unparsed output carries
+no reclaim credit. Ordinary attempts use a weekly clock, including failures and
+unknown delivery. Report-only only observes. PREPARED commits before spawning,
+and result plus latest availability settle atomically. No restart or lower cache
+size can turn uncertainty into success.
 
-The preflight is bounded to five seconds, one million entries and 64 directory
-levels; exceeding a bound or receiving a shutdown/drain request reports unavailable
-rather than starting native GC. Traversal checks cancellation between entries.
-The native child has a 120-second runtime limit and a 16-KiB output limit. Its
-JavaScript driver is embedded in the daemon, so an installed generation does not
-read executable driver code from a source checkout. The exact Node/module file
-identities and cache root are checked again before spawn. `_lastverified` and
-index buckets must not be symlinks or external hard links: upstream verification
-writes the former and truncates the latter. Unlinger never replaces native GC
-with its own recursive deletion.
+One background worker owns the cache cycle; process observation continues.
+Lifecycle status includes cache activity, while browser phase describes browser
+work. A supervisor in the same daemon executable owns the native child and reaps
+it on parent-pipe closure or cancellation. Nonblocking parent/stderr reads share
+one loop; no watcher thread can outlive the child. The native budget is 120
+seconds, its lock wait is 15 seconds, and captured native stderr is capped at
+64 KiB (the supervisor result at 16 KiB). Native output stays transient.
+Successful counts describe uv's human summary (files, or directories
+when there are no files), with rounded logical bytes; they are not physical APFS
+reclaim and zero does not mean no side effects. Cache-root and producer identities
+are revalidated; unexpected linked mutation roots are refused. This is not a
+claim to resist a deliberately hostile same-UID pathname race.
 
-The producer contract is documented by [npm cache](https://docs.npmjs.com/cli/v11/commands/npm-cache/)
-and the [cacache public verify API](https://github.com/npm/cacache#--cacacheverifycache-opts---promise).
-The ignored native test lane is explicit and test-owned:
+The producer contract is described in [uv caching](https://docs.astral.sh/uv/concepts/cache/)
+and the exact 0.11.20 implementations of [cache pruning](https://github.com/astral-sh/uv/blob/0.11.20/crates/uv-cache/src/lib.rs)
+and [source-revision pruning](https://github.com/astral-sh/uv/blob/0.11.20/crates/uv-distribution/src/source/mod.rs).
+The latter traverses without following directory symlinks; cache bucket roots,
+ancestors and producer marker/lock shapes are checked before native mutation.
+All mutation tests create their own caches and canaries; never point validation
+at a user's existing cache. The active adapter and native test lane are under
+`crates/unlinger-daemon/src/tool_cache.rs` and `tool_cache_tests.rs`.
+
+The explicit native lane checks real removal and retained references, cached
+package usability before/after native pruning, shared-holder busy deferral,
+installed `0.11.19` shared-lock interoperability, reverse exclusive-lock blocking
+of ordinary operations in both versions, external symlink canaries and the built
+daemon's parent-EOF supervisor path. It does not upgrade either tool or accept a
+caller-supplied cache root:
 
 ```bash
-cargo test -p unlinger-daemon --lib tool_cache -- --include-ignored --test-threads=1
+cargo build -p unlinger-daemon --bin unlingerd
+UNLINGER_UV_BINARY=/absolute/path/to/staged-uv-0.11.20 \
+UNLINGER_UV_INSTALLED_BINARY=/absolute/path/to/uv-0.11.19 \
+UNLINGER_UV_TEST_PYTHON=/absolute/path/to/python3 \
+UNLINGER_UV_SUPERVISOR_BIN="$PWD/target/debug/unlingerd" \
+  cargo test -p unlinger-daemon --lib tool_cache::tests -- --ignored --test-threads=1
 ```
 
-This requires the inspected Homebrew npm/cacache installation. It does not target
-the user's cache; ordinary workspace tests use portable control/store/parser
-fixtures and leave this installed-producer lane ignored.
+### Why npm verification is retired
+
+Exact npm `11.19.0` / bundled cacache `20.0.4` verification removes the entire
+`_cacache/tmp` tree without a producer-wide exclusion lock. The bundled Git
+fetcher uses that same tree while an installation is active. The isolated
+[concurrency probe](../scripts/npm-cache-concurrency-probe.py) pauses a real local
+Git clone after it succeeds: the control completes (exit 0); interleaved native
+verify succeeds with all three counters zero, removes the live tree, and the
+resumed install fails with `ENOENT` (exit 254). It uses no network packages and
+changes neither npm nor cacache. The old runtime adapter and driver are removed.
+Stored v12 results remain separate historical evidence and are never uv credit.
+Legacy `no_op` is presented as completed maintenance, since those counters cover
+content GC and do not prove that tmp/index work had no effects.
+
+```bash
+python3 scripts/npm-cache-concurrency-probe.py \
+  --node /path/to/node --npm /path/to/npm/bin/npm-cli.js \
+  --cacache /path/to/npm/node_modules/cacache --git /usr/bin/git
+```
+
+The probe requires Python 3.9+, Node `26.7.0`, npm `11.19.0`, and cacache `20.0.4`.
+Exit 0 means the negative admission evidence reproduced, not that maintenance
+is safe. By default it removes only its own fixtures; `--evidence-dir` must name
+a new directory and retains test fixtures/logs there for inspection.
 
 ### Why pnpm 11.21.0 is not admitted
 

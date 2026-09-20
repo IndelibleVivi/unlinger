@@ -135,16 +135,17 @@ A clean-checkout build and isolated preview can be checked without installing an
 
 ## Tool caches in the source candidate
 
-The source App home and `unlinger browser status` (including `--json`) expose
-npm download-cache availability and the latest maintenance attempt. Ordinary
-report-only previews never invoke native verification/GC. The first supported
-combination is npm `11.19.0` with bundled cacache `20.0.4`, at the default
-`~/.npm/_cacache`; custom cache locations are not adopted. No per-task setup is
-needed. Unsupported or missing installations are shown without cleanup.
+The source App home and `unlinger browser status` (including `--json`) expose uv
+cache availability and the latest native attempt. Report-only previews never
+invoke native prune. The supported producer is exact `uv 0.11.20` at the default
+`~/.cache/uv`; custom roots and other versions are not adopted. Unlinger does not
+upgrade uv. No per-task setup is needed. Missing or unsupported installations
+remain observation-only. npm verify is retired; old npm results remain historical.
 
-After a separately authorized installation and enforce activation, upkeep is
-at most weekly; pause/disarm also stops a running attempt. Failure or interruption
-can mean partial changes and never promises reclaimed space. Do not manually
-run cleanup to verify this feature against an existing cache: the source tests
-create isolated caches. SQLite v12 is a source candidate; replacing the v11
-reference service requires the usual transactional rollback proof.
+After a separately authorized installation and enforce activation, ordinary
+upkeep is weekly. A native lock refusal is deferred for 15 minutes, allowing
+ongoing uv work to finish normally. Pause/disarm/drain cancels the owned child;
+process observation keeps running during slow maintenance. Failed/interrupted
+operations may have partial effects and never promise reclaimed space. Validation
+uses test-created caches only. SQLite v13 is a source candidate; replacing the
+reference v11 service requires the transactional rollback proof.

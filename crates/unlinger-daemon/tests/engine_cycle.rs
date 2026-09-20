@@ -1201,3 +1201,68 @@ fn natural_exit_between_confirmation_and_execution_is_not_an_engine_reclaim() {
     );
     assert!(control.status().unwrap().most_recent_reclaim.is_none());
 }
+
+#[test]
+fn cache_activity_survives_process_observation_cleanup_and_sticky_pause() {
+    let runtime = FakeRuntime::with_snapshots(vec![
+        abandoned_snapshot(1_000),
+        abandoned_snapshot(1_015),
+        abandoned_snapshot(2_016),
+        abandoned_snapshot(2_017),
+        empty_snapshot(2_020),
+        empty_snapshot(2_035),
+        empty_snapshot(2_095),
+        empty_snapshot(2_096),
+    ]);
+    let (mut engine, control, _database) = engine(DaemonMode::Enforce, runtime);
+    control.complete_successful_cycle(1).unwrap();
+    let (prepared, _, epoch) = control
+        .start_tool_cache_if_ready_enforce(2, || Ok(()))
+        .unwrap()
+        .unwrap();
+    let report = engine.run_cycle_at(2_000).unwrap();
+    assert_eq!(report.cleanup_receipts.len(), 1);
+    assert_eq!(engine.runtime().signals, vec![(700, CleanupSignal::Term)]);
+    assert!(
+        control.status().unwrap().cleanup_in_progress,
+        "process completion cannot clear cache ownership"
+    );
+    assert!(control.tool_cache_action_may_continue(&prepared, &epoch));
+    assert_eq!(
+        control
+            .store()
+            .latest_tool_cache_maintenance()
+            .unwrap()
+            .unwrap()
+            .last_attempt
+            .unwrap()
+            .outcome,
+        unlinger_protocol::ToolCacheOutcome::Running
+    );
+    control
+        .handle_at(
+            IpcCommand::Pause {
+                duration_millis: 1000,
+            },
+            3000,
+        )
+        .unwrap();
+    control.handle_at(IpcCommand::Resume, 3001).unwrap();
+    assert!(!control.tool_cache_action_may_continue(&prepared, &epoch));
+    control.finish_tool_cache_action(&prepared).unwrap();
+    assert!(!control.status().unwrap().cleanup_in_progress);
+    control.store().recover_tool_cache_attempt(3002).unwrap();
+    let (next, _, next_epoch) = control
+        .start_tool_cache_if_ready_enforce(3003, || Ok(()))
+        .unwrap()
+        .unwrap();
+    assert!(
+        control.finish_tool_cache_action(&prepared).is_err(),
+        "old completion cannot clear the next owner"
+    );
+    assert!(control.tool_cache_action_may_continue(&next, &next_epoch));
+    control.fail_closed(3004, "owned failure fixture").unwrap();
+    assert!(!control.tool_cache_action_may_continue(&next, &next_epoch));
+    assert!(control.status().unwrap().cleanup_in_progress);
+    control.finish_tool_cache_action(&next).unwrap();
+}

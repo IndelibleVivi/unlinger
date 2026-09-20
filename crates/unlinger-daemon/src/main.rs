@@ -9,7 +9,7 @@ use std::process::ExitCode;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use unlinger_core::{CleanupRuntime, ProcessRole};
-use unlinger_daemon::tool_cache::{NpmCacheMaintenance, ToolCacheNativeResult};
+use unlinger_daemon::tool_cache::{ToolCacheNativeResult, UvCacheMaintenance};
 use unlinger_daemon::{
     ControlPlane, DaemonInstanceLock, DaemonMode, DaemonStatus, EngineConfig, HistoryStore,
     IpcServer, LocalPaths, ReconciliationEngine, StoreError,
@@ -62,6 +62,15 @@ struct Arguments {
 }
 
 fn main() -> ExitCode {
+    let child_arguments: Vec<_> = std::env::args_os().skip(1).collect();
+    if child_arguments
+        .first()
+        .is_some_and(|arg| arg == unlinger_daemon::tool_cache::NATIVE_CACHE_CHILD_FLAG)
+    {
+        return ExitCode::from(
+            unlinger_daemon::tool_cache::run_uv_supervisor(&child_arguments[1..]) as u8,
+        );
+    }
     match run(Arguments::parse()) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
@@ -127,6 +136,9 @@ fn run(arguments: Arguments) -> Result<(), Box<dyn Error>> {
         .store()
         .recover_storage_cleanup_attempts(recovery_now)?;
     control.store().recover_tool_cache_attempt(recovery_now)?;
+    control
+        .store()
+        .recover_retired_npm_cache_attempt(recovery_now)?;
     let _server = if arguments.once {
         None
     } else {
@@ -146,6 +158,7 @@ fn run(arguments: Arguments) -> Result<(), Box<dyn Error>> {
     let mut last_storage_residue_error = None;
     let mut last_storage_residue_attempt_at = None;
     let mut last_tool_cache_observation_attempt_at = None;
+    let mut cache_worker = CacheWorker::default();
     let storage_snapshotter = MacosSnapshotter::new();
     let mut chrome_clone_cleanup = ChromeCloneCleanup::new();
     let mut scheduler = (!arguments.once)
@@ -243,19 +256,8 @@ fn run(arguments: Arguments) -> Result<(), Box<dyn Error>> {
                 }
             }
         }
-        if last_tool_cache_observation_attempt_at.is_none_or(|previous| {
-            now.saturating_sub(previous) >= STORAGE_RESIDUE_OBSERVATION_INTERVAL_MILLIS
-        }) {
-            last_tool_cache_observation_attempt_at = Some(now);
-            if run_tool_cache_cycle(&control, now).is_err() {
-                // No raw native output or cache path reaches ordinary logs.
-                let _ = control.fail_closed(now, "tool cache maintenance state could not settle");
-                eprintln!("unlingerd: tool cache maintenance state could not settle");
-            }
-        }
+        cache_worker.collect(&control, now);
         let stop_control = control.clone();
-        // A native cache operation can take time; process evidence must use a
-        // fresh clock sample after it has settled or been cancelled.
         let cycle_now = now_unix_millis()?;
         match engine.run_cycle_at_until(cycle_now, || {
             shutdown_requested() || stop_control.is_draining()
@@ -265,6 +267,12 @@ fn run(arguments: Arguments) -> Result<(), Box<dyn Error>> {
                     startup.mark_first_cycle_complete();
                 }
                 if arguments.once {
+                    run_tool_cache_cycle(
+                        &control,
+                        now_unix_millis()?,
+                        &AtomicBool::new(false),
+                        false,
+                    )?;
                     println!("{}", serde_json::to_string_pretty(&report)?);
                     return Ok(());
                 }
@@ -284,6 +292,15 @@ fn run(arguments: Arguments) -> Result<(), Box<dyn Error>> {
                     scheduler.cycle_failed();
                 }
             }
+        }
+        let cache_now = now_unix_millis()?;
+        if cache_worker.is_idle()
+            && last_tool_cache_observation_attempt_at.is_none_or(|previous| {
+                cache_now.saturating_sub(previous) >= STORAGE_RESIDUE_OBSERVATION_INTERVAL_MILLIS
+            })
+        {
+            last_tool_cache_observation_attempt_at = Some(cache_now);
+            cache_worker.start(control.clone(), cache_now)?;
         }
         if let Some(scheduler) = scheduler.as_mut() {
             loop {
@@ -307,22 +324,117 @@ fn run(arguments: Arguments) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn tool_cache_maintenance_due(now: u64, last_prepared: Option<u64>) -> bool {
-    last_prepared.is_none_or(|previous| {
-        now.saturating_sub(previous) >= TOOL_CACHE_MAINTENANCE_INTERVAL_MILLIS
+#[derive(Default)]
+struct CacheWorker {
+    handle: Option<std::thread::JoinHandle<bool>>,
+    cancelled: std::sync::Arc<AtomicBool>,
+}
+
+impl CacheWorker {
+    fn is_idle(&self) -> bool {
+        self.handle.is_none()
+    }
+    fn start(&mut self, control: ControlPlane, now: u64) -> std::io::Result<()> {
+        self.launch(move |cancelled| {
+            let result = run_tool_cache_cycle(&control, now, cancelled, true);
+            if result.is_err() {
+                let _ = control.fail_closed(
+                    now_unix_millis().unwrap_or(now),
+                    "tool cache maintenance state could not settle",
+                );
+            }
+            result.is_ok()
+        })
+    }
+    fn launch(
+        &mut self,
+        work: impl FnOnce(&AtomicBool) -> bool + Send + 'static,
+    ) -> std::io::Result<()> {
+        if self.handle.is_some() {
+            return Ok(());
+        }
+        let cancelled = self.cancelled.clone();
+        self.handle = Some(
+            std::thread::Builder::new()
+                .name("cache-maintenance".into())
+                .spawn(move || work(&cancelled))?,
+        );
+        Ok(())
+    }
+    fn collect(&mut self, control: &ControlPlane, now: u64) {
+        if self
+            .handle
+            .as_ref()
+            .is_some_and(|handle| handle.is_finished())
+        {
+            let result = self.handle.take().expect("finished worker").join();
+            if !matches!(result, Ok(true)) {
+                // The joined worker can no longer own a native child. A later
+                // observation must never be used as evidence of its result.
+                let _ = control.store().recover_tool_cache_attempt(now);
+                let _ = control.fail_closed(now, "tool cache maintenance state could not settle");
+            }
+        }
+    }
+}
+
+impl Drop for CacheWorker {
+    fn drop(&mut self) {
+        self.cancelled.store(true, Ordering::Release);
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
+fn tool_cache_maintenance_due(now: u64, last_attempt: Option<&ToolCacheAttemptSummary>) -> bool {
+    last_attempt.is_none_or(|attempt| {
+        let interval = if attempt.outcome == ToolCacheOutcome::Busy {
+            // A proved pre-mutation lock refusal gets the next observation opportunity.
+            STORAGE_RESIDUE_OBSERVATION_INTERVAL_MILLIS
+        } else {
+            TOOL_CACHE_MAINTENANCE_INTERVAL_MILLIS
+        };
+        now.saturating_sub(attempt.prepared_at_unix_millis) >= interval
     })
 }
 
-fn run_tool_cache_cycle(control: &ControlPlane, now: u64) -> Result<(), Box<dyn Error>> {
-    // This function is synchronous: no active child overlaps recovery. A failed
-    // settlement must become durably unknown before another cycle can proceed.
-    control.store().recover_tool_cache_attempt(now)?;
+/// The worker owns this exact activity until its native child and durable
+/// settlement finish. Unwinding releases only this owner; joined-worker recovery
+/// separately records unknown delivery and fails the daemon closed.
+struct CacheActivityGuard<'a> {
+    control: &'a ControlPlane,
+    prepared: Option<&'a unlinger_daemon::PreparedToolCacheAttempt>,
+}
+impl CacheActivityGuard<'_> {
+    fn finish(mut self) -> Result<(), unlinger_daemon::ControlError> {
+        self.control
+            .finish_tool_cache_action(self.prepared.take().expect("owned activity"))
+    }
+}
+impl Drop for CacheActivityGuard<'_> {
+    fn drop(&mut self) {
+        if let Some(prepared) = self.prepared.take() {
+            let _ = self.control.finish_tool_cache_action(prepared);
+        }
+    }
+}
+
+fn run_tool_cache_cycle(
+    control: &ControlPlane,
+    now: u64,
+    cancelled: &AtomicBool,
+    allow_mutation: bool,
+) -> Result<(), Box<dyn Error>> {
+    // Only startup (or a joined failed worker) recovers PREPARED. Ordinary
+    // observations cannot reclassify a live maintenance attempt.
     let previous = control.store().latest_tool_cache_maintenance()?;
-    let stopping = || shutdown_requested() || control.is_draining();
+    let stopping =
+        || cancelled.load(Ordering::Acquire) || shutdown_requested() || control.is_draining();
     if stopping() {
         return Ok(());
     }
-    let adapter = NpmCacheMaintenance::discover(stopping);
+    let adapter = UvCacheMaintenance::discover(stopping);
     let availability = match &adapter {
         Ok(_) => ToolCacheAvailability::Available,
         Err(availability) => *availability,
@@ -331,12 +443,13 @@ fn run_tool_cache_cycle(control: &ControlPlane, now: u64) -> Result<(), Box<dyn 
         .store()
         .record_tool_cache_observation(now, availability)?;
     if availability != ToolCacheAvailability::Available
-        || shutdown_requested()
+        || stopping()
+        || !allow_mutation
         || !tool_cache_maintenance_due(
             now,
             previous
-                .and_then(|state| state.last_attempt)
-                .map(|attempt| attempt.prepared_at_unix_millis),
+                .as_ref()
+                .and_then(|state| state.last_attempt.as_ref()),
         )
     {
         return Ok(());
@@ -347,9 +460,13 @@ fn run_tool_cache_cycle(control: &ControlPlane, now: u64) -> Result<(), Box<dyn 
     else {
         return Ok(());
     };
+    let activity = CacheActivityGuard {
+        control,
+        prepared: Some(&prepared),
+    };
     let native = match child {
         Ok(child) => {
-            child.wait(|| shutdown_requested() || !control.tool_cache_action_may_continue(&epoch))
+            child.wait(|| stopping() || !control.tool_cache_action_may_continue(&prepared, &epoch))
         }
         Err(_) => ToolCacheNativeResult {
             outcome: ToolCacheOutcome::Failed,
@@ -357,21 +474,24 @@ fn run_tool_cache_cycle(control: &ControlPlane, now: u64) -> Result<(), Box<dyn 
             removed_logical_bytes: None,
         },
     };
-    let after = adapter.observe(|| stopping() || !control.tool_cache_action_may_continue(&epoch));
-    let completed = now_unix_millis()?.max(now);
-    let result = ToolCacheAttemptSummary {
-        outcome: native.outcome,
-        prepared_at_unix_millis: now,
-        completed_at_unix_millis: Some(completed),
-        native_removed_entry_count: native.removed_entry_count,
-        native_removed_logical_bytes: native.removed_logical_bytes,
-    };
-    let settled = control
-        .store()
-        .complete_tool_cache_attempt(&prepared, &result, after);
-    control.finish_tool_cache_action()?;
-    settled?;
-    Ok(())
+    let settled = (|| -> Result<(), Box<dyn Error>> {
+        let after = adapter
+            .observe(|| stopping() || !control.tool_cache_action_may_continue(&prepared, &epoch));
+        let completed = now_unix_millis()?.max(now);
+        let result = ToolCacheAttemptSummary {
+            outcome: native.outcome,
+            prepared_at_unix_millis: now,
+            completed_at_unix_millis: Some(completed),
+            native_removed_entry_count: native.removed_entry_count,
+            native_removed_logical_bytes: native.removed_logical_bytes,
+        };
+        control
+            .store()
+            .complete_tool_cache_attempt(&prepared, &result, after)?;
+        Ok(())
+    })();
+    activity.finish()?;
+    settled
 }
 
 /// Clears carried enforce intent if a managed boot exits before its first
@@ -519,18 +639,130 @@ mod tests {
     use super::{Arguments, HistoryStore};
 
     #[test]
-    fn native_cache_cadence_survives_restart_and_does_not_replay_unknown_delivery() {
-        use super::{TOOL_CACHE_MAINTENANCE_INTERVAL_MILLIS, tool_cache_maintenance_due};
+    fn cache_worker_returns_before_completion_is_single_flight_and_joins_on_cancel() {
+        use std::sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+            mpsc,
+        };
+        use std::time::Duration;
+        let (started_tx, started_rx) = mpsc::channel();
+        let (stopped_tx, stopped_rx) = mpsc::channel();
+        let invocations = Arc::new(AtomicUsize::new(0));
+        let count = invocations.clone();
+        let mut worker = super::CacheWorker::default();
+        worker
+            .launch(move |cancelled| {
+                count.fetch_add(1, Ordering::SeqCst);
+                started_tx.send(()).unwrap();
+                while !cancelled.load(Ordering::Acquire) {
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+                stopped_tx.send(()).unwrap();
+                true
+            })
+            .unwrap();
+        started_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert!(!worker.is_idle());
+        worker
+            .launch(|_| panic!("a second cache cycle must not overlap"))
+            .unwrap();
+        assert_eq!(invocations.load(Ordering::SeqCst), 1);
+        assert!(
+            stopped_rx.try_recv().is_err(),
+            "caller progressed while worker remained active"
+        );
+        drop(worker);
+        stopped_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+    }
+
+    #[test]
+    fn joined_failed_cache_worker_releases_activity_and_recovers_unknown() {
+        use super::*;
+        let directory = std::env::temp_dir().join(format!(
+            "unlinger-cache-unwind-{}-{}",
+            std::process::id(),
+            now_unix_millis().unwrap()
+        ));
+        std::fs::create_dir(&directory).unwrap();
+        let store = HistoryStore::open(directory.join("history.sqlite3")).unwrap();
+        let control = ControlPlane::new(
+            store,
+            DaemonStatus::new(DaemonMode::Enforce, std::process::id()),
+        )
+        .unwrap();
+        control.complete_successful_cycle(1).unwrap();
+        let worker_control = control.clone();
+        let mut worker = CacheWorker::default();
+        worker
+            .launch(move |_| {
+                let (prepared, _, _) = worker_control
+                    .start_tool_cache_if_ready_enforce(2, || Ok(()))
+                    .unwrap()
+                    .unwrap();
+                let _activity = CacheActivityGuard {
+                    control: &worker_control,
+                    prepared: Some(&prepared),
+                };
+                panic!("owned cache worker failure fixture");
+            })
+            .unwrap();
+        while !worker.handle.as_ref().unwrap().is_finished() {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        worker.collect(&control, 3);
+        assert!(worker.is_idle());
+        let status = control.status().unwrap();
+        assert!(!status.cleanup_in_progress);
+        assert!(!status.healthy);
+        assert_eq!(
+            control
+                .store()
+                .latest_tool_cache_maintenance()
+                .unwrap()
+                .unwrap()
+                .last_attempt
+                .unwrap()
+                .outcome,
+            ToolCacheOutcome::DeliveryUnknown
+        );
+        drop(control);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn native_cache_cadence_survives_restart_and_retries_only_proved_busy_soon() {
+        use super::*;
+        let mut attempt = ToolCacheAttemptSummary {
+            outcome: ToolCacheOutcome::DeliveryUnknown,
+            prepared_at_unix_millis: 10,
+            completed_at_unix_millis: Some(11),
+            native_removed_entry_count: None,
+            native_removed_logical_bytes: None,
+        };
         assert!(tool_cache_maintenance_due(10, None));
-        assert!(!tool_cache_maintenance_due(20, Some(10)));
-        assert!(!tool_cache_maintenance_due(9, Some(10)));
+        assert!(!tool_cache_maintenance_due(9, Some(&attempt)));
         assert!(!tool_cache_maintenance_due(
             TOOL_CACHE_MAINTENANCE_INTERVAL_MILLIS + 9,
-            Some(10)
+            Some(&attempt)
         ));
         assert!(tool_cache_maintenance_due(
             TOOL_CACHE_MAINTENANCE_INTERVAL_MILLIS + 10,
-            Some(10)
+            Some(&attempt)
+        ));
+        attempt.outcome = ToolCacheOutcome::Busy;
+        assert!(!tool_cache_maintenance_due(
+            STORAGE_RESIDUE_OBSERVATION_INTERVAL_MILLIS + 9,
+            Some(&attempt)
+        ));
+        assert!(tool_cache_maintenance_due(
+            STORAGE_RESIDUE_OBSERVATION_INTERVAL_MILLIS + 10,
+            Some(&attempt)
+        ));
+        attempt.outcome = ToolCacheOutcome::Failed;
+        assert!(!tool_cache_maintenance_due(
+            STORAGE_RESIDUE_OBSERVATION_INTERVAL_MILLIS + 10,
+            Some(&attempt)
         ));
     }
 

@@ -235,7 +235,6 @@ impl<R: CleanupRuntime> ReconciliationEngine<R> {
                 self.control.finish_observation_cycle(&cycle_token, true);
                 self.control.update_status(|status| {
                     status.scan_in_progress = false;
-                    status.cleanup_in_progress = false;
                     status.last_scan_at_unix_millis = Some(completed_at_unix_millis);
                     if status.startup_state != StartupState::Failed {
                         status.last_error = None;
@@ -251,7 +250,6 @@ impl<R: CleanupRuntime> ReconciliationEngine<R> {
                 let _ = self.control.fail_closed(failed_at_unix_millis, &message);
                 let _ = self.control.update_status(|status| {
                     status.scan_in_progress = false;
-                    status.cleanup_in_progress = false;
                     status.last_error = Some(message);
                 });
             }
@@ -418,8 +416,7 @@ impl<R: CleanupRuntime> ReconciliationEngine<R> {
                 else {
                     break;
                 };
-                self.control
-                    .update_status(|status| status.cleanup_in_progress = true)?;
+                let process_activity = self.control.begin_process_cleanup_activity(cycle_token)?;
                 let mut journal = self.control.store().journal_for(&attempt);
                 let signal_control = self.control.clone();
                 let stop_control = self.control.clone();
@@ -469,13 +466,10 @@ impl<R: CleanupRuntime> ReconciliationEngine<R> {
                                 error.to_string(),
                             )?;
                         }
-                        self.control
-                            .update_status(|status| status.cleanup_in_progress = false)?;
                         return Err(EngineError::Cleanup(error));
                     }
                 };
-                self.control
-                    .update_status(|status| status.cleanup_in_progress = false)?;
+                drop(process_activity);
                 if receipt_requires_global_fail_close(&receipt) {
                     return Err(EngineError::PostDeliveryFailure(
                         receipt.incident_id.clone(),

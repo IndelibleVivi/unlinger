@@ -217,6 +217,7 @@ mod tests {
                  DROP TABLE task_scopes;
                  DROP TABLE storage_cleanup_attempts;
                  DROP TABLE tool_cache_latest;
+                 DROP TABLE IF EXISTS retired_npm_cache_latest;
                  PRAGMA user_version=7;",
             )
             .unwrap();
@@ -224,7 +225,7 @@ mod tests {
         let migrated = HistoryStore::open(temp.store.path()).unwrap();
         assert_eq!(migrated.pause_until().unwrap(), Some(900_000));
         assert!(migrated.task_scopes().unwrap().is_empty());
-        assert_eq!(HistoryStore::schema_version(), 12);
+        assert_eq!(HistoryStore::schema_version(), 13);
     }
 }
 

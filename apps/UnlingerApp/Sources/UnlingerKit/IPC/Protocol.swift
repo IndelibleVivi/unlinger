@@ -906,6 +906,7 @@ public struct BrowserOverviewSnapshot: Codable, Equatable, Sendable {
     public var storageResidue: StorageResidueSummary? = nil
     public var storageCleanupResult: StorageCleanupResultSummary? = nil
     public var toolCacheMaintenance: ToolCacheMaintenanceSummary? = nil
+    public var uvCacheMaintenance: ToolCacheMaintenanceSummary? = nil
     public var attention: AttentionProjection
     public var protection: ProtectionProjection
     public var supportCatalog: BrowserSupportCatalog
@@ -924,6 +925,7 @@ public struct BrowserOverviewSnapshot: Codable, Equatable, Sendable {
         case storageResidue = "storage_residue"
         case storageCleanupResult = "storage_cleanup_result"
         case toolCacheMaintenance = "tool_cache_maintenance"
+        case uvCacheMaintenance = "uv_cache_maintenance"
         case attention, protection
         case supportCatalog = "support_catalog"
     }

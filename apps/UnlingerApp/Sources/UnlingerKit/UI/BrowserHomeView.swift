@@ -45,6 +45,10 @@ public struct BrowserHomeView: View {
             )
         case .sessions:
             BrowserSessionsSection(sessions: overview.sessions)
+        case .uvCacheMaintenance:
+            if let cache = overview.uvCacheMaintenance {
+                ToolCacheMaintenanceSection(cache: cache)
+            }
         case .toolCacheMaintenance:
             if let cache = overview.toolCacheMaintenance {
                 ToolCacheMaintenanceSection(cache: cache)

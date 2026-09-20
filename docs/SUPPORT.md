@@ -45,7 +45,7 @@ The controlled DAP results repeat one historical exact admitted point across two
 | Legacy-compatible frontend endpoint | schema v3 existing commands/response meaning retained; overview rejected without downgrade |
 | Schema v2 | historical fixtures retained; superseded before installation; current server returns typed `unsupported_schema` |
 | Reference installation | the dated [current-state](current-state.md) evidence owns exact generation, activation and rollback lease; its SQLite-v11 daemon/App have durable Chrome clone-result authority and the native-popup memory repair, but no tool-cache maintenance |
-| Current source implementation | SQLite v12 adds independent npm download-cache maintenance, optional v5 cache facts and App/CLI presentation; schema v5/v4/v3 plus operator v1, Playwright `0.6.0`, other packs `0.4.0`, exact CfT 151/152 process allowlist, clone-result authority and disabled runtime-artifact flags remain intact |
+| Current source implementation | SQLite v13 adds independent uv maintenance, retained retired npm evidence, optional v5 uv facts and App/CLI presentation; schema v5/v4/v3 plus operator v1, Playwright `0.6.0`, other packs `0.4.0`, exact CfT 151/152 process allowlist, clone-result authority and disabled runtime-artifact flags remain intact |
 
 SQLite v10 has a candidate-specific v8 backup/rollback/open proof: generation 24 really rolled back to healthy, unarmed generation 23 with the old CLI/daemon reopening v8; the exact candidate freshly reinstalled as generation 25, repeated matching-App/socket checks before and after restart, and was accepted before arming. Earlier schema migrations remain historical evidence.
 
@@ -57,15 +57,15 @@ The task-owned lane has isolated controlled process-only evidence for exact CfT 
 
 ## Native tool-cache family (source candidate)
 
-The first non-browser family is default npm download content at `~/.npm/_cacache`,
-using npm `11.19.0` / bundled cacache `20.0.4` native verification and GC. It does
-not require per-task registration or classify the creator as an AI agent. The
-App/CLI expose availability and latest native accounting separately from browser
-impact. Other versions and custom cache roots remain unadmitted. npx runtime,
-project dependencies, uv caches and pnpm stores are not included. Source and
-isolated evidence do not imply installation or multi-day acceptance. See
-[cache safety](SAFETY.md#native-tool-cache-maintenance) for exact limits and the
-[current state](current-state.md) for verification/installed boundaries.
+The active non-browser cache adapter is exact `uv 0.11.20 cache prune` at
+`~/.cache/uv`, including producer-owned cached environments under the native
+shared/exclusive lock. It does not adopt custom roots, project `.venv`, npm/npx
+or pnpm environments, and does not upgrade installed tools. Busy native locks
+retry after 15 minutes; ordinary upkeep is weekly and independent of process
+observation. Source is not installed or field-accepted. npm `11.19.0` / cacache
+`20.0.4` verify is retired because an exact interleaving destroys an active Git
+fetch; its old results remain isolated historical evidence. See
+[cache safety](SAFETY.md#native-tool-cache-maintenance).
 
 pnpm `11.21.0` was evaluated and remains unsupported for unattended maintenance:
 native `store prune` removed a live Git-fetch temporary directory and caused a

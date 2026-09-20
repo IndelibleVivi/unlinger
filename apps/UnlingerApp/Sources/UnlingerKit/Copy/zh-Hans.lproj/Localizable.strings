@@ -87,7 +87,7 @@
 "browser.storage_residue.unavailable" = "无法安全验证 Chrome 代码签名 clone 目录。";
 "browser.storage_residue.clear" = "当前没有 Chrome 代码签名 clone 残留。";
 "browser.storage_cleanup.title" = "最近一次存储清理";
-"cache.maintenance.title" = "工具缓存维护";
+"cache.maintenance.title" = "npm 维护历史";
 "cache.maintenance.enabled" = "npm 下载缓存 · 自动维护已启用";
 "cache.maintenance.observing" = "npm 下载缓存 · 仅观察或等待维护";
 "cache.maintenance.absent" = "未发现默认位置的 npm 下载缓存。";
@@ -95,13 +95,12 @@
 "cache.maintenance.unavailable" = "暂时无法安全检查此缓存。";
 "cache.maintenance.observed" = "最近检查：%@";
 "cache.maintenance.running" = "正在运行原生缓存维护。";
-"cache.maintenance.no_op" = "维护完成，没有回收内容。";
+"cache.maintenance.no_op" = "原生维护已完成";
 "cache.maintenance.completed" = "原生缓存维护已完成。";
 "cache.maintenance.failed" = "维护失败，可能已有部分变更。";
 "cache.maintenance.delivery_unknown" = "此次维护结果未知。";
-"cache.maintenance.native_result" = "工具报告移除 %llu 个内容条目，账面大小 %@。";
-"cache.maintenance.estimate" = "原生工具的统计不等于实际释放的物理磁盘空间。";
-"cache.maintenance.scope" = "沿用 npm 的缓存校验与保留规则。仅维护下载内容，不清理 npx 运行环境。";
+"cache.maintenance.estimate" = "原生工具的统计不等于实际释放的物理磁盘空间。零计数不表示没有副作用。";
+"cache.maintenance.scope" = "历史 npm 维护记录。自动 npm verify 已停用，因为它可能破坏并发安装。";
 "browser.storage_cleanup.complete" = "自动清理已完成；即时重新扫描确认计划中的 clone 全部消失。";
 "browser.storage_cleanup.partial" = "自动清理移除了计划中的全部 clone；清理计划之外仍有残留被保留。";
 "browser.storage_cleanup.failed" = "自动清理未能证明计划中的 clone 已全部消失。";
@@ -305,3 +304,15 @@
 "outcome.ended_without_intervention" = "已结束，未介入";
 
 "detail.cleanup.without_intervention" = "会话已结束；Unlinger 未发送清理信号，不计为回收成果。";
+
+"cache.uv.title" = "uv 缓存维护";
+"cache.uv.scope" = "由 uv 原生 prune 回收无引用缓存和 uv 自己的缓存环境。缓存忙碌时 15 分钟后重试，项目环境不在此操作范围内。";
+"cache.maintenance.busy" = "缓存在使用中 · 维护已延后";
+"cache.maintenance.native_count" = "原生报告移除 %llu 项。";
+"cache.maintenance.native_size" = "原生报告移除的逻辑大小约 %@。";
+
+"cache.uv.estimate" = "计数来自原生摘要中的文件数；没有文件时报告目录数，大小是四舍五入的逻辑估值，不是实测物理磁盘节省。零计数不表示没有副作用。";
+"cache.uv.enabled" = "自动维护已启用";
+"cache.uv.observing" = "仅观察或等待维护";
+"cache.uv.absent" = "未发现默认位置的 uv 缓存。";
+"cache.uv.unsupported" = "此 uv 安装版本尚不支持自动维护；当前要求 uv 0.11.20。";

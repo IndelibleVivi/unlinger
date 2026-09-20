@@ -11,7 +11,7 @@ The App owns no classification, cleanup policy, signal authorization, daemon ins
 - one pure `BrowserOverviewMapper` that only selects localized copy and display shapes from that snapshot; it does not rescan evidence, join history or recompute product state;
 - a separate `BrowserHistoryMapper` that exposes only terminal cleanup outcomes in the history index and consumes daemon-owned observation spans in detail; observation noise no longer becomes a repetitive history row;
 - a browser-first overview, product/version-aware current-session rows, typed coverage explanations, saved protections, exact recent settlement, durable lifetime cleanup impact, daemon-owned Chrome code-sign clone residue/eligibility and the latest `complete | partial | failed | delivery_unknown` cleanup result with aggregate before/after facts and the APFS caveat, cleanup-centric history and readable browser-context detail with named safety checks; the App displays enforce/report-only meaning but owns no storage deletion command; the old process-tree status/roster presentation has been retired;
-- a separate bilingual tool-cache section for daemon-owned npm download-cache availability, observation time, latest maintenance outcome and native logical-byte accounting; old v5 payloads omit the section, and unknown delivery never becomes reclaimed-space credit;
+- a separate bilingual tool-cache section for daemon-owned uv cache availability, native busy deferral and separate retired npm evidence, observation time, latest maintenance outcome and native logical-byte accounting; old v5 payloads omit the section, and unknown delivery never becomes reclaimed-space credit;
 - capability-gated pause/resume/retry/protect/unprotect with namespace-aware durable receipts;
 - one global unresolved-mutation lock, crash/restart status-only reconciliation, and authority-loss truth;
 - single-flight/coalesced refreshes, polling-session generations, stale snapshot retention, and typed incident-detail failures;
@@ -86,5 +86,5 @@ transactional install/restart/rollback procedure.
 
 The strongest installed claim remains bounded memory-repair evidence, an
 accepted private enforcement service and one historical per-candidate clone
-cleanup. No npm maintenance installation or live-cache result, signed
+cleanup. No uv maintenance installation or live-cache result, signed
 distribution or public release is claimed.
