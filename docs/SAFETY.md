@@ -105,3 +105,48 @@ rebuilds the public proved-reclaim contribution from retained durable action
 evidence in the same transaction. Incomplete retained history is labeled partial;
 raw receipts, task authority, pause and protection are not reset. Managed upgrade
 and report-only rollback must retain their exact prior-schema backup contract.
+
+## Native tool-cache maintenance
+
+The first source family is the default npm download cache, via the inspected
+npm `11.19.0` bundled cacache `20.0.4` public `verify` API. It applies upstream
+index reachability and integrity rules, not Unlinger mtime heuristics. Cached
+content may disappear and be fetched again under npm's documented cache-miss
+contract; this does not authorize deleting executable npx environments. No
+whole-cache purge, custom entry filter, force mode, project script, network
+request or tool installation is part of maintenance. Other producer families
+(including uv `0.11.19`) are not admitted.
+
+The adapter binds the discovered runtime/module and default cache location,
+rejects symlinked cache structure, linked native write targets and unsupported versions, and revalidates
+before spawn. It does not claim to resist a deliberately racing hostile process
+with the same UID. The ordinary report-only path only observes. Healthy ready
+enforce may start a durable PREPARED attempt at most weekly. Child execution is
+bounded and observes pause/disarm/drain without holding the IPC status lock;
+cancellation/timeout is unknown delivery, never a no-op. A native nonzero exit
+may have partially changed the cache. Only native successful accounting is
+published, separately from Chrome results and process impact. All validation
+mutations use test-created caches and canaries, never a user's live cache.
+
+The preflight is bounded to five seconds, one million entries and 64 directory
+levels; exceeding a bound or receiving a shutdown/drain request reports unavailable
+rather than starting native GC. Traversal checks cancellation between entries.
+The native child has a 120-second runtime limit and a 16-KiB output limit. Its
+JavaScript driver is embedded in the daemon, so an installed generation does not
+read executable driver code from a source checkout. The exact Node/module file
+identities and cache root are checked again before spawn. `_lastverified` and
+index buckets must not be symlinks or external hard links: upstream verification
+writes the former and truncates the latter. Unlinger never replaces native GC
+with its own recursive deletion.
+
+The producer contract is documented by [npm cache](https://docs.npmjs.com/cli/v11/commands/npm-cache/)
+and the [cacache public verify API](https://github.com/npm/cacache#--cacacheverifycache-opts---promise).
+The ignored native test lane is explicit and test-owned:
+
+```bash
+cargo test -p unlinger-daemon --lib tool_cache -- --include-ignored --test-threads=1
+```
+
+This requires the inspected Homebrew npm/cacache installation. It does not target
+the user's cache; ordinary workspace tests use portable control/store/parser
+fixtures and leave this installed-producer lane ignored.

@@ -1,7 +1,7 @@
 #!/bin/bash
 # Isolated pre-v0.1 v5 App socket smoke. This script owns every path it creates,
 # starts only a source report-only daemon, and never addresses the installed
-# generation-15 database, socket, plist, process, or service CLI.
+# database, socket, plist, process, or service CLI.
 set -euo pipefail
 umask 077
 
@@ -78,12 +78,31 @@ assert_private_mode() {
     fi
 }
 
+assert_cache_observation_only() {
+    python3 - "$DATABASE" <<'PY'
+import json
+import sqlite3
+import sys
+
+with sqlite3.connect(f"file:{sys.argv[1]}?mode=ro", uri=True) as connection:
+    assert connection.execute("PRAGMA user_version").fetchone() == (12,)
+    row = connection.execute(
+        "SELECT availability_json, attempt_token, attempt_json FROM tool_cache_latest"
+    ).fetchone()
+    assert row is not None, "report-only daemon did not observe tool-cache availability"
+    assert json.loads(row[0]) in {"available", "absent", "unsupported", "unavailable"}
+    assert row[1:] == (None, None), "report-only daemon prepared cache maintenance"
+print("report-only cache observation persisted without a maintenance attempt")
+PY
+}
+
 echo "==> build isolated source daemon"
 (cd "$REPO_ROOT" && cargo build -p unlinger-daemon)
 
 echo "==> first report-only v5 App socket pass"
 start_daemon
 run_live_tests first
+assert_cache_observation_only
 
 if lsof -a -p "$DAEMON_PID" -i >/dev/null 2>&1; then
     echo "isolated daemon unexpectedly owns an IP socket" >&2
@@ -105,5 +124,6 @@ start_daemon
 
 echo "==> second pass proves reconnect and durable receipt replay"
 run_live_tests second
+assert_cache_observation_only
 
 echo "isolated pre-v0.1 v5 App report-only smoke passed"

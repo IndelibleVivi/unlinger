@@ -501,6 +501,28 @@ fn browser_status_lines(overview: &BrowserOverviewSnapshot) -> Vec<String> {
         overview.support_catalog.support_revision,
         overview.support_catalog.families.len()
     ));
+    if let Some(cache) = &overview.tool_cache_maintenance {
+        lines.push(format!(
+            "npm download-cache maintenance: {:?}; automatic upkeep {}; checked at Unix ms {}",
+            cache.availability,
+            if cache.automatic_maintenance_eligible {
+                "eligible"
+            } else {
+                "not eligible"
+            },
+            cache.observed_at_unix_millis,
+        ));
+        if let Some(attempt) = &cache.last_attempt {
+            lines.push(format!("Latest native maintenance: {:?}; prepared at Unix ms {}; completed at Unix ms {:?}",
+                attempt.outcome, attempt.prepared_at_unix_millis, attempt.completed_at_unix_millis));
+            if let (Some(count), Some(bytes)) = (
+                attempt.native_removed_entry_count,
+                attempt.native_removed_logical_bytes,
+            ) {
+                lines.push(format!("Native report: {count} content entries, {bytes} logical bytes removed (not physical disk-space savings)."));
+            }
+        }
+    }
     lines
 }
 
@@ -1492,6 +1514,36 @@ mod tests {
         };
         assert!(source_only.source_only);
         assert!(source_only.json);
+    }
+
+    #[test]
+    fn cache_status_displays_native_accounting_separately() {
+        let response: unlinger_protocol::ResponseEnvelope = serde_json::from_str(include_str!(
+            "../../../apps/UnlingerApp/Contract/v5/browser-overview-cache-maintenance.json"
+        ))
+        .unwrap();
+        let Some(unlinger_protocol::Payload::BrowserOverview(mut overview)) = response.payload
+        else {
+            panic!("cache fixture")
+        };
+        let lines = browser_status_lines(&overview);
+        assert!(lines.iter().any(
+            |line| line.contains("2 content entries, 4096 logical bytes")
+                && line.contains("not physical")
+        ));
+        let attempt = overview
+            .tool_cache_maintenance
+            .as_mut()
+            .unwrap()
+            .last_attempt
+            .as_mut()
+            .unwrap();
+        attempt.outcome = unlinger_protocol::ToolCacheOutcome::DeliveryUnknown;
+        attempt.native_removed_entry_count = None;
+        attempt.native_removed_logical_bytes = None;
+        let lines = browser_status_lines(&overview);
+        assert!(lines.iter().any(|line| line.contains("DeliveryUnknown")));
+        assert!(!lines.iter().any(|line| line.starts_with("Native report:")));
     }
 
     #[test]

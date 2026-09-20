@@ -215,6 +215,24 @@ fn project_browser_overview(
     } else {
         None
     };
+    let tool_cache_maintenance = if schema_version == public::SCHEMA_VERSION {
+        control
+            .store()
+            .latest_tool_cache_maintenance()?
+            .map(|mut cache| {
+                cache.automatic_maintenance_eligible = cache.availability
+                    == public::ToolCacheAvailability::Available
+                    && now_unix_millis.saturating_sub(cache.observed_at_unix_millis)
+                        <= 30 * 60 * 1_000
+                    && !cache.last_attempt.as_ref().is_some_and(|attempt| {
+                        attempt.outcome == public::ToolCacheOutcome::Running
+                    })
+                    && crate::ipc::storage_cleanup_gate_open(&source.status);
+                cache
+            })
+    } else {
+        None
+    };
     let settlement_impact = source
         .status
         .most_recent_reclaim
@@ -316,6 +334,7 @@ fn project_browser_overview(
             }),
             storage_residue,
             storage_cleanup_result,
+            tool_cache_maintenance,
             attention: projected_status.attention,
             protection: projected_status.protection,
             support_catalog,
@@ -1196,6 +1215,34 @@ mod tests {
         status.startup_state = StartupState::ReadyReportOnly;
         status.latest_observation_at_unix_millis = Some(100);
         status
+    }
+
+    #[test]
+    fn tool_cache_projection_is_optional_v5_only_and_report_only_never_eligible() {
+        let store = test_store("tool-cache");
+        store
+            .record_tool_cache_observation(2_900, public::ToolCacheAvailability::Available)
+            .unwrap();
+        let control = ControlPlane::new(store, ready_status()).unwrap();
+        let state = overview(&control, public::SCHEMA_VERSION)
+            .tool_cache_maintenance
+            .unwrap();
+        assert!(!state.automatic_maintenance_eligible);
+        assert_eq!(state.kind, public::ToolCacheKind::NpmDownloadCache);
+        assert!(state.last_attempt.is_none());
+        let json = serde_json::to_string(&state).unwrap();
+        assert!(!json.contains('/'));
+        assert!(!json.contains("attempt_token"));
+        for previous in [
+            public::PREVIOUS_SCHEMA_VERSION,
+            public::LEGACY_SCHEMA_VERSION,
+        ] {
+            assert!(
+                overview(&control, previous)
+                    .tool_cache_maintenance
+                    .is_none()
+            );
+        }
     }
 
     fn report(state: IncidentState) -> IncidentReport {

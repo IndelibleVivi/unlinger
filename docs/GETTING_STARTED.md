@@ -132,3 +132,19 @@ Uninstall unloads the LaunchAgent and removes managed binaries; history and logs
 ## Verification scope / 验证范围
 
 A clean-checkout build and isolated preview can be checked without installing anything. The maintainer's managed install/restart/rollback and cleanup evidence is recorded separately in [current state](current-state.md). A walkthrough on an existing development account does not establish first-time installation on a separate clean macOS account.
+
+## Tool caches in the source candidate
+
+The source App home and `unlinger browser status` (including `--json`) expose
+npm download-cache availability and the latest maintenance attempt. Ordinary
+report-only previews never invoke native verification/GC. The first supported
+combination is npm `11.19.0` with bundled cacache `20.0.4`, at the default
+`~/.npm/_cacache`; custom cache locations are not adopted. No per-task setup is
+needed. Unsupported or missing installations are shown without cleanup.
+
+After a separately authorized installation and enforce activation, upkeep is
+at most weekly; pause/disarm also stops a running attempt. Failure or interruption
+can mean partial changes and never promises reclaimed space. Do not manually
+run cleanup to verify this feature against an existing cache: the source tests
+create isolated caches. SQLite v12 is a source candidate; replacing the v11
+reference service requires the usual transactional rollback proof.

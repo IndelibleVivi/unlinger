@@ -662,6 +662,57 @@ pub struct StorageCleanupResultSummary {
     pub retained_not_planned_count: Option<usize>,
 }
 
+/// Availability is independent of browser coverage and of an earlier attempt.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolCacheAvailability {
+    Available,
+    Absent,
+    Unsupported,
+    Unavailable,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolCacheKind {
+    NpmDownloadCache,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolCacheOutcome {
+    Running,
+    NoOp,
+    Completed,
+    Failed,
+    DeliveryUnknown,
+}
+
+/// A native maintenance result, never a measured physical-space saving.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ToolCacheAttemptSummary {
+    pub outcome: ToolCacheOutcome,
+    pub prepared_at_unix_millis: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub completed_at_unix_millis: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_removed_entry_count: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_removed_logical_bytes: Option<u64>,
+}
+
+/// Path-free facts for producer-owned cache maintenance. This is separate from
+/// Chrome candidate plans and from process-cleanup lifetime impact.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ToolCacheMaintenanceSummary {
+    pub kind: ToolCacheKind,
+    pub observed_at_unix_millis: u64,
+    pub availability: ToolCacheAvailability,
+    pub automatic_maintenance_eligible: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_attempt: Option<ToolCacheAttemptSummary>,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct BrowserOverviewSnapshot {
     pub generated_at_unix_millis: u64,
@@ -685,6 +736,8 @@ pub struct BrowserOverviewSnapshot {
     pub storage_residue: Option<StorageResidueSummary>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub storage_cleanup_result: Option<StorageCleanupResultSummary>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_cache_maintenance: Option<ToolCacheMaintenanceSummary>,
     pub attention: AttentionProjection,
     pub protection: ProtectionProjection,
     pub support_catalog: BrowserSupportCatalog,
@@ -998,6 +1051,7 @@ mod tests {
                 reason_ids: vec!["storage_residue.code_sign_clone_absent".to_owned()],
             }),
             storage_cleanup_result: None,
+            tool_cache_maintenance: None,
             attention: AttentionProjection::default(),
             protection: ProtectionProjection::default(),
             support_catalog: BrowserSupportCatalog {
@@ -1174,6 +1228,7 @@ mod tests {
         for source in [
             fixture!("browser-overview-impact-empty"),
             fixture!("browser-overview-impact-residue"),
+            fixture!("browser-overview-cache-maintenance"),
             fixture!("history-observation-span"),
         ] {
             let decoded: ResponseEnvelope =

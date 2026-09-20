@@ -1,10 +1,10 @@
 # Architecture / 架构
 
-This view answers one question: **how does a finished browser task or exact Chrome clone residue become an observed cleanup result, and which component is allowed to act?** It describes current source paths on one macOS user account. Installation transactions and protocol compatibility are explained below rather than mixed into the primary flow.
+This view answers one question: **how does a finished browser task, exact Chrome clone residue or rebuildable tool cache become an observed cleanup result, and which component is allowed to act?** It describes current source paths on one macOS user account. Installation transactions and protocol compatibility are explained below rather than mixed into the primary flow.
 
-本图回答：**一个结束的浏览器任务或精确 Chrome clone 残留，如何成为真实清理结果；谁有权执行？** 范围是单个 macOS 用户下的当前源码路径。存储清理已经安装并有一个有边界的实机结果；图不表示 multi-day 或广泛环境验证。
+本图回答：**一个结束的浏览器任务、精确 Chrome clone 残留或可重建工具缓存，如何成为真实清理结果；谁有权执行？** 范围是单个 macOS 用户下的当前源码路径。Chrome clone 清理已经安装并有一个有边界的实机结果；工具缓存维护仍是未安装的源码能力。图不表示 multi-day 或广泛环境验证。
 
-![Unlinger process-only flow](architecture.svg)
+![Unlinger resource-maintenance flow](architecture.svg)
 
 Editable source: [architecture.mmd](architecture.mmd). The SVG is a rendered export of that source. Labels use English component names; the Chinese reading guide below follows the same flow. Regenerate with Mermaid using the source's theme; inspect the rendered export after changing it.
 
@@ -46,3 +46,22 @@ Managed installs use immutable generations and a candidate acceptance transactio
 The owner-private Unix socket serves frontend schema v5, transitional v4, legacy-compatible v3 and operator v1; historical v2 is rejected. The App emits v5 only and cannot encode lifecycle operations. Ordinary mutations are journalled before send and reconciled after uncertain delivery without automatic resend. The daemon commits mutation state and receipt atomically. Each IPC request makes one bounded attempt.
 
 Raw arguments, executable/profile paths and frozen signal targets stay transient. Public persistence and UI use typed redacted records. Task and host-session capabilities remain private operator authority, excluded from ordinary App DTOs and diagnostic exports. There is no normal-operation network service. See [IPC](IPC.md) and [privacy](PRIVACY.md) for exact schema and data boundaries.
+
+## Producer-native cache lane / 原生缓存维护路径
+
+Tool-cache maintenance is separate from the browser and Chrome paths above.
+Source SQLite v12 adds latest-attempt authority without changing their gates.
+
+```mermaid
+flowchart LR
+  probe["Default npm cache + exact installed producer"] --> gate["Daemon report-only / ready-enforce gate"]
+  gate -->|observe only| db[("SQLite v12 latest observation")]
+  gate -->|weekly, durable PREPARED| native["Bounded cacache.verify child"]
+  native -->|native counts or unknown; atomic settlement| db
+  db --> view["Optional v5 summary → App / CLI"]
+  pause["Pause / disarm / drain"] -->|cancel owned child| native
+```
+
+生产工具决定哪些下载内容不再被索引引用；daemon 决定能否执行，并负责耐久结果。
+App 不重算删除资格。普通缓存 miss 可重新下载，不等于 npx 等共享运行环境可以删除。
+这条 source lane 尚未安装；其结果不加入浏览器 cleanup impact。

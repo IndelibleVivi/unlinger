@@ -4,6 +4,7 @@ mod paths;
 mod public_action_policy;
 mod public_ipc;
 mod store;
+pub mod tool_cache;
 
 pub use engine::{CycleReport, EngineConfig, EngineError, ReconciliationEngine};
 pub use ipc::{
@@ -18,9 +19,9 @@ pub use store::{
     ImpactHistoryCompleteness, IncidentDetail, MUTATION_RECONCILIATION_WINDOW_MILLIS,
     ManagedLifecycle, ManagedStartupPhase, MostRecentReclaim, MutationCommit, MutationLookup,
     ObservationRecord, ObservedIncidentIdentity, OrdinaryMutation, PreparedActionHandle,
-    PreparedArtifactActionHandle, PreparedStorageCleanupAttempt, ProtectedIncidentSummary,
-    ProtectionProjection, ProtectionReconciliation, PruneResult, RetentionPolicy,
-    RetryBlockReconciliation, SessionOwnerLease, SessionOwnerStatus, StorageCleanupAttemptRecord,
-    StorageRecoveryOccurrence, StorageRecoveryReason, StoreAttentionProjection, StoreError,
-    TaskLease, TaskPhase, TaskStatus,
+    PreparedArtifactActionHandle, PreparedStorageCleanupAttempt, PreparedToolCacheAttempt,
+    ProtectedIncidentSummary, ProtectionProjection, ProtectionReconciliation, PruneResult,
+    RetentionPolicy, RetryBlockReconciliation, SessionOwnerLease, SessionOwnerStatus,
+    StorageCleanupAttemptRecord, StorageRecoveryOccurrence, StorageRecoveryReason,
+    StoreAttentionProjection, StoreError, TaskLease, TaskPhase, TaskStatus,
 };

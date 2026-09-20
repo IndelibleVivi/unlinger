@@ -76,6 +76,9 @@ public enum BrowserOverviewMapper {
                     retainedNotPlannedCount: result.retainedNotPlannedCount
                 )
             },
+            toolCacheMaintenance: snapshot?.toolCacheMaintenance.map {
+                ToolCachePresentation($0, connection: connection)
+            },
             coverageNotices: notices,
             attention: attention,
             attentionOverflow: attentionOverflow,

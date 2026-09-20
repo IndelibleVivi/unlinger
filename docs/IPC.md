@@ -240,14 +240,14 @@ V1 may expose bounded internal diagnostic identities needed by CLI/service trans
 
 Current source accepts schemas 1, 3, 4 and 5. The source App emits schema v5 only and treats a v4-, v3-, or v1-only endpoint as incompatible rather than silently downgrading. Schema v4 preserves its prior atomic overview and response shapes; schema v3 preserves its existing commands; schema v1 remains operator-only and returns a trusted `unsupported_schema` envelope to an unsupported frontend request.
 
-Current source uses SQLite v11 and serves schema v5 with v4/v3 compatibility and operator v1. Source v11 adds the storage cleanup attempt/result authority on top of the v10 optional host session-owner leases: a PREPARED row before any clone-directory deletion plus one terminal result committed in the same transaction as the latest residue observation. The installed generation-34 lineage remains SQLite v10 and has no such table or result authority; a v10 database migrates to v11 in one transactional step and a pre-v11 binary must not open a migrated v11 database. The reference service is currently accepted, armed and healthy `ReadyEnforce`; generation 33 proved install/restart and a real rollback to generation 32 before the exact artifact was freshly installed as generation 34. SQLite v10 composes the v9 action-attribution migration with optional host session-owner leases; generation 24 earlier proved a real rollback to the old generation-23 daemon reopening v8 before the fresh generation-25 acceptance. SQLite and frontend protocol versions are distinct. [Current state](current-state.md) owns exact installed generation and rollback evidence.
+Current source uses SQLite v12 and serves frontend v5 with v4/v3 compatibility and operator v1. V12 adds independent native tool-cache maintenance authority; v11 clone results, v10 optional host ownership and earlier migrations remain intact. The reference installation is generation 36 on SQLite v11. Source migration is not installed acceptance: a v12 replacement needs its own transactional install/restart/rollback proof, restoring the v11 database before the old binary reopens it. [Current state](current-state.md) owns exact installed evidence.
 
 The service retains the prior snapshot and exact generation identity after candidate readiness, blocks mode/install/uninstall mutations during the lease, and exposes explicit report-only restart, accept and rollback commands. A first install can roll back to the absence of a prior service; an upgrade restores the exact prior generation/database. Readiness, acceptance and enforcement are separate durable states.
 
 ## Verification anchors
 
 - [`crates/unlinger-protocol/src/lib.rs`](../crates/unlinger-protocol/src/lib.rs): v5 DTOs/commands, v4/v3 compatibility responses, receipts, envelopes and fixture decoders;
-- [`crates/unlinger-daemon/src/store.rs`](../crates/unlinger-daemon/src/store.rs): SQLite v11 storage cleanup attempt/result authority, v10 session-owner leases, v9 attribution repair and v8 task ownership, observation spans, independent impact authority, storage residue, event tokens, namespace/receipt/revision transactions;
+- [`crates/unlinger-daemon/src/store.rs`](../crates/unlinger-daemon/src/store.rs): SQLite v12 native cache and v11 clone cleanup attempt/result authority, v10 session-owner leases, v9 attribution repair and v8 task ownership, observation spans, independent impact authority, storage residue, event tokens, namespace/receipt/revision transactions;
 - [`crates/unlinger-daemon/src/public_action_policy.rs`](../crates/unlinger-daemon/src/public_action_policy.rs): shared policy matrix;
 - [`crates/unlinger-daemon/tests/history_store.rs`](../crates/unlinger-daemon/tests/history_store.rs): migration, atomicity, namespace, replay and recovery tests;
 - [`crates/unlinger-daemon/tests/ipc_roundtrip.rs`](../crates/unlinger-daemon/tests/ipc_roundtrip.rs): v1/v2/v3/v4/v5 routing, atomic browser projection, impact/residue/span compatibility, exact settlement identity, lifecycle serialization and raw-socket behavior;
@@ -262,7 +262,7 @@ Changing wire shape, requiredness, limits, error discriminators, readiness/fresh
 
 Source schema v1 adds `task_reserve {task_id}`, `task_activate {task_id, capability, owner_pid}`, `task_finish {task_id, capability}` and read-only `task_status {task_id}`. These commands do not exist in frontend schemas v3/v4/v5 and never arm or change service mode. Reserve/activate require a healthy ready daemon and authenticated local socket peer PID (`LOCAL_PEERPID`) in addition to the existing same-UID check. Activation requires the registrar's exact current child; finish checks native owner absence. Registry transitions are durable and conditional, released tasks cannot reactivate, and one timed-out mutation is never resent.
 
-`task_lease` contains the fresh opaque task/session selector and a private capability; only the registering CLI receives it. `task_status` returns task/session selector, phase, optional release reason and bound incident IDs. It does not return capability, command, workspace, native owner identity or a synthetic cleaned state. Existing incident receipt/impact routes remain the process-cleanup result authority. SQLite v8 added the two task tables transactionally; current source v11 retains them without changing their meaning. See [TASKS.md](TASKS.md).
+`task_lease` contains the fresh opaque task/session selector and a private capability; only the registering CLI receives it. `task_status` returns task/session selector, phase, optional release reason and bound incident IDs. It does not return capability, command, workspace, native owner identity or a synthetic cleaned state. Existing incident receipt/impact routes remain the process-cleanup result authority. SQLite v8 added the two task tables transactionally; current source v12 retains them without changing their meaning. See [TASKS.md](TASKS.md).
 
 ## Optional host session-owner commands
 
@@ -304,3 +304,33 @@ An empty `browser_overview` has phase `unknown` when classification coverage is
 incomplete. Complete empty observations remain `clear`, and known positive
 sessions retain their existing phase. No new lifecycle command, automatic retry,
 cleanup eligibility, or public raw-process data is introduced.
+
+## Tool-cache maintenance (source SQLite v12)
+
+Frontend v5 adds optional `tool_cache_maintenance`; old v5 payloads may omit it,
+and v4/v3 never acquire this field or a cache mutation command. It carries
+`kind: npm_download_cache`, `observed_at_unix_millis`, typed availability
+(`available | absent | unsupported | unavailable`), descriptive
+`automatic_maintenance_eligible`, and optional `last_attempt`. Availability is
+independent of browser coverage. Eligibility uses the daemon's shared ready,
+healthy, unpaused enforce gate and a recent observation; it does not bypass the
+weekly cadence.
+
+An attempt contains `running | no_op | completed | failed | delivery_unknown`,
+prepared/completed timestamps, and optional `native_removed_entry_count` and
+`native_removed_logical_bytes`. Only an exit-zero, parsed native result supplies
+counts. Failed or unknown delivery has no attributed removal counts; new
+PREPARED masks old success. Observations and attempt times remain distinct.
+There are no raw paths, raw child output, identities or external commands in
+this DTO. Native logical-byte accounting is not measured physical reclaim and
+is not added to browser impact.
+
+SQLite v12 adds `tool_cache_latest`, a bounded singleton retaining the latest
+observation and latest attempt. PREPARED commits before spawning; its opaque
+internal token binds settlement. Terminal result and post-run availability
+commit in one transaction. Startup/before-cycle recovery marks an unresolved
+attempt unknown, without inferring anything from later observations. The most
+recent attempt timestamp prevents restart from replaying weekly maintenance.
+A pre-v12 binary must use transactional rollback's restored database rather
+than open a migrated v12 database. The installed service remains v11; see
+[current state](current-state.md).

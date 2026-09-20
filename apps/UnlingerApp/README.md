@@ -11,6 +11,7 @@ The App owns no classification, cleanup policy, signal authorization, daemon ins
 - one pure `BrowserOverviewMapper` that only selects localized copy and display shapes from that snapshot; it does not rescan evidence, join history or recompute product state;
 - a separate `BrowserHistoryMapper` that exposes only terminal cleanup outcomes in the history index and consumes daemon-owned observation spans in detail; observation noise no longer becomes a repetitive history row;
 - a browser-first overview, product/version-aware current-session rows, typed coverage explanations, saved protections, exact recent settlement, durable lifetime cleanup impact, daemon-owned Chrome code-sign clone residue/eligibility and the latest `complete | partial | failed | delivery_unknown` cleanup result with aggregate before/after facts and the APFS caveat, cleanup-centric history and readable browser-context detail with named safety checks; the App displays enforce/report-only meaning but owns no storage deletion command; the old process-tree status/roster presentation has been retired;
+- a separate bilingual tool-cache section for daemon-owned npm download-cache availability, observation time, latest maintenance outcome and native logical-byte accounting; old v5 payloads omit the section, and unknown delivery never becomes reclaimed-space credit;
 - capability-gated pause/resume/retry/protect/unprotect with namespace-aware durable receipts;
 - one global unresolved-mutation lock, crash/restart status-only reconciliation, and authority-loss truth;
 - single-flight/coalesced refreshes, polling-session generations, stale snapshot retention, and typed incident-detail failures;
@@ -48,7 +49,7 @@ scripts/bundle.sh
 
 `scripts/bundle.sh` builds `build/Unlinger.app` in a temporary internal SwiftPM scratch path, copies the current v5 fixtures plus compatibility v4/v3 fixtures, rejects packaged resource fallbacks or loader paths that still point at a removable volume, verifies both localizations and Info.plist, then applies a private ad-hoc signature. That is not Developer ID signing or notarization.
 
-The repeatable pre-v0.1 integration gate owns a unique temporary database/socket/lock, remains report-only, runs the live Swift suite before and after daemon restart, checks private file modes and absence of IP listeners, and deletes only its own temp root:
+The repeatable pre-v0.1 integration gate owns a unique temporary database/socket/lock, remains report-only, runs the live Swift suite before and after daemon restart, checks private file modes, absence of IP listeners and persisted cache observations with no maintenance attempt, and deletes only its own temp root:
 
 ```bash
 scripts/pre-v0.1-smoke.sh
@@ -68,8 +69,22 @@ Deterministic product-state QA can instead use `UNLINGER_FIXTURE=browser-clear|b
 
 ## Installed boundary
 
-The schema-v5 ad-hoc-signed App from memory-repair commit `c17e60f` is installed against generation 34 / SQLite v10. Its predecessor `628d822` had recurred at about 19 GB after earlier bounded acceptance. A system CPU-resource report captured that old App's main SwiftUI/AttributeGraph thread growing the process from about 42 MiB to 2.0 GiB in 138 seconds while repeatedly updating popup Accessibility attributed text; the owner then Force Quit that exact process. The installed repair removes the captured popup adaptor path and adds idempotence/lifecycle regressions. The displaced `628d822`, `e26297b` and `016ca58` bundles remain recoverable local siblings. [current-state](../../docs/current-state.md) owns exact current totals, runtime and deployment truth.
+The reference installation is the schema-v5 App against generation 36 / SQLite
+v11, with durable Chrome clone-result presentation and the native-popup memory
+repair. It does not contain the new source tool-cache section. The source App
+passes 103 Swift tests and release bundling; its fixture-only history/Accessibility
+gate completed 453 probes with no transient read failure, a 69,456 KiB maximum
+and 16,112 KiB final RSS. These are source checks, not installed-App acceptance.
 
-The repair passes 91 Swift tests, release bundling, a 460-probe fixture Accessibility/RSS lane with zero read failures and 22,208 KiB final RSS, plus a separate 900-sample real-daemon packaged guard with 98,000 KiB maximum and 18,112 KiB final RSS. After recoverable installation, its exact canonical process passed 2,400 one-second RSS samples with 22,192 KiB maximum and 13,552 KiB final RSS and remained running. The same process later remained alive for more than four hours and ended the generation-33→32→34 transaction plus clone cleanup at 12,864 KiB RSS. These are bounded installed observations; the exact intermittent trigger and multi-day acceptance remain separate. The status-item repair still uses the system symbol and one stable AppKit/Thaw identity. The installed App emits v5 only; the daemon retains v4 and v3 compatibility endpoints without downgrade. [`../../docs/INSTALLED_DOGFOOD.md`](../../docs/INSTALLED_DOGFOOD.md) records the repeatable transactional lane.
+The dated installed evidence includes a 180-sample Settings/Accessibility guard
+with a 37,520 KiB maximum, and the earlier exact `c17e60f` process's 2,400-sample
+guard and later 18h45m observation. Earlier displaced bundles remain recoverable.
+The intermittent runaway trigger and multi-day acceptance remain open. See
+[current-state](../../docs/current-state.md) for exact source, installation and
+field boundaries, and [installed dogfood](../../docs/INSTALLED_DOGFOOD.md) for the
+transactional install/restart/rollback procedure.
 
-The strongest claim is **bounded installed memory-repair evidence plus an accepted private enforcement service and one successful per-candidate clone cleanup**. Generation 34 is currently healthy `ReadyEnforce` with no lease; one bounded clone result, controlled historical process cleanup and a four-hour App observation are not private-v0.1 or multi-day acceptance, a signed distribution candidate or a public release.
+The strongest installed claim remains bounded memory-repair evidence, an
+accepted private enforcement service and one historical per-candidate clone
+cleanup. No npm maintenance installation or live-cache result, signed
+distribution or public release is claimed.

@@ -40,13 +40,12 @@ The controlled DAP results repeat one historical exact admitted point across two
 | Layer | Current truth |
 | --- | --- |
 | Rust CLI/service operator protocol | schema v1; lifecycle authority remains here |
-| Native App source protocol | schema v5 only; requires daemon-owned atomic `browser_overview` with impact/residue/latest optional storage-cleanup result and consumes server-owned observation spans |
+| Native App source protocol | schema v5 only; requires daemon-owned `browser_overview` with impact/residue, optional storage-cleanup and tool-cache results, and consumes server-owned observation spans |
 | Transitional frontend endpoint | schema v4 prior overview/response shapes retained without v5-only fields |
 | Legacy-compatible frontend endpoint | schema v3 existing commands/response meaning retained; overview rejected without downgrade |
 | Schema v2 | historical fixtures retained; superseded before installation; current server returns typed `unsupported_schema` |
-| Installed generation | see [current-state](current-state.md) for exact generation, activation and rollback lease; current compatible runtime uses operator v1, frontend v5/v4/v3 and SQLite v10 |
-| Installed App/v5 integration | matching schema-v5 ad-hoc-signed private App `c17e60f` installed and running; bundle identity/signature/plist and exact launch verified; its exact process passed a 2,400-second RSS guard with a 22,192 KiB maximum; fresh visual UI and packaged-notification observation remain unverified |
-| Current source/installed implementation | both retain schema v5/v4/v3 plus operator v1, Playwright `0.6.0`, other packs `0.4.0`, exact CfT 151/152 process allowlist and disabled runtime-artifact flags; source uses SQLite v11 with durable path-free Chrome clone attempt/result authority, an additive optional v5 result summary and App presentation of that result, while installed generation 34/App `c17e60f` remain SQLite v10-era artifacts without the result authority/presentation; generation 34 contains mapped-vnode snapshot, transaction recovery and the exact `.app.bundle`-aware per-candidate clone gate from `a8aed45`, and is `ReadyEnforce` |
+| Reference installation | the dated [current-state](current-state.md) evidence owns exact generation, activation and rollback lease; its SQLite-v11 daemon/App have durable Chrome clone-result authority and the native-popup memory repair, but no tool-cache maintenance |
+| Current source implementation | SQLite v12 adds independent npm download-cache maintenance, optional v5 cache facts and App/CLI presentation; schema v5/v4/v3 plus operator v1, Playwright `0.6.0`, other packs `0.4.0`, exact CfT 151/152 process allowlist, clone-result authority and disabled runtime-artifact flags remain intact |
 
 SQLite v10 has a candidate-specific v8 backup/rollback/open proof: generation 24 really rolled back to healthy, unarmed generation 23 with the old CLI/daemon reopening v8; the exact candidate freshly reinstalled as generation 25, repeated matching-App/socket checks before and after restart, and was accepted before arming. Earlier schema migrations remain historical evidence.
 
@@ -54,4 +53,16 @@ SQLite v10 has a candidate-specific v8 backup/rollback/open proof: generation 24
 
 Synthetic verification proves code paths and counterexamples. Controlled field verification proves only the exact owner-approved case. Ambient verification requires ordinary long-running observation on the target machine without a harness-created incident. These evidence classes are not interchangeable.
 
-The task-owned lane has isolated controlled process-only evidence for exact CfT 151 and 152, plus historical installed generation-23 CfT-152 cleanup and actual App impact readback. The host-owned ordinary lane is now installed with its fixture/store/IPC/CLI and migration proof, but it still has no automatic host adapter or ambient process-cleanup receipt. Unregistered, unsupported or unverified controllers remain protected. Generation 15 separately retains the historical complete managed process/restart/containment point; it is not substituted for current-generation cleanup evidence. The reference service is presently `ReadyEnforce`; generation 34 adds one successful bounded per-candidate clone cleanup while ordinary Chrome stayed open, but ordinary ambient process enforcement acceptance remains false. Multi-day dogfood, broader field evidence, Intel/universal, signing/notarization/distribution and public alpha remain open. See [current-state](current-state.md) for exact outcomes and [PRE_V0_1_ACCEPTANCE](PRE_V0_1_ACCEPTANCE.md) for claim levels.
+The task-owned lane has isolated controlled process-only evidence for exact CfT 151 and 152, plus historical installed generation-23 CfT-152 cleanup and actual App impact readback. The host-owned ordinary lane is installed with its fixture/store/IPC/CLI and migration proof, but it still has no automatic host adapter or ambient process-cleanup receipt. Unregistered, unsupported or unverified controllers remain protected. Generation 15 separately retains the historical complete managed process/restart/containment point; it is not substituted for current-generation cleanup evidence. Generation 34 supplies one successful bounded per-candidate clone cleanup while ordinary Chrome stayed open, but ordinary ambient process enforcement acceptance remains false. Multi-day dogfood, broader field evidence, Intel/universal, signing/notarization/distribution and public alpha remain open. See [current-state](current-state.md) for dated runtime outcomes and [PRE_V0_1_ACCEPTANCE](PRE_V0_1_ACCEPTANCE.md) for claim levels.
+
+## Native tool-cache family (source candidate)
+
+The first non-browser family is default npm download content at `~/.npm/_cacache`,
+using npm `11.19.0` / bundled cacache `20.0.4` native verification and GC. It does
+not require per-task registration or classify the creator as an AI agent. The
+App/CLI expose availability and latest native accounting separately from browser
+impact. Other versions and custom cache roots remain unadmitted. npx runtime,
+project dependencies, uv caches and pnpm stores are not included. Source and
+isolated evidence do not imply installation or multi-day acceptance. See
+[cache safety](SAFETY.md#native-tool-cache-maintenance) for exact limits and the
+[current state](current-state.md) for verification/installed boundaries.

@@ -29,10 +29,12 @@ use crate::public_action_policy::{
 mod attribution;
 mod session_owners;
 mod tasks;
+mod tool_cache;
 pub use session_owners::{SessionOwnerLease, SessionOwnerStatus};
 pub use tasks::{TaskLease, TaskPhase, TaskStatus};
+pub use tool_cache::PreparedToolCacheAttempt;
 
-const SCHEMA_VERSION: i64 = 11;
+const SCHEMA_VERSION: i64 = 12;
 const CLEANUP_DETAIL_RETENTION_MILLIS: u64 = 14 * 24 * 60 * 60 * 1_000;
 const MAX_ATTENTION_SUMMARIES: usize = 50;
 const MAX_MUTATION_RECEIPTS: usize = 10_000;
@@ -3891,6 +3893,16 @@ fn validate_required_schema(connection: &Connection) -> Result<(), StoreError> {
                 "retained_not_planned_count",
             ],
         ),
+        (
+            "tool_cache_latest",
+            &[
+                "singleton",
+                "observed_at_ms",
+                "availability_json",
+                "attempt_token",
+                "attempt_json",
+            ],
+        ),
         ("mutation_authority", &["singleton", "namespace_token"]),
         (
             "impact_attribution_legacy",
@@ -4188,6 +4200,9 @@ fn initialize_schema(connection: &mut Connection) -> Result<(), StoreError> {
     }
     if user_version < 11 {
         transaction.execute_batch(STORAGE_CLEANUP_ATTEMPT_SCHEMA_SQL)?;
+    }
+    if user_version < 12 {
+        transaction.execute_batch(tool_cache::SCHEMA_SQL)?;
     }
     transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     transaction.commit()?;

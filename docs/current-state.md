@@ -1,10 +1,50 @@
 # Current state
 
-**Updated:** 2026-09-17. **Programme:** 0.1. **Reader posture:** experimental developer source preview; not a signed/notarized App release or multi-day reliability claim.
+**Updated:** 2026-09-20. **Programme:** 0.1. **Reader posture:** experimental developer source preview; not a signed/notarized App release or multi-day reliability claim.
+
+## Source tool-cache maintenance (2026-09-20, source-complete)
+
+The owner approved native maintenance of rebuildable tool caches without per-task
+registration. Source adds SQLite v12 latest-attempt authority and optional v5
+cache facts, independent from Chrome and process impact. The first family is the
+default npm download-content cache through npm `11.19.0` / bundled cacache
+`20.0.4`. It uses native `verify`, fixed producer/root identities, bounded
+symlink/write-target checks, a cancellable owned child, PREPARED before spawn,
+atomic native-result settlement and unknown-delivery recovery. Observations run
+at the existing 15-minute cadence; ready/healthy/unpaused enforce can start at
+most one attempt per seven days, including across restart. Report-only never
+runs native maintenance. uv `0.11.19` is excluded because its prune implementation
+predates the upstream symlink-containment fix. No live user cache was pruned.
+
+Fresh local verification passes format, strict workspace clippy, **393 Rust
+tests** (18 opt-in cases ignored), workspace release build, **24 focused cache
+checks including the exact installed native producer against test-created
+caches**, **103 Swift tests in 18 suites**, and release App bundling. The isolated
+report-only daemon passes seven schema-v5 App socket checks before and after
+restart; both passes additionally prove a persisted cache observation with no
+PREPARED attempt. Fixture-only Accessibility traversal passes **453 probes with
+zero transient failures**, with **69,456 KiB maximum / 16,112 KiB final RSS**.
+The Mermaid architecture export was regenerated and visually inspected.
+
+One intermediate full-workspace run exceeded existing shutdown deadlines;
+focused serial and concurrent diagnostics passed without reproducing that delay.
+The newly added cache metadata walk now observes shutdown/drain cancellation
+between entries, with a dedicated regression; the final unchanged-deadline
+workspace run passes all five graceful-shutdown cases. This does not establish
+the precise cause of the intermediate delay. Source-only doctor reports healthy
+and dry-run remains nonmutating; they inspect 481 and 482 current-user processes
+respectively, each with six executable-identity gaps and no unreadable-process,
+argument or descriptor gaps. No complete ambient process-coverage claim follows.
+
+This capability is not installed, activated, live-cache field-accepted or
+released. A v12 replacement requires its own transactional install/restart/
+rollback proof. The reference service remains generation 36 / SQLite v11
+according to the dated September 17 evidence below; its live state was not
+re-verified or modified by this source task.
 
 ## Installed SQLite v11 storage cleanup result authority (2026-09-17)
 
-Current source raises the daemon database authority from SQLite v10 to v11 and
+The installed v11 baseline raised the daemon database authority from SQLite v10 to v11 and
 adds a durable result path for the existing automatic Chrome `code_sign_clone`
 cleanup without widening deletion eligibility. A PREPARED attempt row is written
 before any descriptor-relative directory deletion, and the deletion is refused
@@ -299,14 +339,14 @@ acceptance is claimed.
 | Surface | Observed truth |
 | --- | --- |
 | Runtime implementation | `e26297b`: SQLite v10 / Playwright `0.6.0` composition described above; integrated on `main` by tree-identical ancestry merge `d2a685b` |
-| Current storage authority | Source and installed generation 36 use SQLite v11 with a durable auto-cleanup result path: PREPARED before any clone-directory deletion, one terminal result committed in the same transaction as the real latest residue observation, `delivery_unknown` recovery that never infers attribution from a later count, and an additive optional schema-v5 `storage_cleanup_result` with typed outcome, timestamps and aggregate counts/logical bytes only; no v11 live deletion result has occurred yet |
+| Current storage authority | Source cache work adds SQLite v12; installed generation 36 retains SQLite v11 with a durable auto-cleanup result path: PREPARED before any clone-directory deletion, one terminal result committed in the same transaction as the real latest residue observation, `delivery_unknown` recovery that never infers attribution from a later count, and an additive optional schema-v5 `storage_cleanup_result` with typed outcome, timestamps and aggregate counts/logical bytes only; no v11 live deletion result has occurred yet |
 | Subsequent test correction | `f22e08eb3410050b380eaee7b84c4ccda2a3ad1a`: bounded post-release offline-lock tests; production locking/timeouts unchanged |
 | Baseline remote verification | [CI 34163955192](https://github.com/IndelibleVivi/unlinger/actions/runs/34163955192) passed for `b70bc94`; [CI 34165331792](https://github.com/IndelibleVivi/unlinger/actions/runs/34165331792) passed for `f22e08e`, including default-parallel Rust tests, release build, Swift tests and App bundling |
 | Current reader preparation | Published source-preview candidate `de1a9c3`: bilingual reader guides, licensed material scopes, current architecture and safe demo teardown; [exact CI 34170593229](https://github.com/IndelibleVivi/unlinger/actions/runs/34170593229) passed all steps |
 | Current source verification | The SQLite-v11/result/App tranche at `a9355fa` passes workspace Rust format, strict clippy, tests and release build, healthy source-only doctor, nonmutating dry-run, 101 Swift tests / 17 suites, release bundle verification, two isolated report-only v5 socket passes (7 + 7) and [exact-head CI 35203895092](https://github.com/IndelibleVivi/unlinger/actions/runs/35203895092). The subsequent clear-detail localization and root-title repairs again pass 101 Swift tests / 17 suites and release bundling; their final exact-head CI is tracked separately from installed acceptance. Earlier exact-head evidence remains: Chrome aggregate candidate-reference correction `516d483` [CI 35106242999](https://github.com/IndelibleVivi/unlinger/actions/runs/35106242999), App repair `c17e60f` [CI 35118609063](https://github.com/IndelibleVivi/unlinger/actions/runs/35118609063), mapped-vnode/rollback correction `b2ada65` [CI 35130438688](https://github.com/IndelibleVivi/unlinger/actions/runs/35130438688), per-candidate cleanup `c272942` [CI 35138131207](https://github.com/IndelibleVivi/unlinger/actions/runs/35138131207), and installed `.app.bundle` correction `a8aed45` [CI 35142430097](https://github.com/IndelibleVivi/unlinger/actions/runs/35142430097) |
 | App memory repair | The installed App retains `c17e60f`'s native-popup/equal-publication/closed-window repair and adds the v11 cleanup-result UI, rendered clear-detail localization fix and root navigation-title restoration. Its final canonical Settings/native-popup process passed 180 one-second installed samples at 27,728 KiB start, 15,488 KiB final and 37,520 KiB maximum during repeated Accessibility traversal; the earlier exact `c17e60f` process also passed 2,400 samples and later reached 18h45m at 12,992 KiB. The exact intermittent trigger and multi-day acceptance remain open |
 | Maintainer's reference service | Accepted generation 36, healthy and quiescent `ReadyEnforce` with no pending candidate lease; generation 35 proved v10→v11 migration, restart and real rollback to generation 34 reopening v10 before the exact `a9355fa` backend artifact was freshly installed, accepted and armed as generation 36. The earlier generation-34 production observation removed eight stale clones and retained the one live Chrome candidate; no v11 deletion result exists yet |
-| Reference protocols/persistence | Source and installed generation 36: operator v1, frontend v5/v4/v3 and SQLite v11 with optional storage-cleanup result; historical v2 rejected |
+| Reference protocols/persistence | Source: SQLite v12 with optional cache-maintenance result; installed generation 36: SQLite v11. Both retain operator v1 and frontend v5/v4/v3 with optional storage-cleanup result; historical v2 rejected |
 | Reference App | Current ad-hoc-signed schema-v5 App with cleanup-result presentation, native popup memory repair, bilingual clear-detail copy and root-title restoration; 101 Swift tests, strict bundle verification, rendered live UI navigation and the 180-sample installed Settings/Accessibility RSS guard passed. It is neither Developer ID signed nor notarized; displaced `c17e60f`, pre-localization `a9355fa`, pre-root-title, `628d822`, `e26297b` and `016ca58` bundles remain recoverable local siblings |
 | Policy | Playwright `0.6.0`, agent-browser/Puppeteer `0.4.0`; process-only; every artifact flag false |
 | Publication | [Repository public](https://github.com/IndelibleVivi/unlinger); source-available under SUL-1.0 + CC BY-NC-SA 4.0; anonymous API and reader/license/diagram access verified; no GitHub Release |
@@ -498,7 +538,7 @@ The publication candidate passed fresh local formatting, strict workspace clippy
   authority. This is a real installed usability mismatch, not loss of the impact
   totals and not evidence of a new generation-36 cleanup.
 - The original generation-17 terminal SQLite disk-I/O failure cause remains unproved. Exact-instance containment/recovery and later transactional replacement succeeded; a later healthy database check does not establish the original cause.
-- The command wrapper does not integrate every Codex App host or browser tool automatically. The optional session-owner primitive introduced in v10 and retained by source v11 has no supported automatic Codex adapter. A bounded feasibility review found that later hooks/observers and turn-level lifecycle events cannot supply the current contract's exact parent/child activation plus thread-to-controller/session binding; a real adapter needs Codex host support. Exact CLI/browser compatibility, lifetime/client proof and all ordinary gates remain required; unregistered, active-owner, reused, unsupported or unverified controllers stay protected.
+- The command wrapper does not integrate every Codex App host or browser tool automatically. The optional session-owner primitive introduced in v10 and retained by source v12 has no supported automatic Codex adapter. A bounded feasibility review found that later hooks/observers and turn-level lifecycle events cannot supply the current contract's exact parent/child activation plus thread-to-controller/session binding; a real adapter needs Codex host support. Exact CLI/browser compatibility, lifetime/client proof and all ordinary gates remain required; unregistered, active-owner, reused, unsupported or unverified controllers stay protected.
 - Chrome clone observation accepts the actual `.app.bundle` shape and no-follow framework links. Historical installed generation 34 evaluated candidates independently across two production-interval observations, removed eight stable unreferenced clones and retained the one candidate containing the continuously running ordinary Chrome main. Generation 36 retains that gate and is healthy enforce, but no v11 deletion/result has occurred yet. The generation-34 point does not prove generation-36 result persistence, multi-day behavior, all future Chrome clone shapes or physical APFS reclaim equal to the logical byte reduction.
 - All artifact admission is disabled. The dormant DAP engine still has a quarantine-after-crash recovery gap and a final pathname-swap TOCTOU. Native pathname-reference tests also intermittently returned no reference for an owned open ordinary or `O_EVTONLY` descriptor under parallel execution; exact serial tests passed, and the cause is unresolved. The active process path does not use that query. [Safety](SAFETY.md) owns these boundaries.
 - The old zero-deadline offline-lock test failed because a concurrent fork can inherit an `O_CLOEXEC` descriptor until exec. A deterministic owned-child probe established that cause; `f22e08e` retains held-lock denial and gives post-release acquisition its existing bounded wait. The final exact-head CI passed. A later local full workspace run reproduced the separate dormant native-query failures above; no assertions were weakened.

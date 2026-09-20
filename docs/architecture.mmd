@@ -13,8 +13,10 @@ flowchart TB
     residue_gate["Clone storage gate<br/>two observations + no clone reference"]
     residue_prepare["Persist storage PREPARED<br/>before any directory deletion"]
     residue_delete["Exact clone removal<br/>descriptor-relative + immediate rescan"]
-    store[("SQLite v11<br/>ownership, observations, journals<br/>terminal receipts + impact + clone results")]
-    overview["Atomic browser overview<br/>schema v5 + optional clone result"]
+    cache_gate["npm cache observation<br/>ready enforce + weekly cadence"]
+    cache_gc["Persist PREPARED → native GC<br/>bounded child; pause cancels"]
+    store[("SQLite v12<br/>ownership, observations, journals<br/>terminal receipts + impact + storage results")]
+    overview["Atomic browser overview<br/>schema v5 + optional storage results"]
     lifetime -->|released, no active client| gates
     gates -->|report-only| store
     gates -->|enforce + valid authority| plan
@@ -24,6 +26,9 @@ flowchart TB
     residue_gate -->|ready enforce + stable| residue_prepare
     residue_prepare -->|durable authority| residue_delete
     residue_delete -->|terminal result + latest observation| store
+    cache_gate -->|report-only or unavailable| store
+    cache_gate -->|durable start| cache_gc
+    cache_gc -->|native accounting or unknown| store
     store --> overview
   end
   command -->|task run| lifetime

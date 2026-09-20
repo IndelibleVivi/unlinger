@@ -371,6 +371,42 @@ Each automatic removal attempt is durable before it can destroy anything and hon
 
 ---
 
+### 7.6 Producer-native tool-cache maintenance
+
+The owner-approved extension covers rebuildable tool caches outside Git without
+requiring each task to register. Unlinger schedules a fixed, version-supported
+native maintenance operation; the producer's own reference and retention rules
+decide which cache entries are disposable. Being outside Git, old, large, named
+`tmp`, or not currently open does not authorize deletion. Arbitrary workspaces,
+source clones, transcripts, delivered artifacts and executable environments are
+not admitted by this extension.
+
+Each supported operation must have an inspected producer contract for concurrent
+use, reference preservation and deletion containment. A native command's name
+alone supplies none of those guarantees. Unsupported versions remain observation
+only; Unlinger neither upgrades a tool nor substitutes recursive directory
+deletion. Maintenance uses a fixed discovered tool and cache location, bounded
+execution, no network or project scripts, and no force/whole-cache purge option.
+The ordinary report-only default and ready/healthy/unpaused enforce gate apply.
+
+Cache maintenance has independent durable attempt authority. PREPARED must commit
+before starting a mutating child; failure to persist it prevents execution.
+Terminal results preserve native accounting separately from observations. A
+crash, timeout or unproved delivery remains unknown; a later smaller cache never
+turns it into success. A failed command may have made partial changes. Native
+reported logical bytes are estimates, not measured physical APFS reclaim, and
+are never added to browser/process cleanup impact. Stored and public facts contain
+only typed statuses, timestamps and aggregate counts, never paths or raw output.
+
+The App and CLI consume daemon-owned facts. An additive optional frontend-v5
+summary preserves old v5 payloads and v4/v3 behavior; the App performs presentation
+only. Source implementation, installation, activation and field evidence remain
+separate. The implementation plan and current-state document identify the exact
+admitted producer and completed verification; this scope approval does not make
+an unverified adapter or the installed service enforce-capable.
+
+---
+
 ## 8. Architecture
 
 ### 8.1 Implementation choice

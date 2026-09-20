@@ -71,7 +71,7 @@ impl LocalPaths {
     }
 }
 
-fn effective_user_home(uid: libc::uid_t) -> Result<OsString, PathError> {
+pub(crate) fn effective_user_home(uid: libc::uid_t) -> Result<OsString, PathError> {
     let recommended = unsafe { libc::sysconf(libc::_SC_GETPW_R_SIZE_MAX) };
     let mut buffer_length = if recommended > 0 {
         usize::try_from(recommended).unwrap_or(16 * 1024)

@@ -1025,6 +1025,45 @@ impl ControlPlane {
         })
     }
 
+    /// Only child creation is serialized with lifecycle mutations. The caller
+    /// waits outside this lock, so pause/disarm/drain can cancel a running GC.
+    pub fn start_tool_cache_if_ready_enforce<T>(
+        &self,
+        now: u64,
+        start: impl FnOnce() -> std::io::Result<T>,
+    ) -> Result<Option<(crate::PreparedToolCacheAttempt, std::io::Result<T>, String)>, ControlError>
+    {
+        self.expire_pause(now)?;
+        let mut status = self.lock_status()?;
+        if !storage_cleanup_gate_open(&status) {
+            return Ok(None);
+        }
+        let prepared = self
+            .store
+            .begin_tool_cache_attempt(now)
+            .map_err(map_store_error)?;
+        let epoch = status
+            .enforcement_epoch
+            .clone()
+            .expect("ready gate requires epoch");
+        let child = start();
+        status.cleanup_in_progress = child.is_ok();
+        Ok(Some((prepared, child, epoch)))
+    }
+
+    pub fn tool_cache_action_may_continue(&self, epoch: &str) -> bool {
+        self.status.lock().is_ok_and(|status| {
+            let mut gate = status.clone();
+            gate.cleanup_in_progress = false;
+            storage_cleanup_gate_open(&gate) && gate.enforcement_epoch.as_deref() == Some(epoch)
+        })
+    }
+
+    pub fn finish_tool_cache_action(&self) -> Result<(), ControlError> {
+        self.lock_status()?.cleanup_in_progress = false;
+        Ok(())
+    }
+
     #[must_use]
     pub(crate) fn cleanup_policy_revision(&self) -> u64 {
         self.cleanup_policy_revision.load(Ordering::Acquire)
@@ -1684,6 +1723,84 @@ mod control_plane_tests {
     }
 
     #[test]
+    fn cache_start_is_gated_prepared_and_remains_cancellable_without_holding_status() {
+        let temp = TempState::new();
+        let store = HistoryStore::open(temp.0.join("cache.sqlite3")).unwrap();
+        let mut status = DaemonStatus::new(DaemonMode::ReportOnly, std::process::id());
+        status.healthy = true;
+        status.ready = true;
+        status.startup_state = StartupState::ReadyReportOnly;
+        let control = ControlPlane::new(store, status).unwrap();
+        assert!(
+            control
+                .start_tool_cache_if_ready_enforce(10, || -> std::io::Result<()> {
+                    panic!("report-only must never spawn a mutating child")
+                })
+                .unwrap()
+                .is_none()
+        );
+        {
+            let mut status = control.lock_status().unwrap();
+            status.startup_state = StartupState::ReadyEnforce;
+            status.set_effective_mode(DaemonMode::Enforce);
+            status.enforcement_epoch = Some("cache-test-epoch".to_owned());
+        }
+        let (_, child, epoch) = control
+            .start_tool_cache_if_ready_enforce(20, || {
+                assert_eq!(
+                    control
+                        .store()
+                        .latest_tool_cache_maintenance()
+                        .unwrap()
+                        .unwrap()
+                        .last_attempt
+                        .unwrap()
+                        .outcome,
+                    unlinger_protocol::ToolCacheOutcome::Running
+                );
+                Ok(())
+            })
+            .unwrap()
+            .unwrap();
+        assert!(child.is_ok());
+        assert!(control.tool_cache_action_may_continue(&epoch));
+        assert!(control.status().unwrap().cleanup_in_progress);
+        control
+            .handle_at(
+                IpcCommand::Pause {
+                    duration_millis: 1_000,
+                },
+                21,
+            )
+            .unwrap();
+        assert!(!control.tool_cache_action_may_continue(&epoch));
+        control.finish_tool_cache_action().unwrap();
+        assert!(!control.status().unwrap().cleanup_in_progress);
+    }
+
+    #[test]
+    fn cache_preparation_failure_never_invokes_child_factory() {
+        let temp = TempState::new();
+        let store = HistoryStore::open(temp.0.join("failed-cache.sqlite3")).unwrap();
+        let mut status = DaemonStatus::new(DaemonMode::Enforce, std::process::id());
+        status.healthy = true;
+        status.ready = true;
+        status.startup_state = StartupState::ReadyEnforce;
+        let control = ControlPlane::new(store, status).unwrap();
+        rusqlite::Connection::open(control.store().path())
+            .unwrap()
+            .execute_batch("DROP TABLE tool_cache_latest")
+            .unwrap();
+        assert!(
+            control
+                .start_tool_cache_if_ready_enforce(10, || -> std::io::Result<()> {
+                    panic!("failed PREPARED must never spawn")
+                })
+                .is_err()
+        );
+    }
+
+    #[test]
     fn storage_cleanup_gate_requires_ready_enforce_and_serializes_pause() {
         let temp = TempState::new();
         let store = HistoryStore::open(temp.0.join("history.sqlite3")).expect("open history");
@@ -2164,7 +2281,7 @@ fn signal_gate_matches(status: &DaemonStatus, enforcement_epoch: &str) -> bool {
             && status.armed_generation == status.activation_generation)
 }
 
-fn storage_cleanup_gate_open(status: &DaemonStatus) -> bool {
+pub(crate) fn storage_cleanup_gate_open(status: &DaemonStatus) -> bool {
     status.healthy
         && status.ready
         && status.startup_state == StartupState::ReadyEnforce

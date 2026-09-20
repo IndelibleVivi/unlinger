@@ -9,15 +9,18 @@ use std::process::ExitCode;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use unlinger_core::{CleanupRuntime, ProcessRole};
+use unlinger_daemon::tool_cache::{NpmCacheMaintenance, ToolCacheNativeResult};
 use unlinger_daemon::{
     ControlPlane, DaemonInstanceLock, DaemonMode, DaemonStatus, EngineConfig, HistoryStore,
     IpcServer, LocalPaths, ReconciliationEngine, StoreError,
 };
 use unlinger_macos::{ChromeCloneCleanup, ChromeCloneCleanupMode, MacosRuntime, MacosSnapshotter};
+use unlinger_protocol::{ToolCacheAttemptSummary, ToolCacheAvailability, ToolCacheOutcome};
 use unlinger_rules::RuleSet;
 
 static SHUTDOWN_REQUESTED: AtomicBool = AtomicBool::new(false);
 const STORAGE_RESIDUE_OBSERVATION_INTERVAL_MILLIS: u64 = 15 * 60 * 1_000;
+const TOOL_CACHE_MAINTENANCE_INTERVAL_MILLIS: u64 = 7 * 24 * 60 * 60 * 1_000;
 
 #[derive(Debug, Parser)]
 #[command(name = "unlingerd", version, about = "Unlinger reconciliation daemon")]
@@ -123,6 +126,7 @@ fn run(arguments: Arguments) -> Result<(), Box<dyn Error>> {
     control
         .store()
         .recover_storage_cleanup_attempts(recovery_now)?;
+    control.store().recover_tool_cache_attempt(recovery_now)?;
     let _server = if arguments.once {
         None
     } else {
@@ -141,6 +145,7 @@ fn run(arguments: Arguments) -> Result<(), Box<dyn Error>> {
     let mut last_cycle_error = None;
     let mut last_storage_residue_error = None;
     let mut last_storage_residue_attempt_at = None;
+    let mut last_tool_cache_observation_attempt_at = None;
     let storage_snapshotter = MacosSnapshotter::new();
     let mut chrome_clone_cleanup = ChromeCloneCleanup::new();
     let mut scheduler = (!arguments.once)
@@ -238,9 +243,23 @@ fn run(arguments: Arguments) -> Result<(), Box<dyn Error>> {
                 }
             }
         }
+        if last_tool_cache_observation_attempt_at.is_none_or(|previous| {
+            now.saturating_sub(previous) >= STORAGE_RESIDUE_OBSERVATION_INTERVAL_MILLIS
+        }) {
+            last_tool_cache_observation_attempt_at = Some(now);
+            if run_tool_cache_cycle(&control, now).is_err() {
+                // No raw native output or cache path reaches ordinary logs.
+                let _ = control.fail_closed(now, "tool cache maintenance state could not settle");
+                eprintln!("unlingerd: tool cache maintenance state could not settle");
+            }
+        }
         let stop_control = control.clone();
-        match engine.run_cycle_at_until(now, || shutdown_requested() || stop_control.is_draining())
-        {
+        // A native cache operation can take time; process evidence must use a
+        // fresh clock sample after it has settled or been cancelled.
+        let cycle_now = now_unix_millis()?;
+        match engine.run_cycle_at_until(cycle_now, || {
+            shutdown_requested() || stop_control.is_draining()
+        }) {
             Ok(report) => {
                 if let Some(startup) = managed_startup.as_mut() {
                     startup.mark_first_cycle_complete();
@@ -285,6 +304,73 @@ fn run(arguments: Arguments) -> Result<(), Box<dyn Error>> {
         }
         startup.mark_normal_signal_or_drain_exit();
     }
+    Ok(())
+}
+
+fn tool_cache_maintenance_due(now: u64, last_prepared: Option<u64>) -> bool {
+    last_prepared.is_none_or(|previous| {
+        now.saturating_sub(previous) >= TOOL_CACHE_MAINTENANCE_INTERVAL_MILLIS
+    })
+}
+
+fn run_tool_cache_cycle(control: &ControlPlane, now: u64) -> Result<(), Box<dyn Error>> {
+    // This function is synchronous: no active child overlaps recovery. A failed
+    // settlement must become durably unknown before another cycle can proceed.
+    control.store().recover_tool_cache_attempt(now)?;
+    let previous = control.store().latest_tool_cache_maintenance()?;
+    let stopping = || shutdown_requested() || control.is_draining();
+    if stopping() {
+        return Ok(());
+    }
+    let adapter = NpmCacheMaintenance::discover(stopping);
+    let availability = match &adapter {
+        Ok(_) => ToolCacheAvailability::Available,
+        Err(availability) => *availability,
+    };
+    control
+        .store()
+        .record_tool_cache_observation(now, availability)?;
+    if availability != ToolCacheAvailability::Available
+        || shutdown_requested()
+        || !tool_cache_maintenance_due(
+            now,
+            previous
+                .and_then(|state| state.last_attempt)
+                .map(|attempt| attempt.prepared_at_unix_millis),
+        )
+    {
+        return Ok(());
+    }
+    let Ok(adapter) = adapter else { return Ok(()) };
+    let Some((prepared, child, epoch)) =
+        control.start_tool_cache_if_ready_enforce(now, || adapter.start())?
+    else {
+        return Ok(());
+    };
+    let native = match child {
+        Ok(child) => {
+            child.wait(|| shutdown_requested() || !control.tool_cache_action_may_continue(&epoch))
+        }
+        Err(_) => ToolCacheNativeResult {
+            outcome: ToolCacheOutcome::Failed,
+            removed_entry_count: None,
+            removed_logical_bytes: None,
+        },
+    };
+    let after = adapter.observe(|| stopping() || !control.tool_cache_action_may_continue(&epoch));
+    let completed = now_unix_millis()?.max(now);
+    let result = ToolCacheAttemptSummary {
+        outcome: native.outcome,
+        prepared_at_unix_millis: now,
+        completed_at_unix_millis: Some(completed),
+        native_removed_entry_count: native.removed_entry_count,
+        native_removed_logical_bytes: native.removed_logical_bytes,
+    };
+    let settled = control
+        .store()
+        .complete_tool_cache_attempt(&prepared, &result, after);
+    control.finish_tool_cache_action()?;
+    settled?;
     Ok(())
 }
 
@@ -431,6 +517,22 @@ mod tests {
     use clap::Parser;
 
     use super::{Arguments, HistoryStore};
+
+    #[test]
+    fn native_cache_cadence_survives_restart_and_does_not_replay_unknown_delivery() {
+        use super::{TOOL_CACHE_MAINTENANCE_INTERVAL_MILLIS, tool_cache_maintenance_due};
+        assert!(tool_cache_maintenance_due(10, None));
+        assert!(!tool_cache_maintenance_due(20, Some(10)));
+        assert!(!tool_cache_maintenance_due(9, Some(10)));
+        assert!(!tool_cache_maintenance_due(
+            TOOL_CACHE_MAINTENANCE_INTERVAL_MILLIS + 9,
+            Some(10)
+        ));
+        assert!(tool_cache_maintenance_due(
+            TOOL_CACHE_MAINTENANCE_INTERVAL_MILLIS + 10,
+            Some(10)
+        ));
+    }
 
     #[test]
     fn repeated_cycle_errors_are_suppressed_until_a_success() {

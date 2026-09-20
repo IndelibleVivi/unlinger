@@ -26,6 +26,8 @@ struct LocalizationTests {
     @Test("every copy key used by the mapping layer resolves to real text")
     func keysResolve() {
         let keys = [
+            "cache.maintenance.delivery_unknown", "cache.maintenance.native_result",
+            "cache.maintenance.scope", "cache.maintenance.completed",
             "browser.overview.clear", "browser.overview.clear.detail",
             "browser.overview.active", "browser.overview.active.detail",
             "browser.overview.verifying", "browser.overview.verifying.detail",
