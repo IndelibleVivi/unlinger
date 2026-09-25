@@ -58,7 +58,11 @@ After the exact tree is gone and both revival checks pass, the cleanup engine ca
 
 The source Chrome code-sign clone path reads only the exact current-user temporary clone root, accepts the upstream `.app.bundle` and feature-disabled `.app` directory spellings, opens descendants relative to held directory descriptors without following symlinks, counts only regular-file logical bytes, treats descendant symlinks as leaves, and rejects symlink roots, unsupported nodes and incomplete traversal. Logical bytes remain an APFS accounting observation rather than promised physical reclaim.
 
-Deletion is a distinct enforce-only gate inside that canonical path. Each exact candidate identity must appear unchanged in two consecutive 15-minute storage observations. A complete canonical native process snapshot then decides references per candidate: an executable or absolute argv path within that candidate, or a bundle-confirmed clone-cleanup helper carrying its exact six-character suffix, protects that candidate while stable unreferenced siblings remain eligible. Ordinary Chrome main, renderer, GPU and utility processes outside candidates do not block; a valid unrelated helper suffix also does not block another candidate. A Chrome-looking process with insufficient bundle/path/argv facts, a clone-cleanup helper with a missing, malformed or ambiguous suffix, or incomplete process coverage fails closed for every candidate. One observed upstream shape is narrower: an exact non-cleanup `Google Chrome` main executable already proved inside a scanner-admitted candidate may lack generic app-bundle facts because its container is named `.app.bundle`. The executable path itself protects that candidate; it cannot make that candidate eligible and does not excuse missing facts for Helpers, cleanup-type arguments, argv-only references or processes outside candidates. Report-only, pause, drain, startup/recovery, non-ready state, concurrent scan/cleanup state or unexpected filesystem shape prevents mutation; a new or changed candidate waits without resetting unchanged siblings. Eligible-subset deletion is descriptor-relative and no-follow, stays beneath scanner-validated candidate directories, rechecks each identity and immediately rescans before persisting public state. Failure retains detected or unavailable truth rather than inventing clear. Raw root/child paths never enter SQLite, IPC, logs or public DTOs; only previous candidate identities are retained in memory, so daemon restart restarts every stability window. This boundary protects ordinary user-computer concurrency; it does not claim a hostile same-UID race-resistant filesystem sandbox. The first installed per-candidate candidate failed closed on the live `.app.bundle` main. Generation 34 contains the narrow correction and supplied one bounded production-timing result: eight stable unreferenced clones were removed while the continuously running ordinary Chrome candidate remained protected.
+Deletion is a distinct enforce-only gate inside that canonical path. Each exact candidate identity must appear unchanged in two consecutive 15-minute storage observations. A complete canonical native process snapshot then decides references per candidate: an executable or absolute argv path within that candidate, or a bundle-confirmed clone-cleanup helper carrying its exact six-character suffix, protects that candidate while stable unreferenced siblings remain eligible. Ordinary Chrome main, renderer, GPU and utility processes outside candidates do not block; a valid unrelated helper suffix also does not block another candidate. A Chrome-looking process with insufficient bundle/path/argv facts, a clone-cleanup helper with a missing, malformed or ambiguous suffix, or incomplete process coverage fails closed for every candidate. One observed upstream shape is narrower: an exact non-cleanup `Google Chrome` main executable already proved inside a scanner-admitted candidate may lack generic app-bundle facts because its container is named `.app.bundle`. The executable path itself protects that candidate; it cannot make that candidate eligible and does not excuse missing facts for Helpers, cleanup-type arguments, argv-only references or processes outside candidates. Report-only, pause, drain, startup/recovery, non-ready state, concurrent scan/cleanup state or unexpected filesystem shape prevents mutation; a new or changed candidate waits without resetting unchanged siblings.
+
+Current source commits PREPARED and publishes one exact token/epoch storage owner under the lifecycle lock, then runs the scan/deletion/rescan cycle on one single-flight background worker after releasing that lock. Status, Pause and ordinary process reconciliation therefore continue while storage work is active. Pause, Disarm, BeginDrain and fail-close latch cancellation; Resume cannot clear it. The remover checks the exact lease before each new candidate and recursive directory entry, so a transition prevents later bounded segments while any earlier effect is retained for immediate rescan. Cancellation or removal failure settles `failed` with the actual after-counts rather than inventing clear. A worker unwind releases only its exact volatile owner, recovers an open durable attempt to `delivery_unknown` and fails the daemon closed, preventing a stale `cleanup_in_progress` projection from blocking transactional replacement indefinitely.
+
+Eligible-subset deletion remains descriptor-relative and no-follow, stays beneath scanner-validated candidate directories, rechecks each identity and immediately rescans before persisting public state. Failure retains detected or unavailable truth rather than inventing clear. Raw root/child paths never enter SQLite, IPC, logs or public DTOs; only previous candidate identities are retained in memory, so daemon restart restarts every stability window. This boundary protects ordinary user-computer concurrency; it does not claim a hostile same-UID race-resistant filesystem sandbox. The first installed per-candidate candidate failed closed on the live `.app.bundle` main. Generation 34 contains the narrow correction and supplied one bounded production-timing result: eight stable unreferenced clones were removed while the continuously running ordinary Chrome candidate remained protected. The background-worker/cancellation correction is source-only and is not part of installed generation 39.
 
 The dormant DAP path brackets a targeted Darwin `proc_listpidspath` query for the exact canonical pathname with frozen parent/file identity checks, completes a current-user argv scan, writes a durable PREPARED artifact row, atomically renames the exact entry to an exclusive same-directory quarantine name, repeats the targeted query against that actual pathname, and revalidates before unlink. Any incomplete query, process metadata, argv, ownership, type, device/inode/mode/link, parent, or pathname identity returns a non-removal disposition.
 
@@ -68,7 +72,7 @@ Two artifact P2s remain open and are not hidden by the fail-closed source tests 
 
 These paths have synthetic/owned-child verification, historical owner-approved full-timing Chrome-for-Testing enforcement results, and an opt-in fast Field Lab result. The harness admits exact identities only from its unique test profile tree and rejects every out-of-scope signal before the macOS adapter.
 
-The ordinary daemon default remains report-only. The maintainer's accepted reference installation is generation 34: Playwright `0.6.0`, other packs `0.4.0`, SQLite v10, frontend schema v5 and the `a8aed45` per-candidate clone gate. Generation 33 proved install/restart and real rollback to generation 32; the exact artifact was then freshly installed, accepted and explicitly armed as healthy `ReadyEnforce` generation 34. Two production-interval observations supplied the bounded clone result above without restarting ordinary Chrome. [Current state](current-state.md) owns the exact generation, activation and cleanup evidence. Installation and one successful subset cleanup do not establish multi-day safety, ordinary ambient process cleanup, broad family/version support, guaranteed physical APFS reclaim or release readiness.
+The ordinary daemon default remains report-only. The maintainer's accepted reference installation is generation 39: Playwright `0.6.0`, other packs `0.4.0`, SQLite v13, frontend schema v5, the existing per-candidate clone gate and bounded native uv maintenance. The same generation-39 artifact passed restart/App checks, a real rollback to generation 36 reopening its restored v11 database, and a fresh install before acceptance and explicit arm as healthy `ReadyEnforce`. The two-observation clone result above remains bounded historical generation-34 evidence; generation 39 has no new clone-deletion result. [Current state](current-state.md) owns the exact generation, activation and cleanup evidence. Installation, one historical successful subset cleanup and one current native-cache attempt do not establish multi-day safety, ordinary ambient process cleanup, broad family/version support, guaranteed physical APFS reclaim or release readiness. The 2026-09-25 source-only repairs described here are not installed.
 
 A candidate retains rollback material until acceptance. `DatabaseBackedUp` is a conservative restore boundary; durable `RollbackInProgress` makes physical restoration replayable across transaction-owned selection states. `AcceptanceInProgress` recovers to the prior state; only durable `Accepted` retires the lease. Each replacement needs its own applicable install/restart/rollback evidence.
 
@@ -129,16 +133,29 @@ size can turn uncertainty into success.
 
 One background worker owns the cache cycle; process observation continues.
 Lifecycle status includes cache activity, while browser phase describes browser
-work. A supervisor in the same daemon executable owns the native child and reaps
-it on parent-pipe closure or cancellation. Nonblocking parent/stderr reads share
+work. PREPARED commits before the parent creates the launch capability. That
+private inherited pipe carries the exact attempt token, enforcement epoch,
+proved cache-root device/inode and producer binding; the old raw hidden argv
+entry is refused. The supervisor also inherits the already-open no-follow root
+directory descriptor, revalidates both identities and checks for a live parent
+before native spawn. It binds the native child's working directory with
+`fchdir` and passes relative `--cache-dir .`, so replacing the root pathname
+cannot redirect that run. The producer pathname receives a final binding check
+immediately before spawn.
+
+The supervisor in the same daemon executable owns the native child and reaps it
+on parent-pipe closure or cancellation. Nonblocking parent/stderr reads share
 one loop; no watcher thread can outlive the child. The native budget is 120
 seconds, its lock wait is 15 seconds, and captured native stderr is capped at
 64 KiB (the supervisor result at 16 KiB). Native output stays transient.
 Successful counts describe uv's human summary (files, or directories
 when there are no files), with rounded logical bytes; they are not physical APFS
 reclaim and zero does not mean no side effects. Cache-root and producer identities
-are revalidated; unexpected linked mutation roots are refused. This is not a
-claim to resist a deliberately hostile same-UID pathname race.
+are revalidated; unexpected linked mutation roots are refused. The capability
+is a structural accidental-bypass boundary tied to durable authority, not a
+same-UID secret or authentication token. The final producer check still ends in
+a pathname-based `exec`; this is not a claim to resist a deliberately hostile
+same-UID race.
 
 The producer contract is described in [uv caching](https://docs.astral.sh/uv/concepts/cache/)
 and the exact 0.11.20 implementations of [cache pruning](https://github.com/astral-sh/uv/blob/0.11.20/crates/uv-cache/src/lib.rs)
@@ -158,8 +175,9 @@ The explicit native lane checks real removal and retained references, cached
 package usability before/after native pruning, shared-holder busy deferral,
 installed `0.11.19` shared-lock interoperability, reverse exclusive-lock blocking
 of ordinary operations in both versions, external symlink canaries and the built
-daemon's parent-EOF supervisor path. It does not upgrade either tool or accept a
-caller-supplied cache root:
+daemon's authorized capability, raw-hidden-entry refusal, root pathname swaps,
+producer swaps and pre-spawn/in-flight parent-EOF supervisor paths. It does not
+upgrade either tool or accept a caller-supplied cache root:
 
 ```bash
 cargo build -p unlinger-daemon --bin unlingerd

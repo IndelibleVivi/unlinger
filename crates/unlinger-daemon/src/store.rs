@@ -544,6 +544,18 @@ impl Display for StoreError {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Io(error) => write!(formatter, "history I/O failed: {error}"),
+            Self::Sqlite(rusqlite::Error::SqliteFailure(failure, detail)) => {
+                write!(
+                    formatter,
+                    "history SQLite failed [code={:?}, extended_code={}]",
+                    failure.code, failure.extended_code
+                )?;
+                if let Some(detail) = detail {
+                    write!(formatter, ": {detail}")
+                } else {
+                    write!(formatter, ": {failure}")
+                }
+            }
             Self::Sqlite(error) => write!(formatter, "history SQLite failed: {error}"),
             Self::Json(error) => write!(formatter, "history JSON failed: {error}"),
             Self::Corrupt(message) => write!(formatter, "history data is corrupt: {message}"),

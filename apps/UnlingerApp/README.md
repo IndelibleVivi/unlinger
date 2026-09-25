@@ -17,7 +17,7 @@ The App owns no classification, cleanup policy, signal authorization, daemon ins
 - single-flight/coalesced refreshes, polling-session generations, stale snapshot retention, and typed incident-detail failures;
 - bilingual browser copy, matching formatter locale, VoiceOver state/reason/mode/freshness labels, Settings/About and explicit “Quit Unlinger App” semantics—the daemon continues unchanged;
 - a direct AppKit `@main` whose strong process-lifetime delegate owns the status item/popover and reusable ordinary window independently of any SwiftUI scene or window lifetime; the square status item uses the system `circle.dashed` symbol and stable autosave identity `app.unlinger.menu.primary`, while the App remains a regular Dock app so the window route is available even when a third-party menu host cannot resolve the status item; both hosts share one `AppState` and one `340 × 420` content size but own independent `AppRouter` paths, each host creates its SwiftUI root only while presented, and the ordinary-window controller clears its direct host references on close before creating a fresh host on reopen; opening a current popover route in the ordinary window copies it once before clearing the hidden popover path;
-- stored browser overview/history presentation rebuilt only when its daemon-owned source facts change, equal refreshes and equal settings writes left unpublished, stable localization resources reused until the chosen language changes, and language/pause/notification popups backed by an idempotently configured native `NSPopUpButton` rather than SwiftUI's popup item adaptor; stable-identity SwiftUI iteration and one outer Accessibility element per history link keep Accessibility traversal from triggering history regrouping or competing navigation writes inside view evaluation;
+- stored browser overview/history presentation rebuilt only when its daemon-owned source facts change, equal refreshes and equal settings writes left unpublished, stable localization resources reused until the chosen language changes, and language/pause/notification popups backed by an idempotently configured native `NSPopUpButton` rather than SwiftUI's popup item adaptor; the small bounded Home section list uses an eager `VStack`, while stable-identity SwiftUI iteration and one outer Accessibility element per history link keep Accessibility traversal from entering the captured lazy-layout invalidation path, triggering history regrouping or competing navigation writes inside view evaluation;
 - local notifications with `off`, `attention` (default), and `attention_and_reclaims`; first trusted refresh baselines retained events, suppressed events are still marked seen, and a mode change never replays backlog;
 - duplicate-avoidance notification ledger: durable claim before one schedule attempt, stable request IDs, no sound, foreground quiet, and public-safe click routing through the reusable ordinary-window router;
 - launch-at-login controls only this menu-bar client via `SMAppService.mainApp`. It never manages the daemon.
@@ -61,7 +61,7 @@ The history/Accessibility regression gate is fixture-only and uses the real macO
 scripts/accessibility-memory-smoke.sh
 ```
 
-Use `UNLINGER_AX_SMOKE_SECONDS`, `UNLINGER_AX_RSS_LIMIT_MIB`, and `UNLINGER_AX_GROWTH_LIMIT_MIB` only when deliberately changing the duration or cutoff. A passing fixture gate is source regression evidence, not installed-App acceptance.
+Use `UNLINGER_AX_SMOKE_SECONDS`, `UNLINGER_AX_RSS_LIMIT_MIB`, and `UNLINGER_AX_GROWTH_LIMIT_MIB` only when deliberately changing the duration or cutoff. The default remains the history-stress route. A bounded source Home run can select another existing fixture with `UNLINGER_AX_FIXTURE` and omit the route with `UNLINGER_AX_FIXTURE_ROUTE=''`; the same child ownership, probe and RSS limits still apply. A passing fixture gate is source regression evidence, not installed-App acceptance.
 
 For manual source-only UI work, `scripts/demo-window.sh` (Python 3 required) builds and runs a foreground report-only demo. It owns unique temporary daemon state and an App home directory, launches the unbundled App without packaged notifications, and stops only its own children when the demo App quits or you press Ctrl-C in that terminal. The old `stop` subcommand and name-based process termination are retired. Closing just the window leaves the demo running. `UNLINGER_WINDOW=1` presents the ordinary window immediately. The packaged App remains regular and retains its Dock entry alongside the status item; Dock reopen, the popover's explicit window action, and notification routes all show the same reusable AppKit-owned ordinary window without changing daemon state.
 
@@ -82,9 +82,15 @@ one core busy in SwiftUI lazy-layout/AttributeGraph updates. Its exact process
 was sampled and terminated; the final bundle was then installed and relaunched.
 The final process remained running during 27 sparse resource
 samples over 792 seconds, with RSS at most 36,272 KiB and CPU at most 6.7%;
-this does not prove window-interaction health. The trigger remains unresolved;
-passing the history fixture is not proof that
-this live Home-window path is fixed. The earlier dated 180-sample Settings guard
+this does not prove window-interaction health. Current source removes the exact
+Home `LazyVStack`/`LazySubviewPlacements` path captured in that sample: the
+bounded semantic sections are now eager and the Swift suite passes. Its final
+default history-stress Accessibility/RSS gate passed 462 traversals with zero
+transient misses, maximum RSS 74,432 KiB and final RSS 23,376 KiB. A 120-second
+source Home Accessibility/RSS run stayed below 51,392 KiB through 292 successful
+tree reads, then failed on the required fourth consecutive AX child-tree read
+miss; it is therefore not a passing fixture result or installed acceptance. The
+intermittent installed trigger remains unresolved. The earlier dated 180-sample Settings guard
 and `c17e60f` observations remain historical memory-repair evidence. Earlier
 bundles remain recoverable. See the [installed dogfood runbook](../../docs/INSTALLED_DOGFOOD.md)
 for the transaction procedure. Multi-day App reliability, signing/notarization

@@ -10,7 +10,10 @@ public struct BrowserHomeView: View {
         let sections = overview.visibleSections(connection: state.connection)
         let firstSection = sections.first
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: 12) {
+            // Home has one small, bounded list of semantic sections. Keeping it
+            // eager avoids the LazySubviewPlacements invalidation path captured
+            // in the installed Home-window runaway without changing row identity.
+            VStack(alignment: .leading, spacing: 12) {
                 ForEach(sections, id: \.self) { section in
                     if section != firstSection { Divider() }
                     sectionView(section, overview: overview)

@@ -1,6 +1,69 @@
 # Current state
 
-**Updated:** 2026-09-21. **Programme:** 0.1. **Reader posture:** experimental developer source preview; not a signed/notarized App release or multi-day reliability claim.
+**Updated:** 2026-09-25. **Programme:** 0.1. **Reader posture:** experimental developer source preview; not a signed/notarized App release or multi-day reliability claim.
+
+## Source-only safety and responsiveness repair (2026-09-25; not installed)
+
+Current source addresses bounded authority, responsiveness, diagnostic and App
+layout issues without widening cleanup eligibility, changing the ordinary
+report-only default or touching the accepted generation-39 service.
+
+The uv path now binds native spawn to the exact durable PREPARED attempt. The
+parent writes its attempt token, enforcement epoch, proved cache-root
+device/inode and producer binding to a private inherited capability pipe, and
+passes the already-open no-follow root directory descriptor to the hidden
+supervisor. The supervisor rejects the old raw hidden argv form, revalidates the
+root descriptor and producer binding, and refuses to open uv if the parent pipe
+is already at EOF. The native process changes directory through the inherited
+descriptor and uses relative `--cache-dir .`, so replacing the root pathname
+cannot redirect this run. The producer pathname receives one final binding
+check immediately before spawn. This is a structural accidental-bypass and
+path-replacement boundary for the ordinary same-user product contract; it is
+not a hostile same-UID authentication or filesystem sandbox.
+
+Chrome clone storage maintenance now runs on one single-flight background
+worker, so status/Pause and ordinary process reconciliation do not wait for a
+recursive directory walk. PREPARED and an exact in-memory token/epoch owner are
+published under the lifecycle lock before deletion; filesystem work and the
+immediate rescan run after that lock is released. Pause, Disarm, BeginDrain and
+fail-close latch cancellation on the exact owner, and Resume cannot resurrect
+it. The descriptor-relative remover checks that lease before each new candidate
+and recursive entry. Cancellation after a partial effect therefore stops later
+segments, rescans the real remainder and settles a typed `failed` result with
+truthful counts. Exact-owner RAII releases the volatile activity even if the
+worker unwinds; durable recovery then records `delivery_unknown` and the daemon
+fails closed. Focused tests prove prompt Pause, sticky cancellation, old-token
+isolation, blocked-worker main-lane progress, panic recovery and both zero- and
+one-candidate partial cancellation.
+
+SQLite errors now include path-free primary and extended SQLite codes in
+addition to the library detail. This improves future incident evidence; it does
+not identify or repair the unresolved generation-36 `unable to open database
+file` root cause.
+
+The App's small bounded Home section list is now an eager `VStack`, removing the
+exact Home `LazyVStack`/`LazySubviewPlacements` path captured in the earlier
+installed hang. The Accessibility smoke can select an existing fixture/route
+without changing its exact-child ownership or limits. The default
+history-stress lane passed 462 traversals with zero transient misses, maximum
+RSS 74,432 KiB and final RSS 23,376 KiB. A separate 120-second Home lane stayed
+below 51,392 KiB through 292 successful tree reads, then failed on the required
+fourth consecutive Accessibility child-tree miss. It is not a passing Home
+result or installed acceptance, and the intermittent installed trigger remains
+unverified.
+
+Final source verification passes Rust format, strict workspace clippy, 428 Rust
+tests with 15 explicit opt-in lanes excluded, release workspace build, the
+source-only doctor and nonmutating dry-run, and all 12 separately invoked native
+uv tests. Focused results include 16 daemon-binary tests, 23 storage-residue
+tests, eight ControlPlane tests and the SQLite diagnostic regression. Doctor and
+dry-run each inspected 469 current-user processes with zero unreadable,
+argument or descriptor gaps and three unavailable executable identities, so
+they do not claim complete ambient coverage. The App passes 104 Swift tests / 18
+suites, release bundling, two isolated report-only schema-v5 socket passes (7 +
+7), and the default Accessibility lane described above. None of this source work
+installed, restarted, paused, disarmed, drained or otherwise mutated generation
+39, the installed App or the real user uv cache.
 
 ## Installed uv maintenance (2026-09-21)
 

@@ -199,6 +199,11 @@ pub struct DaemonStatus {
     /// browser phase continues to describe browser/process work only.
     #[serde(skip)]
     cache_activity: Option<ToolCacheActivity>,
+    /// Exact in-memory owner of one Chrome `code_sign_clone` storage cleanup.
+    /// Parallel in purpose to `cache_activity` but never conflated with it, so
+    /// tool-cache maintenance and storage deletion cannot clear each other.
+    #[serde(skip)]
+    storage_activity: Option<StorageActivity>,
     #[serde(skip)]
     process_activity: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -224,12 +229,27 @@ struct ToolCacheActivity {
     cancel_requested: bool,
 }
 
+/// Exact in-memory owner of one active storage cleanup. `cancel_requested` is
+/// latched by Pause/Disarm/BeginDrain/fail-close and is never cleared by a
+/// newer lifecycle transition, so Resume cannot resurrect a cancelled lease.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct StorageActivity {
+    token: String,
+    epoch: String,
+    cancel_requested: bool,
+}
+
 impl DaemonStatus {
     fn refresh_cleanup_activity(&mut self) {
-        self.cleanup_in_progress = self.process_activity.is_some() || self.cache_activity.is_some();
+        self.cleanup_in_progress = self.process_activity.is_some()
+            || self.cache_activity.is_some()
+            || self.storage_activity.is_some();
     }
+    /// Browser phase describes browser/process work only. Cache and storage
+    /// activity are non-browser maintenance, so they never force a browser
+    /// `Reclaiming` phase on their own.
     pub(crate) fn browser_cleanup_in_progress(&self) -> bool {
-        if self.cache_activity.is_some() {
+        if self.cache_activity.is_some() || self.storage_activity.is_some() {
             self.process_activity.is_some()
         } else {
             self.cleanup_in_progress
@@ -239,6 +259,16 @@ impl DaemonStatus {
         if let Some(activity) = &mut self.cache_activity {
             activity.cancel_requested = true;
         }
+    }
+    fn cancel_storage_activity(&mut self) {
+        if let Some(activity) = &mut self.storage_activity {
+            activity.cancel_requested = true;
+        }
+    }
+    /// Latches cancellation on every non-browser in-memory activity owner.
+    fn cancel_prompt_activities(&mut self) {
+        self.cancel_cache_activity();
+        self.cancel_storage_activity();
     }
 }
 
@@ -289,6 +319,7 @@ impl DaemonStatus {
             scan_in_progress: false,
             cleanup_in_progress: false,
             cache_activity: None,
+            storage_activity: None,
             process_activity: None,
             paused_until_unix_millis: None,
             cycle_started_at_unix_millis: None,
@@ -781,7 +812,7 @@ impl ControlPlane {
         match result {
             unlinger_protocol::MutationResult::Paused { until_unix_millis } => {
                 status.paused_until_unix_millis = Some(*until_unix_millis);
-                status.cancel_cache_activity();
+                status.cancel_prompt_activities();
             }
             unlinger_protocol::MutationResult::Resumed => {
                 status.paused_until_unix_millis = None;
@@ -987,7 +1018,7 @@ impl ControlPlane {
     ) -> Result<(), ControlError> {
         let message = bounded_message(&message.into());
         let mut status = self.lock_status()?;
-        status.cancel_cache_activity();
+        status.cancel_prompt_activities();
         let durable_result = if status.managed {
             managed_identity(&status).and_then(|(generation, instance_id)| {
                 self.store
@@ -1034,30 +1065,88 @@ impl ControlPlane {
         self.status.lock().map_or(true, |status| status.draining)
     }
 
-    /// Durably PREPARES one bounded storage cleanup and then runs its deletion
-    /// while the lifecycle/status gate is held. This prevents pause, drain,
-    /// failure, or mode transitions from racing between final authorization and
-    /// descriptor-relative deletion, and it guarantees no directory deletion
-    /// can run without a durable PREPARED record: a failed authoritative write
-    /// returns `None` without invoking `action`.
-    pub fn run_storage_cleanup_if_ready_enforce<T>(
+    /// Durably PREPARES one bounded storage cleanup and publishes its exact
+    /// in-memory activity owner, then returns so the caller can run the
+    /// descriptor-relative deletion *without* holding the status lock.
+    ///
+    /// Under the lock the final lifecycle gate is rechecked and the durable
+    /// PREPARED record is committed before the owner is published: a failed
+    /// authoritative write returns `None` and no deletion may begin. Pause,
+    /// drain, disarm and fail-close only need to latch cancellation on this
+    /// owner and complete; they no longer block on filesystem work.
+    pub fn start_storage_cleanup_if_ready_enforce(
         &self,
         now_unix_millis: u64,
         facts: &StorageCleanupAttemptFacts,
-        action: impl FnOnce() -> T,
-    ) -> Result<Option<(PreparedStorageCleanupAttempt, T)>, ControlError> {
+    ) -> Result<Option<(PreparedStorageCleanupAttempt, String)>, ControlError> {
         self.expire_pause(now_unix_millis)?;
-        let status = self.lock_status()?;
+        let mut status = self.lock_status()?;
         if !storage_cleanup_gate_open(&status) {
             return Ok(None);
         }
+        let epoch = status
+            .enforcement_epoch
+            .clone()
+            .expect("ready gate requires epoch");
         let prepared = self
             .store
             .begin_storage_cleanup_attempt(now_unix_millis, facts)
             .map_err(map_store_error)?;
-        let result = action();
-        drop(status);
-        Ok(Some((prepared, result)))
+        status.storage_activity = Some(StorageActivity {
+            token: prepared.attempt_token().to_owned(),
+            epoch: epoch.clone(),
+            cancel_requested: false,
+        });
+        status.refresh_cleanup_activity();
+        Ok(Some((prepared, epoch)))
+    }
+
+    /// True while this exact storage attempt still owns the lease and the
+    /// lifecycle still authorizes deletion. Any latched cancellation, pause,
+    /// drain, disarm, fail-close or epoch change makes it permanently false:
+    /// Resume only clears the pause record and never this owner.
+    pub fn storage_action_may_continue(
+        &self,
+        prepared: &PreparedStorageCleanupAttempt,
+        epoch: &str,
+    ) -> bool {
+        self.status.lock().is_ok_and(|status| {
+            if !status.storage_activity.as_ref().is_some_and(|activity| {
+                activity.token == prepared.attempt_token()
+                    && activity.epoch == epoch
+                    && !activity.cancel_requested
+            }) {
+                return false;
+            }
+            let mut gate = status.clone();
+            gate.storage_activity = None;
+            gate.process_activity = None;
+            gate.scan_in_progress = false;
+            gate.refresh_cleanup_activity();
+            storage_cleanup_gate_open(&gate) && gate.enforcement_epoch.as_deref() == Some(epoch)
+        })
+    }
+
+    /// Releases the exact owned storage lease. Finishing an old token never
+    /// clears a newer owner: a mismatch is reported as an error and the
+    /// current lease is left untouched.
+    pub fn finish_storage_action(
+        &self,
+        prepared: &PreparedStorageCleanupAttempt,
+    ) -> Result<(), ControlError> {
+        let mut status = self.lock_status()?;
+        if status
+            .storage_activity
+            .as_ref()
+            .is_some_and(|activity| activity.token != prepared.attempt_token())
+        {
+            return Err(ControlError::Unavailable(
+                "storage activity belongs to another attempt".into(),
+            ));
+        }
+        status.storage_activity = None;
+        status.refresh_cleanup_activity();
+        Ok(())
     }
 
     pub fn storage_cleanup_state_at(
@@ -1077,10 +1166,16 @@ impl ControlPlane {
 
     /// Only child creation is serialized with lifecycle mutations. The caller
     /// waits outside this lock, so pause/disarm/drain can cancel a running GC.
+    ///
+    /// The `start` factory runs only *after* the durable PREPARED record is
+    /// committed, and it receives the exact PREPARED attempt token plus the
+    /// current enforcement epoch. Those values are what the caller folds into
+    /// the parent-owned native launch capability, so a native mutator cannot be
+    /// opened without a matching durable PREPARED attempt.
     pub fn start_tool_cache_if_ready_enforce<T>(
         &self,
         now: u64,
-        start: impl FnOnce() -> std::io::Result<T>,
+        start: impl FnOnce(&str, &str) -> std::io::Result<T>,
     ) -> Result<Option<(crate::PreparedToolCacheAttempt, std::io::Result<T>, String)>, ControlError>
     {
         self.expire_pause(now)?;
@@ -1096,7 +1191,7 @@ impl ControlPlane {
             .enforcement_epoch
             .clone()
             .expect("ready gate requires epoch");
-        let child = start();
+        let child = start(prepared.token(), &epoch);
         if child.is_ok() {
             status.cache_activity = Some(ToolCacheActivity {
                 token: prepared.token().to_owned(),
@@ -1592,7 +1687,7 @@ impl ControlPlane {
                 let mut status = self.lock_status()?;
                 self.store.set_pause_until(Some(deadline))?;
                 status.paused_until_unix_millis = Some(deadline);
-                status.cancel_cache_activity();
+                status.cancel_prompt_activities();
                 self.cleanup_policy_revision.fetch_add(1, Ordering::AcqRel);
                 Ok(IpcPayload::Pause {
                     until_unix_millis: deadline,
@@ -1837,7 +1932,7 @@ mod control_plane_tests {
         let control = ControlPlane::new(store, status).unwrap();
         assert!(
             control
-                .start_tool_cache_if_ready_enforce(10, || -> std::io::Result<()> {
+                .start_tool_cache_if_ready_enforce(10, |_token, _epoch| -> std::io::Result<()> {
                     panic!("report-only must never spawn a mutating child")
                 })
                 .unwrap()
@@ -1850,7 +1945,11 @@ mod control_plane_tests {
             status.enforcement_epoch = Some("cache-test-epoch".to_owned());
         }
         let (prepared, child, epoch) = control
-            .start_tool_cache_if_ready_enforce(20, || {
+            .start_tool_cache_if_ready_enforce(20, |token, epoch| {
+                // The factory runs only after the durable PREPARED commit and
+                // receives that exact attempt identity.
+                assert!(!token.is_empty());
+                assert_eq!(epoch, "cache-test-epoch");
                 assert_eq!(
                     control
                         .store()
@@ -1893,7 +1992,7 @@ mod control_plane_tests {
         );
         assert!(
             control
-                .start_tool_cache_if_ready_enforce(20, || -> std::io::Result<()> {
+                .start_tool_cache_if_ready_enforce(20, |_token, _epoch| -> std::io::Result<()> {
                     panic!("overlapping cache action")
                 })
                 .unwrap()
@@ -1928,7 +2027,7 @@ mod control_plane_tests {
             .unwrap();
         assert!(
             control
-                .start_tool_cache_if_ready_enforce(10, || -> std::io::Result<()> {
+                .start_tool_cache_if_ready_enforce(10, |_token, _epoch| -> std::io::Result<()> {
                     panic!("failed PREPARED must never spawn")
                 })
                 .is_err()
@@ -1946,28 +2045,23 @@ mod control_plane_tests {
         status.set_effective_mode(DaemonMode::Enforce);
         let control = ControlPlane::new(store, status).expect("create control plane");
 
-        let action_entered = Arc::new(Barrier::new(2));
-        let allow_action = Arc::new(Barrier::new(2));
-        let cleanup_control = control.clone();
-        let action_entered_worker = Arc::clone(&action_entered);
-        let allow_action_worker = Arc::clone(&allow_action);
-        let cleanup = thread::spawn(move || {
-            cleanup_control.run_storage_cleanup_if_ready_enforce(
-                10,
-                &StorageCleanupAttemptFacts {
-                    planned_candidate_count: 2,
-                    before_candidate_count: 5,
-                    before_logical_bytes: 4_096,
-                },
-                || {
-                    action_entered_worker.wait();
-                    allow_action_worker.wait();
-                    42
-                },
-            )
-        });
-        action_entered.wait();
+        // The start gate durably PREPARES, publishes the exact activity owner
+        // and returns *without* holding the status lock across the action.
+        let facts = StorageCleanupAttemptFacts {
+            planned_candidate_count: 2,
+            before_candidate_count: 5,
+            before_logical_bytes: 4_096,
+        };
+        let (prepared, epoch) = control
+            .start_storage_cleanup_if_ready_enforce(10, &facts)
+            .expect("start storage cleanup")
+            .expect("ready gate");
+        assert_eq!(prepared.attempt_token().len(), 32);
+        assert!(control.status().unwrap().cleanup_in_progress);
+        assert!(control.storage_action_may_continue(&prepared, &epoch));
 
+        // Pause returns promptly while a cleanup lease is active: it only
+        // latches cancellation instead of blocking on filesystem work.
         let (pause_sent, pause_received) = mpsc::channel();
         let pause_control = control.clone();
         let pause = thread::spawn(move || {
@@ -1979,41 +2073,67 @@ mod control_plane_tests {
             );
             pause_sent.send(result).expect("send pause result");
         });
-        assert!(
-            pause_received
-                .recv_timeout(Duration::from_millis(50))
-                .is_err(),
-            "Pause must not commit between final storage authorization and mutation completion"
-        );
-
-        allow_action.wait();
-        let completed = cleanup
-            .join()
-            .expect("join cleanup")
-            .expect("cleanup gate")
-            .expect("prepared storage cleanup");
-        assert_eq!(completed.1, 42);
-        assert_eq!(completed.0.attempt_token().len(), 32);
         pause_received
             .recv_timeout(Duration::from_secs(1))
-            .expect("pause completes after cleanup")
+            .expect("Pause must return promptly while storage cleanup is active")
             .expect("pause succeeds");
         pause.join().expect("join pause");
 
+        // Cancellation is latched: Resume never clears it and no new deletion
+        // segment may begin for this lease.
+        assert!(!control.storage_action_may_continue(&prepared, &epoch));
+        control.handle_at(IpcCommand::Resume, 11).expect("resume");
+        assert!(
+            !control.storage_action_may_continue(&prepared, &epoch),
+            "Resume must not resurrect a cancelled storage lease"
+        );
         assert_eq!(
             control
-                .run_storage_cleanup_if_ready_enforce(
-                    11,
-                    &StorageCleanupAttemptFacts {
-                        planned_candidate_count: 2,
-                        before_candidate_count: 5,
-                        before_logical_bytes: 4_096,
-                    },
-                    || 7,
-                )
-                .expect("paused gate"),
+                .start_storage_cleanup_if_ready_enforce(11, &facts)
+                .expect("serialized gate"),
             None
         );
+
+        // Releasing the exact lease clears the public activity flag.
+        control
+            .finish_storage_action(&prepared)
+            .expect("finish storage action");
+        assert!(!control.status().unwrap().cleanup_in_progress);
+    }
+
+    #[test]
+    fn finishing_an_old_storage_lease_never_clears_a_newer_owner() {
+        let temp = TempState::new();
+        let store = HistoryStore::open(temp.0.join("history.sqlite3")).expect("open history");
+        let mut status = DaemonStatus::new(DaemonMode::Enforce, std::process::id());
+        status.healthy = true;
+        status.ready = true;
+        status.startup_state = StartupState::ReadyEnforce;
+        status.set_effective_mode(DaemonMode::Enforce);
+        let control = ControlPlane::new(store, status).expect("create control plane");
+
+        let facts = StorageCleanupAttemptFacts {
+            planned_candidate_count: 1,
+            before_candidate_count: 1,
+            before_logical_bytes: 1,
+        };
+        let (old, _old_epoch) = control
+            .start_storage_cleanup_if_ready_enforce(10, &facts)
+            .expect("start")
+            .expect("ready");
+        control.finish_storage_action(&old).expect("finish old");
+
+        // A later independent attempt publishes a new owner; finishing the old
+        // token must leave that new owner untouched.
+        let (new, epoch) = control
+            .start_storage_cleanup_if_ready_enforce(12, &facts)
+            .expect("start new")
+            .expect("ready");
+        assert!(control.finish_storage_action(&old).is_err());
+        assert!(control.status().unwrap().cleanup_in_progress);
+        assert!(control.storage_action_may_continue(&new, &epoch));
+        control.finish_storage_action(&new).expect("finish new");
+        assert!(!control.status().unwrap().cleanup_in_progress);
     }
 
     #[test]
@@ -2375,7 +2495,7 @@ fn require_exact_status_identity(
 
 fn apply_managed_lifecycle(status: &mut DaemonStatus, lifecycle: &ManagedLifecycle) {
     if !lifecycle.effective_enforce {
-        status.cancel_cache_activity();
+        status.cancel_prompt_activities();
     }
     status.managed = true;
     status.activation_generation = Some(lifecycle.activation_generation);

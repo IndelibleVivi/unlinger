@@ -8,15 +8,21 @@
 //! because they require the exact staged uv 0.11.20 binary; they operate only on
 //! test-owned roots and perform no network access.
 
+use std::ffi::OsString;
 use std::fs;
+use std::io::Write as _;
+use std::os::fd::{AsRawFd, IntoRawFd};
+use std::os::unix::fs::PermissionsExt;
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use super::{
-    HumanSummary, UvCacheMaintenance, execute_supervisor, fixed_cache_shape_safe,
-    parse_human_bytes, parse_human_summary, parse_supervisor_result, preflight_cache_root,
+    HumanSummary, NativeCacheCapability, ProducerBinding, UvCacheMaintenance, execute_supervisor,
+    execute_uv_supervisor, fixed_cache_shape_safe, open_directory_no_follow, parse_human_bytes,
+    parse_human_summary, parse_supervisor_result, pipe_cloexec, preflight_cache_root,
 };
 use unlinger_protocol::{ToolCacheAvailability, ToolCacheOutcome};
 
@@ -150,6 +156,44 @@ impl Drop for LiveParent {
     fn drop(&mut self) {
         self.write.take();
     }
+}
+
+fn fake_producer(path: &Path, marker: &str) {
+    fs::write(
+        path,
+        format!("#!/bin/sh\nprintf ran > {marker}\nprintf 'No unused entries found\\n' >&2\n"),
+    )
+    .unwrap();
+    fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
+}
+
+fn authorized_supervisor_args(producer: &Path, root: &Path) -> Vec<OsString> {
+    let root_fd = open_directory_no_follow(root).expect("open test root");
+    let root_meta = root_fd
+        .try_clone()
+        .map(std::fs::File::from)
+        .unwrap()
+        .metadata()
+        .unwrap();
+    let capability = NativeCacheCapability {
+        token: "prepared-test-token".to_owned(),
+        epoch: "test-enforcement-epoch".to_owned(),
+        root_device: std::os::unix::fs::MetadataExt::dev(&root_meta),
+        root_inode: std::os::unix::fs::MetadataExt::ino(&root_meta),
+        producer_binding: ProducerBinding::capture(producer).expect("capture fake producer"),
+    };
+    let (read_fd, write_fd) = pipe_cloexec().expect("create capability pipe");
+    let mut writer = std::fs::File::from(write_fd);
+    writer
+        .write_all(&serde_json::to_vec(&capability).unwrap())
+        .unwrap();
+    drop(writer);
+    vec![
+        super::NATIVE_CACHE_CAPABILITY_FLAG.into(),
+        read_fd.into_raw_fd().to_string().into(),
+        root_fd.into_raw_fd().to_string().into(),
+        producer.as_os_str().to_owned(),
+    ]
 }
 
 // ---------------------------------------------------------------------------
@@ -380,6 +424,124 @@ fn containment_rejects_symlinked_lock_and_hardlinked_marker() {
     fs::write(cache2.join(".lock"), b"x").unwrap();
     fs::hard_link(cache2.join(".lock"), root2.root.join("elsewhere")).unwrap();
     assert!(!fixed_cache_shape_safe(&cache2));
+}
+
+#[test]
+fn authorized_supervisor_runs_only_with_live_parent_and_bound_objects() {
+    let root = OwnedRoot::new("authorized-supervisor");
+    let cache = root.cache();
+    fs::create_dir_all(&cache).unwrap();
+    let producer = root.root.join("fake-uv");
+    fake_producer(&producer, "native-ran");
+    let args = authorized_supervisor_args(&producer, &cache);
+    let (_parent, read) = LiveParent::new();
+
+    let result = execute_uv_supervisor(&args, read.as_raw_fd()).expect("authorized native run");
+
+    assert_eq!(result.outcome, "completed");
+    assert_eq!(fs::read(cache.join("native-ran")).unwrap(), b"ran");
+}
+
+#[test]
+fn supervisor_root_descriptor_cannot_be_redirected_by_real_directory_swap() {
+    let root = OwnedRoot::new("root-directory-swap");
+    let cache = root.cache();
+    fs::create_dir_all(&cache).unwrap();
+    let producer = root.root.join("fake-uv");
+    fake_producer(&producer, "native-ran");
+    let args = authorized_supervisor_args(&producer, &cache);
+
+    let proved_root = root.root.join("proved-root");
+    fs::rename(&cache, &proved_root).unwrap();
+    fs::create_dir(&cache).unwrap();
+    fs::write(cache.join("sentinel"), b"REPLACEMENT").unwrap();
+    let (_parent, read) = LiveParent::new();
+
+    let result = execute_uv_supervisor(&args, read.as_raw_fd()).expect("bound-root native run");
+
+    assert_eq!(result.outcome, "completed");
+    assert_eq!(fs::read(cache.join("sentinel")).unwrap(), b"REPLACEMENT");
+    assert!(!cache.join("native-ran").exists());
+    assert_eq!(fs::read(proved_root.join("native-ran")).unwrap(), b"ran");
+}
+
+#[test]
+fn supervisor_root_descriptor_cannot_be_redirected_by_symlink_swap() {
+    let root = OwnedRoot::new("root-symlink-swap");
+    let cache = root.cache();
+    fs::create_dir_all(&cache).unwrap();
+    let producer = root.root.join("fake-uv");
+    fake_producer(&producer, "native-ran");
+    let args = authorized_supervisor_args(&producer, &cache);
+
+    let proved_root = root.root.join("proved-root");
+    let victim = root.root.join("victim");
+    fs::rename(&cache, &proved_root).unwrap();
+    fs::create_dir(&victim).unwrap();
+    fs::write(victim.join("sentinel"), b"SYMLINK-TARGET").unwrap();
+    std::os::unix::fs::symlink(&victim, &cache).unwrap();
+    let (_parent, read) = LiveParent::new();
+
+    let result = execute_uv_supervisor(&args, read.as_raw_fd()).expect("bound-root native run");
+
+    assert_eq!(result.outcome, "completed");
+    assert_eq!(
+        fs::read(victim.join("sentinel")).unwrap(),
+        b"SYMLINK-TARGET"
+    );
+    assert!(!victim.join("native-ran").exists());
+    assert_eq!(fs::read(proved_root.join("native-ran")).unwrap(), b"ran");
+}
+
+#[test]
+fn supervisor_refuses_replaced_producer_before_native_spawn() {
+    let root = OwnedRoot::new("producer-swap");
+    let cache = root.cache();
+    fs::create_dir_all(&cache).unwrap();
+    let producer = root.root.join("fake-uv");
+    fake_producer(&producer, "original-ran");
+    let args = authorized_supervisor_args(&producer, &cache);
+
+    fs::rename(&producer, root.root.join("proved-fake-uv")).unwrap();
+    fake_producer(&producer, "replacement-ran");
+    let (_parent, read) = LiveParent::new();
+
+    assert!(execute_uv_supervisor(&args, read.as_raw_fd()).is_err());
+    assert!(!cache.join("original-ran").exists());
+    assert!(!cache.join("replacement-ran").exists());
+}
+
+#[test]
+fn supervisor_refuses_parent_eof_before_native_spawn() {
+    let root = OwnedRoot::new("pre-spawn-eof");
+    let cache = root.cache();
+    fs::create_dir_all(&cache).unwrap();
+    let producer = root.root.join("fake-uv");
+    fake_producer(&producer, "native-ran");
+    let args = authorized_supervisor_args(&producer, &cache);
+    let (mut parent, read) = LiveParent::new();
+    parent.close();
+
+    assert!(execute_uv_supervisor(&args, read.as_raw_fd()).is_err());
+    assert!(!cache.join("native-ran").exists());
+}
+
+#[test]
+fn raw_hidden_supervisor_arguments_are_not_mutation_authority() {
+    let root = OwnedRoot::new("raw-hidden-entry");
+    let cache = root.cache();
+    fs::create_dir_all(&cache).unwrap();
+    let producer = root.root.join("fake-uv");
+    fake_producer(&producer, "native-ran");
+
+    assert_eq!(
+        super::run_uv_supervisor(&[
+            producer.as_os_str().to_owned(),
+            cache.as_os_str().to_owned()
+        ]),
+        7
+    );
+    assert!(!cache.join("native-ran").exists());
 }
 
 // ---------------------------------------------------------------------------
@@ -805,16 +967,47 @@ fn spawn_supervisor_binary(
     uv: &Path,
     cache: &Path,
 ) -> (std::process::Child, std::process::ChildStdin) {
-    let mut child = Command::new(bin)
+    let root_fd = open_directory_no_follow(cache).expect("open binary-test root");
+    let root_meta = root_fd
+        .try_clone()
+        .map(std::fs::File::from)
+        .unwrap()
+        .metadata()
+        .unwrap();
+    let capability = NativeCacheCapability {
+        token: "binary-prepared-token".to_owned(),
+        epoch: "binary-test-epoch".to_owned(),
+        root_device: std::os::unix::fs::MetadataExt::dev(&root_meta),
+        root_inode: std::os::unix::fs::MetadataExt::ino(&root_meta),
+        producer_binding: ProducerBinding::capture(uv).expect("capture staged uv"),
+    };
+    let (read_fd, write_fd) = pipe_cloexec().expect("create binary-test capability pipe");
+    let mut writer = std::fs::File::from(write_fd);
+    writer
+        .write_all(&serde_json::to_vec(&capability).unwrap())
+        .unwrap();
+    drop(writer);
+    let capability_raw = read_fd.as_raw_fd();
+    let root_raw = root_fd.as_raw_fd();
+    let mut command = Command::new(bin);
+    command
         .arg("--native-cache-child")
+        .arg(super::NATIVE_CACHE_CAPABILITY_FLAG)
+        .arg(capability_raw.to_string())
+        .arg(root_raw.to_string())
         .arg(uv)
-        .arg(cache)
         .env_clear()
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .expect("spawn supervisor binary");
+        .stderr(Stdio::null());
+    unsafe {
+        command.pre_exec(move || {
+            super::make_fd_inheritable(capability_raw)?;
+            super::make_fd_inheritable(root_raw)?;
+            Ok(())
+        });
+    }
+    let mut child = command.spawn().expect("spawn supervisor binary");
     let write = child.stdin.take().expect("piped parent stdin");
     (child, write)
 }
@@ -850,31 +1043,49 @@ fn binary_hidden_entry_completes_with_a_live_parent() {
 
 #[test]
 #[ignore = "requires the built daemon binary (UNLINGER_UV_SUPERVISOR_BIN) and staged uv"]
-fn binary_hidden_entry_reaps_uv_when_parent_stdin_closes() {
+fn binary_hidden_entry_refuses_parent_eof_before_uv_spawn() {
     let (bin, uv) = (supervisor_binary(), native_uv());
-    let python = local_python();
     let root = OwnedRoot::new("bin-eof");
     let cache = root.cache();
     seed_archive_pair(&cache);
-    let mut holder = start_uv_holder(&uv, &cache, &python, &root.root);
 
     let (mut child, write) = spawn_supervisor_binary(&bin, &uv, &cache);
-    // Parent gone immediately: close the write end before uv can hit its own
-    // 15s lock timeout, so the reaping path (not the busy path) is exercised.
+    // Parent gone before the supervisor preflight: native uv must never spawn.
     drop(write);
     let started = std::time::Instant::now();
     let out = read_child_stdout(&mut child);
     let status = child.wait().expect("supervisor exits");
-    assert!(status.success());
+    assert_eq!(status.code(), Some(7));
     assert!(
         started.elapsed() < Duration::from_secs(15),
         "supervisor took {:?}; out={out}",
         started.elapsed()
     );
-    let parsed: super::SupervisorResult = serde_json::from_str(&out).expect("typed JSON");
-    assert_eq!(parsed.outcome, "deliveryUnknown");
+    assert!(out.is_empty());
     assert!(cache.join("archive-v0/unreferenced/payload").is_file());
-    holder.release();
+}
+
+#[test]
+#[ignore = "requires the built daemon binary (UNLINGER_UV_SUPERVISOR_BIN) and staged uv"]
+fn binary_raw_hidden_entry_is_refused_without_capability() {
+    let (bin, uv) = (supervisor_binary(), native_uv());
+    let root = OwnedRoot::new("bin-raw-hidden");
+    let cache = root.cache();
+    seed_archive_pair(&cache);
+
+    let status = Command::new(bin)
+        .arg("--native-cache-child")
+        .arg(uv)
+        .arg(&cache)
+        .env_clear()
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .expect("run raw hidden entry");
+
+    assert_eq!(status.code(), Some(7));
+    assert!(cache.join("archive-v0/unreferenced/payload").is_file());
 }
 
 #[test]

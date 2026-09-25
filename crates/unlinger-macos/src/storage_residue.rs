@@ -57,12 +57,19 @@ impl ChromeCloneCleanup {
         Self::default()
     }
 
+    /// Runs one reconciliation. `should_cancel` is polled inside the recursive
+    /// descriptor-relative remover before every new entry and candidate
+    /// segment, so a lifecycle transition stops the active lease promptly and
+    /// no later segment begins. Returning `true` aborts the in-progress
+    /// deletion with an error; the caller still rescans and settles truthful
+    /// `failed` counts for whatever subset was already removed.
     #[must_use]
     pub fn reconcile<F>(
         &mut self,
         observed_at_unix_millis: u64,
         snapshot: Option<&Snapshot>,
         mode: ChromeCloneCleanupMode,
+        should_cancel: &dyn Fn() -> bool,
         mut run_cleanup: F,
     ) -> ChromeCloneReconciliation
     where
@@ -84,7 +91,10 @@ impl ChromeCloneCleanup {
             observed_at_unix_millis,
             snapshot,
             mode,
-            &DescriptorRelativeRemover,
+            RemovalAuthority {
+                remover: &DescriptorRelativeRemover,
+                should_cancel,
+            },
             &mut run_cleanup,
         )
     }
@@ -105,7 +115,10 @@ impl ChromeCloneCleanup {
             observed_at_unix_millis,
             snapshot,
             mode,
-            &DescriptorRelativeRemover,
+            RemovalAuthority {
+                remover: &DescriptorRelativeRemover,
+                should_cancel: &never_cancel,
+            },
             &mut |_facts, action| Some(action()),
         )
         .observation
@@ -125,10 +138,37 @@ impl ChromeCloneCleanup {
             observed_at_unix_millis,
             snapshot,
             mode,
-            remover,
+            RemovalAuthority {
+                remover,
+                should_cancel: &never_cancel,
+            },
             &mut |_facts, action| Some(action()),
         )
         .observation
+    }
+
+    /// Fixture seam that exercises the exact production remover with an
+    /// externally controlled cancellation probe.
+    #[cfg(test)]
+    fn reconcile_root_cancellable(
+        &mut self,
+        root: &Path,
+        observed_at_unix_millis: u64,
+        snapshot: Option<&Snapshot>,
+        mode: ChromeCloneCleanupMode,
+        should_cancel: &dyn Fn() -> bool,
+    ) -> ChromeCloneReconciliation {
+        self.reconcile_root_guarded(
+            root,
+            observed_at_unix_millis,
+            snapshot,
+            mode,
+            RemovalAuthority {
+                remover: &DescriptorRelativeRemover,
+                should_cancel,
+            },
+            &mut |_facts, action| Some(action()),
+        )
     }
 
     fn reconcile_root_guarded<
@@ -143,7 +183,7 @@ impl ChromeCloneCleanup {
         observed_at_unix_millis: u64,
         snapshot: Option<&Snapshot>,
         mode: ChromeCloneCleanupMode,
-        remover: &R,
+        authority: RemovalAuthority<'_, R>,
         run_cleanup: &mut F,
     ) -> ChromeCloneReconciliation {
         let scan = scan_code_sign_clone_root(root, observed_at_unix_millis);
@@ -203,7 +243,11 @@ impl ChromeCloneCleanup {
             before_candidate_count: observation.candidate_count,
             before_logical_bytes: observation.logical_bytes,
         };
-        let mut mutation = || remover.remove(&scan, &removable_candidates);
+        let mut mutation = || {
+            authority
+                .remover
+                .remove(&scan, &removable_candidates, authority.should_cancel)
+        };
         let Some(removal_result) = run_cleanup(&attempt, &mut mutation) else {
             observation.automatic_cleanup_eligible = false;
             observation
@@ -707,19 +751,54 @@ fn valid_clone_suffix(suffix: &str) -> bool {
     suffix.len() == 6 && suffix.bytes().all(|byte| byte.is_ascii_alphanumeric())
 }
 
+/// Test seam only: production uses a never-cancel closure so fixture removers
+/// behave exactly as the unit's own tests expect.
+#[cfg(test)]
+fn never_cancel() -> bool {
+    false
+}
+
 trait CandidateRemover {
-    fn remove(&self, scan: &CloneScan, candidates: &[CloneCandidateIdentity]) -> io::Result<()>;
+    fn remove(
+        &self,
+        scan: &CloneScan,
+        candidates: &[CloneCandidateIdentity],
+        should_cancel: &dyn Fn() -> bool,
+    ) -> io::Result<()>;
+}
+
+/// Pairs the exact candidate remover with its cancellation probe so the
+/// reconcile plumbing passes one authority value instead of two loose
+/// arguments. `should_cancel` is polled inside the recursive remover before
+/// every new entry and candidate segment.
+struct RemovalAuthority<'a, R: CandidateRemover> {
+    remover: &'a R,
+    should_cancel: &'a dyn Fn() -> bool,
+}
+
+fn cancelled() -> io::Error {
+    io::Error::other("storage cleanup cancelled")
 }
 
 struct DescriptorRelativeRemover;
 
 impl CandidateRemover for DescriptorRelativeRemover {
-    fn remove(&self, scan: &CloneScan, identities: &[CloneCandidateIdentity]) -> io::Result<()> {
+    fn remove(
+        &self,
+        scan: &CloneScan,
+        identities: &[CloneCandidateIdentity],
+        should_cancel: &dyn Fn() -> bool,
+    ) -> io::Result<()> {
         let root = scan
             .root
             .as_ref()
             .ok_or_else(|| io::Error::other("clone root is unavailable"))?;
         for identity in identities {
+            // Cancellation is checked before each candidate segment so no new
+            // candidate deletion begins after the lease was cancelled.
+            if should_cancel() {
+                return Err(cancelled());
+            }
             let candidate = scan
                 .candidates
                 .iter()
@@ -733,7 +812,7 @@ impl CandidateRemover for DescriptorRelativeRemover {
                 return Err(io::Error::other("clone candidate identity changed"));
             }
             verify_linked_candidate(root, &candidate.identity)?;
-            remove_directory_contents(&candidate.directory)?;
+            remove_directory_contents(&candidate.directory, should_cancel)?;
             verify_linked_candidate(root, &candidate.identity)?;
             if unsafe {
                 libc::unlinkat(
@@ -773,8 +852,13 @@ fn verify_linked_candidate(root: &File, identity: &CloneCandidateIdentity) -> io
     Ok(())
 }
 
-fn remove_directory_contents(directory: &File) -> io::Result<()> {
+fn remove_directory_contents(directory: &File, should_cancel: &dyn Fn() -> bool) -> io::Result<()> {
     for name in directory_names(directory)? {
+        // Checked before every new entry so cancellation stops bounded work
+        // promptly instead of only between whole candidates.
+        if should_cancel() {
+            return Err(cancelled());
+        }
         let mut metadata = std::mem::MaybeUninit::<libc::stat>::uninit();
         if unsafe {
             libc::fstatat(
@@ -791,7 +875,7 @@ fn remove_directory_contents(directory: &File) -> io::Result<()> {
         let flags = match metadata.st_mode & libc::S_IFMT {
             libc::S_IFDIR => {
                 let child = open_child_directory(directory, &name)?;
-                remove_directory_contents(&child)?;
+                remove_directory_contents(&child, should_cancel)?;
                 libc::AT_REMOVEDIR
             }
             libc::S_IFREG | libc::S_IFLNK => 0,
@@ -1324,7 +1408,10 @@ mod tests {
             2,
             Some(&snapshot),
             ChromeCloneCleanupMode::Enforce,
-            &DescriptorRelativeRemover,
+            RemovalAuthority {
+                remover: &DescriptorRelativeRemover,
+                should_cancel: &never_cancel,
+            },
             &mut |_facts, _action| None,
         );
 
@@ -1684,6 +1771,7 @@ mod tests {
             &self,
             _scan: &CloneScan,
             _candidates: &[CloneCandidateIdentity],
+            _should_cancel: &dyn Fn() -> bool,
         ) -> io::Result<()> {
             Err(io::Error::other("injected fixture failure"))
         }
@@ -1696,8 +1784,9 @@ mod tests {
             &self,
             scan: &CloneScan,
             candidates: &[CloneCandidateIdentity],
+            should_cancel: &dyn Fn() -> bool,
         ) -> io::Result<()> {
-            DescriptorRelativeRemover.remove(scan, candidates)?;
+            DescriptorRelativeRemover.remove(scan, candidates, should_cancel)?;
             let root = scan
                 .root
                 .as_ref()
@@ -1716,11 +1805,12 @@ mod tests {
             &self,
             scan: &CloneScan,
             candidates: &[CloneCandidateIdentity],
+            should_cancel: &dyn Fn() -> bool,
         ) -> io::Result<()> {
             let Some(first) = candidates.first() else {
                 return Err(io::Error::other("no planned clone candidate"));
             };
-            DescriptorRelativeRemover.remove(scan, std::slice::from_ref(first))?;
+            DescriptorRelativeRemover.remove(scan, std::slice::from_ref(first), should_cancel)?;
             Err(io::Error::other("injected failure after first removal"))
         }
     }
@@ -1811,6 +1901,87 @@ mod tests {
     }
 
     #[test]
+    fn cancellation_between_candidates_rescans_and_settles_failed_with_truthful_counts() {
+        let temp = TempDirectory::new();
+        let root = clone_root(&temp);
+        let first = add_clone(&root, "A1b2C3");
+        let second = add_clone(&root, "D4e5F6");
+        let snapshot = complete_snapshot(Vec::new());
+        let mut cleanup = ChromeCloneCleanup::new();
+        // First observation only seeds the two-observation stability window.
+        let _ = cleanup.reconcile_root(&root, 1, Some(&snapshot), ChromeCloneCleanupMode::Enforce);
+
+        // Cancel only once the first candidate segment is fully removed, so
+        // the next bounded candidate segment and every later entry is refused
+        // while the first removal stands.
+        let should_cancel = || !first.exists();
+        let reconciliation = cleanup.reconcile_root_cancellable(
+            &root,
+            2,
+            Some(&snapshot),
+            ChromeCloneCleanupMode::Enforce,
+            &should_cancel,
+        );
+
+        // Exact partial effect: one candidate is gone, the other survives.
+        assert!(!first.exists());
+        assert!(second.exists());
+        assert_eq!(
+            reconciliation.observation.status,
+            StorageResidueStatus::Detected
+        );
+        assert_eq!(reconciliation.observation.candidate_count, 1);
+        let result = reconciliation
+            .cleanup
+            .expect("cancelled cleanup still settles a result");
+        assert_eq!(result.disposition, StorageCleanupDisposition::Failed);
+        assert_eq!(result.planned_candidate_count, 2);
+        assert_eq!(result.before_candidate_count, 2);
+        assert_eq!(result.removed_candidate_count, Some(1));
+        assert_eq!(result.after_candidate_count, Some(1));
+        assert_eq!(result.retained_not_planned_count, Some(0));
+        assert!(
+            !reconciliation
+                .observation
+                .reason_ids
+                .contains(&"storage_residue.automatic_cleanup_completed".to_owned())
+        );
+        assert!(
+            !reconciliation
+                .observation
+                .reason_ids
+                .contains(&"storage_residue.automatic_cleanup_partial".to_owned())
+        );
+    }
+
+    #[test]
+    fn cancellation_before_first_segment_removes_nothing() {
+        let temp = TempDirectory::new();
+        let root = clone_root(&temp);
+        let candidate = add_clone(&root, "A1b2C3");
+        let snapshot = complete_snapshot(Vec::new());
+        let mut cleanup = ChromeCloneCleanup::new();
+        let _ = cleanup.reconcile_root(&root, 1, Some(&snapshot), ChromeCloneCleanupMode::Enforce);
+
+        // Already cancelled before any segment begins: no deletion may start.
+        let reconciliation = cleanup.reconcile_root_cancellable(
+            &root,
+            2,
+            Some(&snapshot),
+            ChromeCloneCleanupMode::Enforce,
+            &|| true,
+        );
+
+        assert!(candidate.exists());
+        let result = reconciliation
+            .cleanup
+            .expect("a refused segment still settles a result");
+        assert_eq!(result.disposition, StorageCleanupDisposition::Failed);
+        assert_eq!(result.removed_candidate_count, Some(0));
+        assert_eq!(result.after_candidate_count, Some(1));
+    }
+
+    #[test]
     fn unavailable_rescan_never_claims_completed_cleanup() {
         let temp = TempDirectory::new();
         let root = clone_root(&temp);
@@ -1869,7 +2040,10 @@ mod tests {
             2,
             Some(&snapshot),
             ChromeCloneCleanupMode::Enforce,
-            &DescriptorRelativeRemover,
+            RemovalAuthority {
+                remover: &DescriptorRelativeRemover,
+                should_cancel: &never_cancel,
+            },
             &mut |facts: &StorageCleanupAttemptFacts,
                   _action: &mut dyn FnMut() -> io::Result<()>| {
                 offered = Some(*facts);
@@ -1908,7 +2082,10 @@ mod tests {
             2,
             Some(&snapshot),
             ChromeCloneCleanupMode::Enforce,
-            &DescriptorRelativeRemover,
+            RemovalAuthority {
+                remover: &DescriptorRelativeRemover,
+                should_cancel: &never_cancel,
+            },
             &mut |facts: &StorageCleanupAttemptFacts,
                   action: &mut dyn FnMut() -> io::Result<()>| {
                 offered = Some(*facts);
@@ -1955,7 +2132,10 @@ mod tests {
             2,
             Some(&snapshot),
             ChromeCloneCleanupMode::Enforce,
-            &DescriptorRelativeRemover,
+            RemovalAuthority {
+                remover: &DescriptorRelativeRemover,
+                should_cancel: &never_cancel,
+            },
             &mut |_facts: &StorageCleanupAttemptFacts,
                   action: &mut dyn FnMut() -> io::Result<()>| { Some(action()) },
         );
@@ -1986,7 +2166,10 @@ mod tests {
             2,
             Some(&snapshot),
             ChromeCloneCleanupMode::Enforce,
-            &RemoveThenPoisonRoot,
+            RemovalAuthority {
+                remover: &RemoveThenPoisonRoot,
+                should_cancel: &never_cancel,
+            },
             &mut |_facts: &StorageCleanupAttemptFacts,
                   action: &mut dyn FnMut() -> io::Result<()>| { Some(action()) },
         );

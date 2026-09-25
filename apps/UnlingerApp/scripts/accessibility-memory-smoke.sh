@@ -9,6 +9,8 @@ cd "$(dirname "$0")/.."
 DURATION_SECONDS="${UNLINGER_AX_SMOKE_SECONDS:-120}"
 RSS_LIMIT_MIB="${UNLINGER_AX_RSS_LIMIT_MIB:-384}"
 GROWTH_LIMIT_MIB="${UNLINGER_AX_GROWTH_LIMIT_MIB:-96}"
+FIXTURE_SCENARIO="${UNLINGER_AX_FIXTURE:-browser-history-stress}"
+FIXTURE_ROUTE="${UNLINGER_AX_FIXTURE_ROUTE:-history}"
 
 for value in "$DURATION_SECONDS" "$RSS_LIMIT_MIB" "$GROWTH_LIMIT_MIB"; do
     case "$value" in
@@ -91,10 +93,14 @@ trap cleanup EXIT INT TERM
     "$PROBE_SOURCE" \
     -o "$PROBE_BIN"
 
-UNLINGER_FIXTURE=browser-history-stress \
-UNLINGER_FIXTURE_ROUTE=history \
-UNLINGER_WINDOW=1 \
-    "$APP_BIN" >"$WORK_DIR/app.log" 2>&1 &
+APP_ENV=(
+    "UNLINGER_FIXTURE=$FIXTURE_SCENARIO"
+    "UNLINGER_WINDOW=1"
+)
+if [[ -n "$FIXTURE_ROUTE" ]]; then
+    APP_ENV+=("UNLINGER_FIXTURE_ROUTE=$FIXTURE_ROUTE")
+fi
+/usr/bin/env "${APP_ENV[@]}" "$APP_BIN" >"$WORK_DIR/app.log" 2>&1 &
 APP_PID=$!
 
 for _ in $(seq 1 40); do

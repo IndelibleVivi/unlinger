@@ -1217,7 +1217,7 @@ fn cache_activity_survives_process_observation_cleanup_and_sticky_pause() {
     let (mut engine, control, _database) = engine(DaemonMode::Enforce, runtime);
     control.complete_successful_cycle(1).unwrap();
     let (prepared, _, epoch) = control
-        .start_tool_cache_if_ready_enforce(2, || Ok(()))
+        .start_tool_cache_if_ready_enforce(2, |_token, _epoch| Ok(()))
         .unwrap()
         .unwrap();
     let report = engine.run_cycle_at(2_000).unwrap();
@@ -1253,7 +1253,7 @@ fn cache_activity_survives_process_observation_cleanup_and_sticky_pause() {
     assert!(!control.status().unwrap().cleanup_in_progress);
     control.store().recover_tool_cache_attempt(3002).unwrap();
     let (next, _, next_epoch) = control
-        .start_tool_cache_if_ready_enforce(3003, || Ok(()))
+        .start_tool_cache_if_ready_enforce(3003, |_token, _epoch| Ok(()))
         .unwrap()
         .unwrap();
     assert!(

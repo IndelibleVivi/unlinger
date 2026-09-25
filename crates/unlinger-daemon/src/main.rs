@@ -6,13 +6,14 @@ use std::collections::BTreeSet;
 use std::error::Error;
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use unlinger_core::{CleanupRuntime, ProcessRole};
 use unlinger_daemon::tool_cache::{ToolCacheNativeResult, UvCacheMaintenance};
 use unlinger_daemon::{
     ControlPlane, DaemonInstanceLock, DaemonMode, DaemonStatus, EngineConfig, HistoryStore,
-    IpcServer, LocalPaths, ReconciliationEngine, StoreError,
+    IpcServer, LocalPaths, PreparedStorageCleanupAttempt, ReconciliationEngine, StoreError,
 };
 use unlinger_macos::{ChromeCloneCleanup, ChromeCloneCleanupMode, MacosRuntime, MacosSnapshotter};
 use unlinger_protocol::{ToolCacheAttemptSummary, ToolCacheAvailability, ToolCacheOutcome};
@@ -67,6 +68,9 @@ fn main() -> ExitCode {
         .first()
         .is_some_and(|arg| arg == unlinger_daemon::tool_cache::NATIVE_CACHE_CHILD_FLAG)
     {
+        // The hidden supervisor entry is reached only with the parent-owned
+        // capability flag; a raw `--native-cache-child` invocation is refused by
+        // `run_uv_supervisor` before any native open.
         return ExitCode::from(
             unlinger_daemon::tool_cache::run_uv_supervisor(&child_arguments[1..]) as u8,
         );
@@ -155,12 +159,11 @@ fn run(arguments: Arguments) -> Result<(), Box<dyn Error>> {
         Some(std::process::id()),
     );
     let mut last_cycle_error = None;
-    let mut last_storage_residue_error = None;
     let mut last_storage_residue_attempt_at = None;
     let mut last_tool_cache_observation_attempt_at = None;
     let mut cache_worker = CacheWorker::default();
+    let mut storage_worker = StorageWorker::default();
     let storage_snapshotter = MacosSnapshotter::new();
-    let mut chrome_clone_cleanup = ChromeCloneCleanup::new();
     let mut scheduler = (!arguments.once)
         .then(|| ReconciliationScheduler::start(Duration::from_secs(arguments.interval_seconds)));
     if let Some(scheduler) = scheduler.as_mut()
@@ -171,87 +174,28 @@ fn run(arguments: Arguments) -> Result<(), Box<dyn Error>> {
 
     'daemon: while !shutdown_requested() && !control.is_draining() {
         let now = now_unix_millis()?;
+        storage_worker.collect(&control, now);
         match control.store().latest_storage_residue_observation() {
             Ok(previous)
-                if storage_residue_observation_due(
-                    now,
-                    previous
-                        .as_ref()
-                        .map(|observation| observation.observed_at_unix_millis),
-                    last_storage_residue_attempt_at,
-                ) =>
+                if storage_worker.is_idle()
+                    && storage_residue_observation_due(
+                        now,
+                        previous
+                            .as_ref()
+                            .map(|observation| observation.observed_at_unix_millis),
+                        last_storage_residue_attempt_at,
+                    ) =>
             {
                 // An observation attempt consumes this cadence even if its
                 // eventual SQLite write fails. A store failure must never
                 // collapse the two-observation stability window.
                 last_storage_residue_attempt_at = Some(now);
-                let cycle = run_storage_residue_cycle(control.store(), now, || {
-                    let process_snapshot = storage_snapshotter.capture().ok();
-                    let cleanup_mode = match control.storage_cleanup_state_at(now) {
-                        Ok((DaemonMode::Enforce, true)) => ChromeCloneCleanupMode::Enforce,
-                        Ok((DaemonMode::ReportOnly, true)) => ChromeCloneCleanupMode::ReportOnly,
-                        Ok(_) | Err(_) => ChromeCloneCleanupMode::LifecycleBlocked,
-                    };
-                    let mut prepared = None;
-                    let reconciliation = chrome_clone_cleanup.reconcile(
-                        now,
-                        process_snapshot.as_ref(),
-                        cleanup_mode,
-                        |facts, action| {
-                            if shutdown_requested() {
-                                return None;
-                            }
-                            match control.run_storage_cleanup_if_ready_enforce(now, facts, action) {
-                                Ok(Some((attempt, result))) => {
-                                    prepared = Some(attempt);
-                                    Some(result)
-                                }
-                                Ok(None) => None,
-                                Err(error) => {
-                                    // No durable PREPARED record means no deletion.
-                                    let message = error.to_string();
-                                    if should_log_cycle_error(
-                                        &mut last_storage_residue_error,
-                                        &message,
-                                    ) {
-                                        eprintln!(
-                                            "unlingerd: storage cleanup preparation failed: {message}"
-                                        );
-                                    }
-                                    None
-                                }
-                            }
-                        },
-                    );
-                    // A terminal result is always committed together with the
-                    // real latest residue observation, in one transaction.
-                    match (reconciliation.cleanup, prepared) {
-                        (Some(result), Some(attempt)) => {
-                            control.store().complete_storage_cleanup_attempt(
-                                &attempt,
-                                &result,
-                                &reconciliation.observation,
-                            )
-                        }
-                        _ => control
-                            .store()
-                            .record_storage_residue_observation(&reconciliation.observation),
-                    }
-                });
-                match cycle {
-                    Ok(()) => last_storage_residue_error = None,
-                    Err(error) => {
-                        let message = error.to_string();
-                        if should_log_cycle_error(&mut last_storage_residue_error, &message) {
-                            eprintln!("unlingerd: storage residue cycle failed: {message}");
-                        }
-                    }
-                }
+                storage_worker.start(control.clone(), now, storage_snapshotter.clone())?;
             }
             Ok(_) => {}
             Err(error) => {
                 let message = error.to_string();
-                if should_log_cycle_error(&mut last_storage_residue_error, &message) {
+                if should_log_cycle_error(&mut storage_worker.last_error, &message) {
                     eprintln!("unlingerd: storage residue readback failed: {message}");
                 }
             }
@@ -387,6 +331,103 @@ impl Drop for CacheWorker {
     }
 }
 
+/// Owns the single-flight storage-residue worker and the in-memory
+/// [`ChromeCloneCleanup`] so the previous-candidate stability state survives
+/// between due cycles. The complete due cycle (process snapshot, optional
+/// deletion with prompt cancellation, immediate rescan and the durable terminal
+/// or observation commit) runs on the worker thread, so ordinary process
+/// reconciliation on the main loop continues while storage work is blocked.
+#[derive(Default)]
+struct StorageWorker {
+    handle: Option<std::thread::JoinHandle<StorageCycleCompletion>>,
+    cleanup: Option<ChromeCloneCleanup>,
+    last_error: Option<String>,
+    cancelled: Arc<AtomicBool>,
+}
+
+struct StorageCycleCompletion {
+    cleanup: ChromeCloneCleanup,
+    outcome: Result<(), String>,
+}
+
+impl StorageWorker {
+    fn is_idle(&self) -> bool {
+        self.handle.is_none()
+    }
+
+    fn start(
+        &mut self,
+        control: ControlPlane,
+        now: u64,
+        snapshotter: MacosSnapshotter,
+    ) -> std::io::Result<()> {
+        let mut cleanup = self.cleanup.take().unwrap_or_default();
+        self.launch(move |cancelled| {
+            let outcome = run_storage_cycle(&control, now, &mut cleanup, &snapshotter, cancelled);
+            StorageCycleCompletion { cleanup, outcome }
+        })
+    }
+
+    /// Single-flight launch seam. A second launch while a worker is active is a
+    /// no-op, so overlapping storage cycles can never run. The closure owns the
+    /// exact state it must return, and observes the worker's cancel flag.
+    fn launch(
+        &mut self,
+        work: impl FnOnce(&AtomicBool) -> StorageCycleCompletion + Send + 'static,
+    ) -> std::io::Result<()> {
+        if self.handle.is_some() {
+            return Ok(());
+        }
+        let cancelled = self.cancelled.clone();
+        self.handle = Some(
+            std::thread::Builder::new()
+                .name("storage-maintenance".into())
+                .spawn(move || work(&cancelled))?,
+        );
+        Ok(())
+    }
+
+    fn collect(&mut self, control: &ControlPlane, now: u64) {
+        if self
+            .handle
+            .as_ref()
+            .is_some_and(|handle| handle.is_finished())
+        {
+            let completion = self.handle.take().expect("finished worker").join();
+            match completion {
+                Ok(completion) => {
+                    self.cleanup = Some(completion.cleanup);
+                    match completion.outcome {
+                        Ok(()) => self.last_error = None,
+                        Err(message) => {
+                            if should_log_cycle_error(&mut self.last_error, &message) {
+                                eprintln!("unlingerd: storage residue cycle failed: {message}");
+                            }
+                        }
+                    }
+                }
+                Err(_) => {
+                    // The joined worker unwound mid-cycle. Its native deletion
+                    // may have delivered a side effect that no later
+                    // observation can attribute, so fail the daemon closed.
+                    let _ = control.store().recover_storage_cleanup_attempts(now);
+                    let _ = control
+                        .fail_closed(now, "storage cleanup maintenance state could not settle");
+                }
+            }
+        }
+    }
+}
+
+impl Drop for StorageWorker {
+    fn drop(&mut self) {
+        self.cancelled.store(true, Ordering::Release);
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
 fn tool_cache_maintenance_due(now: u64, last_attempt: Option<&ToolCacheAttemptSummary>) -> bool {
     last_attempt.is_none_or(|attempt| {
         let interval = if attempt.outcome == ToolCacheOutcome::Busy {
@@ -455,8 +496,13 @@ fn run_tool_cache_cycle(
         return Ok(());
     }
     let Ok(adapter) = adapter else { return Ok(()) };
-    let Some((prepared, child, epoch)) =
-        control.start_tool_cache_if_ready_enforce(now, || adapter.start())?
+    // The start factory runs only after the durable PREPARED record is
+    // committed. It folds the exact PREPARED token and current enforcement epoch
+    // into the parent-owned native launch capability alongside the adapter's
+    // proved producer binding and already-open root object, so the supervisor
+    // can refuse to open a native mutator without that matching authority.
+    let Some((prepared, child, epoch)) = control
+        .start_tool_cache_if_ready_enforce(now, |token, epoch| adapter.start(token, epoch))?
     else {
         return Ok(());
     };
@@ -632,6 +678,136 @@ fn run_storage_residue_cycle<T>(
     cycle()
 }
 
+/// Runs one complete due storage-residue cycle on the storage worker thread.
+///
+/// The exact storage lease is published under the status lock (with PREPARED
+/// committed first) and then the lock is released before any filesystem work:
+/// Pause/Disarm/BeginDrain/fail-close only latch cancellation and complete
+/// promptly. `should_cancel` is polled inside the recursive remover before
+/// every new entry/candidate segment, so no new segment begins after
+/// cancellation and the real rescan/terminal commit remains honest about any
+/// subset already removed.
+fn run_storage_cycle(
+    control: &ControlPlane,
+    now: u64,
+    cleanup: &mut ChromeCloneCleanup,
+    snapshotter: &MacosSnapshotter,
+    cancelled: &AtomicBool,
+) -> Result<(), String> {
+    // Shared interior state so the cancellation probe and the PREPARED handoff
+    // can both observe the exact active attempt identity without holding the
+    // status lock. The guard owns the exact lease: it is created as soon as the
+    // attempt is published and its `Drop` releases the lease during worker
+    // unwind, so a panicked worker can never leave a stale activity owner
+    // projecting `cleanup_in_progress` forever.
+    let active = std::cell::RefCell::new(None::<StorageActivityGuard<'_>>);
+    let cycle = run_storage_residue_cycle(control.store(), now, || {
+        let process_snapshot = snapshotter.capture().ok();
+        let cleanup_mode = match control.storage_cleanup_state_at(now) {
+            Ok((DaemonMode::Enforce, true)) => ChromeCloneCleanupMode::Enforce,
+            Ok((DaemonMode::ReportOnly, true)) => ChromeCloneCleanupMode::ReportOnly,
+            Ok(_) | Err(_) => ChromeCloneCleanupMode::LifecycleBlocked,
+        };
+        let should_cancel = || {
+            cancelled.load(Ordering::Acquire)
+                || shutdown_requested()
+                || active
+                    .try_borrow()
+                    .is_ok_and(|guard| guard.as_ref().is_some_and(|guard| !guard.may_continue()))
+        };
+        let reconciliation = cleanup.reconcile(
+            now,
+            process_snapshot.as_ref(),
+            cleanup_mode,
+            &should_cancel,
+            |facts, action| {
+                if cancelled.load(Ordering::Acquire) || shutdown_requested() {
+                    return None;
+                }
+                match control.start_storage_cleanup_if_ready_enforce(now, facts) {
+                    Ok(Some((attempt, epoch))) => {
+                        *active.borrow_mut() = Some(StorageActivityGuard {
+                            control,
+                            prepared: Some(attempt),
+                            epoch,
+                        });
+                        Some(action())
+                    }
+                    Ok(None) => None,
+                    Err(error) => {
+                        // No durable PREPARED record means no deletion.
+                        eprintln!("unlingerd: storage cleanup preparation failed: {}", error);
+                        None
+                    }
+                }
+            },
+        );
+        // A terminal result is always committed together with the real latest
+        // residue observation, in one transaction. The activity owner is
+        // released only after that durable settlement.
+        match &reconciliation.cleanup {
+            Some(result) => control.store().complete_storage_cleanup_attempt(
+                active
+                    .borrow()
+                    .as_ref()
+                    .and_then(StorageActivityGuard::prepared)
+                    .expect("a cleanup result requires its owned lease"),
+                result,
+                &reconciliation.observation,
+            ),
+            None => control
+                .store()
+                .record_storage_residue_observation(&reconciliation.observation),
+        }
+    });
+    // Release the exact lease only after the native action and durable
+    // settlement finished. A missing lease is expected when no deletion was
+    // planned this cycle; a released guard leaves `None` behind.
+    if let Some(guard) = active.into_inner() {
+        guard.finish().map_err(|error| error.to_string())?;
+    }
+    cycle.map_err(|error| error.to_string())
+}
+
+/// Owns one exact storage cleanup lease. Created on the worker stack as soon as
+/// the durable PREPARED attempt is published, and released either explicitly by
+/// [`Self::finish`] after settlement or by `Drop` during worker unwind. Because
+/// both paths call `finish_storage_action` with the exact owned token, an old
+/// attempt can never clear a newer owner.
+struct StorageActivityGuard<'a> {
+    control: &'a ControlPlane,
+    prepared: Option<PreparedStorageCleanupAttempt>,
+    epoch: String,
+}
+
+impl StorageActivityGuard<'_> {
+    fn prepared(&self) -> Option<&PreparedStorageCleanupAttempt> {
+        self.prepared.as_ref()
+    }
+
+    fn may_continue(&self) -> bool {
+        self.prepared.as_ref().is_some_and(|prepared| {
+            self.control
+                .storage_action_may_continue(prepared, &self.epoch)
+        })
+    }
+
+    fn finish(mut self) -> Result<(), unlinger_daemon::ControlError> {
+        match self.prepared.take() {
+            Some(prepared) => self.control.finish_storage_action(&prepared),
+            None => Ok(()),
+        }
+    }
+}
+
+impl Drop for StorageActivityGuard<'_> {
+    fn drop(&mut self) {
+        if let Some(prepared) = self.prepared.take() {
+            let _ = self.control.finish_storage_action(&prepared);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use clap::Parser;
@@ -697,7 +873,7 @@ mod tests {
         worker
             .launch(move |_| {
                 let (prepared, _, _) = worker_control
-                    .start_tool_cache_if_ready_enforce(2, || Ok(()))
+                    .start_tool_cache_if_ready_enforce(2, |_token, _epoch| Ok(()))
                     .unwrap()
                     .unwrap();
                 let _activity = CacheActivityGuard {
@@ -725,6 +901,127 @@ mod tests {
                 .unwrap()
                 .outcome,
             ToolCacheOutcome::DeliveryUnknown
+        );
+        drop(control);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn storage_worker_returns_before_completion_is_single_flight_and_joins_on_cancel() {
+        use std::sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+            mpsc,
+        };
+        use std::time::Duration;
+        use unlinger_macos::ChromeCloneCleanup;
+        let (started_tx, started_rx) = mpsc::channel();
+        let (stopped_tx, stopped_rx) = mpsc::channel();
+        let invocations = Arc::new(AtomicUsize::new(0));
+        let count = invocations.clone();
+        let mut worker = super::StorageWorker::default();
+        worker
+            .launch(move |cancelled| {
+                count.fetch_add(1, Ordering::SeqCst);
+                started_tx.send(()).unwrap();
+                while !cancelled.load(Ordering::Acquire) {
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+                stopped_tx.send(()).unwrap();
+                super::StorageCycleCompletion {
+                    cleanup: ChromeCloneCleanup::new(),
+                    outcome: Ok(()),
+                }
+            })
+            .unwrap();
+        // The coordinator lane returns from `launch` while the worker is still
+        // blocked: only the started signal has fired.
+        started_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert!(!worker.is_idle());
+        assert!(
+            stopped_rx.try_recv().is_err(),
+            "coordinator lane progressed while storage worker remained blocked"
+        );
+        // A second launch while a worker is active is a no-op: the blocked
+        // closure is single-flight and can never overlap.
+        let second = invocations.clone();
+        worker
+            .launch(move |_| {
+                second.fetch_add(1, Ordering::SeqCst);
+                super::StorageCycleCompletion {
+                    cleanup: ChromeCloneCleanup::new(),
+                    outcome: Ok(()),
+                }
+            })
+            .unwrap();
+        assert_eq!(invocations.load(Ordering::SeqCst), 1);
+        // Dropping cancels the worker through its shared flag and joins it.
+        drop(worker);
+        stopped_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+    }
+
+    #[test]
+    fn joined_failed_storage_worker_releases_activity_and_recovers_unknown() {
+        use super::*;
+        let directory = std::env::temp_dir().join(format!(
+            "unlinger-storage-unwind-{}-{}",
+            std::process::id(),
+            now_unix_millis().unwrap()
+        ));
+        std::fs::create_dir(&directory).unwrap();
+        let store = HistoryStore::open(directory.join("history.sqlite3")).unwrap();
+        let control = ControlPlane::new(
+            store,
+            DaemonStatus::new(DaemonMode::Enforce, std::process::id()),
+        )
+        .unwrap();
+        control.complete_successful_cycle(1).unwrap();
+        let worker_control = control.clone();
+        let mut worker = StorageWorker::default();
+        worker
+            .launch(move |_| {
+                // Publish the exact lease, then unwind while the guard is still
+                // alive: its `Drop` must release the activity owner.
+                let (prepared, epoch) = worker_control
+                    .start_storage_cleanup_if_ready_enforce(
+                        2,
+                        &unlinger_core::StorageCleanupAttemptFacts {
+                            planned_candidate_count: 1,
+                            before_candidate_count: 1,
+                            before_logical_bytes: 1,
+                        },
+                    )
+                    .unwrap()
+                    .unwrap();
+                let _guard = super::StorageActivityGuard {
+                    control: &worker_control,
+                    prepared: Some(prepared),
+                    epoch,
+                };
+                panic!("owned storage worker failure fixture");
+            })
+            .unwrap();
+        while !worker.handle.as_ref().unwrap().is_finished() {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        worker.collect(&control, 3);
+        assert!(worker.is_idle());
+        let status = control.status().unwrap();
+        // Stale-owner regression: a panicked worker must not leave
+        // `cleanup_in_progress` set forever and block lifecycle replacement.
+        assert!(
+            !status.cleanup_in_progress,
+            "worker unwind left a stale storage activity owner"
+        );
+        assert!(!status.healthy);
+        assert_eq!(
+            control
+                .store()
+                .latest_storage_cleanup_attempt()
+                .unwrap()
+                .unwrap()
+                .disposition,
+            Some(unlinger_core::StorageCleanupDisposition::DeliveryUnknown)
         );
         drop(control);
         std::fs::remove_dir_all(directory).unwrap();

@@ -1,4 +1,4 @@
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, ffi, params};
 use std::fs;
 use std::os::unix::fs::{PermissionsExt, symlink};
 use std::path::PathBuf;
@@ -78,6 +78,19 @@ impl Drop for TempDirectory {
 fn make_private(path: &PathBuf) {
     fs::set_permissions(path, fs::Permissions::from_mode(0o600))
         .expect("set private fixture permissions");
+}
+
+#[test]
+fn sqlite_failure_display_preserves_primary_and_extended_codes() {
+    let error = StoreError::Sqlite(rusqlite::Error::SqliteFailure(
+        ffi::Error::new(ffi::SQLITE_IOERR_FSTAT),
+        Some("disk I/O error".to_owned()),
+    ));
+
+    assert_eq!(
+        error.to_string(),
+        "history SQLite failed [code=SystemIoFailure, extended_code=1802]: disk I/O error"
+    );
 }
 
 fn confirmed_report(id: &str) -> IncidentReport {
