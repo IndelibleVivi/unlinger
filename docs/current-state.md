@@ -64,6 +64,10 @@ The resource-repaired schema-v5 App is installed; previous App bundles remain
 recoverable. The installed resource-only check passes and its exact owned
 process stayed running through 300 one-second samples, maximum RSS 89,552 KiB
 and maximum sampled CPU 29.9%. This is a bounded startup/polling observation.
+That directly spawned guard child later exited with system-recorded status 0
+and no new crash report. A normal LaunchServices launch remained running after
+the separate observer exited; this checks desktop launch lifetime without
+turning the guard's child lifetime into an App crash claim.
 The console remained locked, so Accessibility, visual interaction, notification
 delivery and login-item behavior are not accepted by this run. Fresh App ledger
 authorization remains `denied`. The intermittent historical layout trigger is

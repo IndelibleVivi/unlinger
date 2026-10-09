@@ -80,6 +80,9 @@ sampled CPU 29.9%. Installed v5 socket checks passed 7 + 7 across restart on bot
 generation 40 and fresh generation 41, with a real rollback to generation 39 in
 between. The existing enforce policy is restored. The earlier same-day uv prune
 belongs to recovered generation 39, not a new generation-41 attempt.
+A normal LaunchServices launch also remained running after its separate
+observer exited; the directly spawned guard child later ended with status 0
+and no new crash report.
 
 The console remained locked: fresh Accessibility/visual/notification/login-item
 acceptance is incomplete, and notification permission remains denied. These
