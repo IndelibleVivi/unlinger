@@ -317,3 +317,12 @@
 "cache.uv.observing" = "仅观察或等待维护";
 "cache.uv.absent" = "未发现默认位置的 uv 缓存。";
 "cache.uv.unsupported" = "此 uv 安装版本尚不支持自动维护；当前要求 uv 0.11.20。";
+"cache.node.title" = "Node 编译缓存";
+"cache.node.scope" = "当前用户默认临时位置的可重建 V8/Node 编译缓存，仅在 Node 26.7.0 且 enforce 健康时每周维护一次。未知内容、自定义缓存位置、项目文件和用户成果保持保护。";
+"cache.node.estimate" = "计数记录成功移除的文件，大小按已验证文件的逻辑长度估算，不是实测物理磁盘节省。";
+"cache.node.enabled" = "每周自动维护已启用";
+"cache.node.observing" = "仅观察或等待下一次每周维护";
+"cache.node.absent" = "未发现默认位置的 Node 编译缓存。";
+"cache.node.unsupported" = "此 Node 安装或缓存格式尚不支持自动维护；当前要求 Apple Silicon 上的 Node 26.7.0。";
+"cache.node.removed_count" = "Unlinger 移除了 %llu 个编译缓存条目。";
+"cache.node.removed_size" = "移除的编译缓存逻辑大小约 %@。";

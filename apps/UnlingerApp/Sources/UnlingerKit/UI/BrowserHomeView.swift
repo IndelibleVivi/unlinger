@@ -52,6 +52,10 @@ public struct BrowserHomeView: View {
             if let cache = overview.uvCacheMaintenance {
                 ToolCacheMaintenanceSection(cache: cache)
             }
+        case .nodeCompileCacheMaintenance:
+            if let cache = overview.nodeCompileCacheMaintenance {
+                ToolCacheMaintenanceSection(cache: cache)
+            }
         case .toolCacheMaintenance:
             if let cache = overview.toolCacheMaintenance {
                 ToolCacheMaintenanceSection(cache: cache)

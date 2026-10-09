@@ -356,6 +356,7 @@ fn downgrade_current_database_to_v4(path: &PathBuf) {
                  incident_id, tracking_key, blocked_at_ms, reason_id, source_attempt_id
              FROM cleanup_retry_blocks_v5;
              DROP TABLE cleanup_retry_blocks_v5;
+             DROP TABLE IF EXISTS node_compile_cache_latest;
              DROP TABLE IF EXISTS tool_cache_latest;
              DROP TABLE IF EXISTS retired_npm_cache_latest;
              PRAGMA user_version = 4;",
@@ -401,6 +402,7 @@ fn downgrade_current_database_to_v5(path: &PathBuf) {
              DROP TABLE storage_recoveries_v6;
              CREATE INDEX storage_recoveries_recent
                  ON storage_recoveries (occurred_at_ms DESC, id DESC);
+             DROP TABLE IF EXISTS node_compile_cache_latest;
              DROP TABLE IF EXISTS tool_cache_latest;
              DROP TABLE IF EXISTS retired_npm_cache_latest;
              PRAGMA user_version = 5;",
@@ -413,6 +415,7 @@ fn downgrade_current_database_to_v10(path: &PathBuf) {
     connection
         .execute_batch(
             "DROP TABLE storage_cleanup_attempts;
+             DROP TABLE IF EXISTS node_compile_cache_latest;
              DROP TABLE IF EXISTS tool_cache_latest;
              DROP TABLE IF EXISTS retired_npm_cache_latest;
              PRAGMA user_version = 10;",
@@ -1080,7 +1083,7 @@ fn v10_to_v11_migration_preserves_residue_and_session_owner_authority() {
     downgrade_current_database_to_v10(&database.0);
 
     let migrated = HistoryStore::open(&database.0).expect("migrate v10 to v11");
-    assert_eq!(HistoryStore::schema_version(), 13);
+    assert_eq!(HistoryStore::schema_version(), 14);
     assert_eq!(
         migrated
             .latest_storage_residue_observation()
@@ -1106,7 +1109,7 @@ fn v10_to_v11_migration_preserves_residue_and_session_owner_authority() {
     let version: i64 = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .expect("read migrated version");
-    assert_eq!(version, 13);
+    assert_eq!(version, 14);
 }
 
 #[test]
@@ -1280,7 +1283,7 @@ fn v4_to_current_preserves_history_and_retry_block_but_resets_incompatible_cooli
     downgrade_current_database_to_v4(&database.0);
 
     let migrated = HistoryStore::open(&database.0).expect("migrate v4 to current");
-    assert_eq!(HistoryStore::schema_version(), 13);
+    assert_eq!(HistoryStore::schema_version(), 14);
     let connection = Connection::open(&database.0).expect("inspect migrated artifact journal");
     let artifact_columns = connection
         .prepare("PRAGMA table_info(cleanup_artifact_actions)")
@@ -3893,7 +3896,8 @@ fn v8_attribution_fixture() -> TempDatabase {
         DROP TABLE impact_attribution_legacy;
         DROP TABLE session_owner_controllers;
         DROP TABLE session_owner_leases;
-        DROP TABLE IF EXISTS tool_cache_latest;
+        DROP TABLE IF EXISTS node_compile_cache_latest;
+             DROP TABLE IF EXISTS tool_cache_latest;
              DROP TABLE IF EXISTS retired_npm_cache_latest;
              PRAGMA user_version = 8;",
         )

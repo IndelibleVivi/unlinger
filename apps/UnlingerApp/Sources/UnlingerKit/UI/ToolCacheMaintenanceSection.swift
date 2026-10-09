@@ -26,7 +26,17 @@ public struct ToolCacheMaintenanceSection: View {
                     ByteCountFormatter.string(fromByteCount: Int64(clamping: bytes), countStyle: .file)))
                     .font(.caption)
             }
-            if cache.nativeRemovedEntryCount != nil || cache.nativeRemovedLogicalBytes != nil {
+            if let count = cache.removedEntryCount {
+                Text(L10n.text("cache.node.removed_count", count)).font(.caption)
+            }
+            if let bytes = cache.removedLogicalBytes {
+                Text(L10n.text("cache.node.removed_size",
+                    ByteCountFormatter.string(fromByteCount: Int64(clamping: bytes), countStyle: .file)))
+                    .font(.caption)
+            }
+            if cache.nativeRemovedEntryCount != nil || cache.nativeRemovedLogicalBytes != nil
+                || cache.removedEntryCount != nil || cache.removedLogicalBytes != nil
+            {
                 Text(L10n.text(cache.accountingKey))
                     .font(.caption)
                     .foregroundStyle(.secondary)

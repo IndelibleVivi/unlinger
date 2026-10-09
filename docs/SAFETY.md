@@ -260,3 +260,57 @@ a new installation from starting afterwards. Reconsider this family only with a
 producer-supported concurrency/containment mechanism and fresh counterexample
 tests. Do not substitute process-name checks, custom recursive deletion, or
 require every task to register around the missing mechanism.
+
+## Node compile-cache exception
+
+The owner approved this exception to producer-native maintenance on 2026-10-09.
+Only Node `26.7.0` on Apple Silicon is admitted. Discovery uses the current user's
+Darwin default temporary directory and the exact Node version/architecture/V8
+tag/UID bucket beneath `node-compile-cache`; it does not consume `TMPDIR`,
+`NODE_COMPILE_CACHE`, custom cache configuration or project paths as authority.
+Other buckets and every directory remain untouched. The producer is selected
+from fixed installation locations, bound by file identity, and queried with a
+cleared environment, root working directory and built-in code only.
+
+The pinned [Node implementation](https://github.com/nodejs/node/blob/v26.7.0/src/compile_cache.cc)
+and [header indices](https://github.com/nodejs/node/blob/v26.7.0/src/compile_cache.h)
+define the file format and atomic temporary-file publication. Node treats a
+missing compile-cache file as a cache miss and can rebuild it; this disposable
+semantics permits normal concurrent Node execution without an open-file or
+process-age heuristic. A visible temporary writer blocks the whole bucket.
+The scanner requires current-user-owned, single-link regular files, eight
+lower-case hex names, the five-word header, exact payload length and payload
+CRC. Symlinks, hard links, subdirectories, foreign contents, writable shapes,
+unsupported versions and incomplete validation prevent deletion. Inspection is
+bounded to 65,536 files, 64 MiB per file, 2 GiB total and 120 seconds per scan.
+
+A descriptor-held frozen plan is rescanned before the first effect. PREPARED
+commits before execution; the exact token/epoch lease is checked before each
+file removal. Producer/root/bucket/file identity is revalidated, and `unlinkat`
+is relative to the proved bucket descriptor with no recursive operation.
+Pause, Disarm, Drain and fail-close cancel that lease permanently; Resume does
+not restore it. A pre-effect changed plan or temporary writer may return `busy`
+and wait 15 minutes. Other completed/failed attempts retain the weekly clock.
+Unknown delivery or an interrupted PREPARED action fails the daemon closed,
+with no success counts inferred from later observations.
+
+This is an ordinary producer-concurrency boundary, not a hostile same-UID
+filesystem sandbox. A normal atomic producer replacement can occur between
+the last pathname validation and `unlinkat`; that name remains disposable
+compile cache, while logical-byte accounting uses the validated file length.
+Successful results count completed unlinks, including an explicit zero, and
+estimate logical bytes. They do not claim inode-atomic accounting or measured
+physical APFS reclaim. Partial/failed/unknown results receive no removal credit.
+SQLite v14 keeps Node authority separate from uv and retired npm evidence;
+App/CLI present its optional v5 result separately from browser impact.
+
+The real-producer test deletes only a test-created cache, retains its exact
+Node child, checks a subsequent import in that same process and checks offline
+regeneration in a fresh child. It never uses the user's default cache:
+
+```bash
+UNLINGER_NODE_TEST_BIN=/absolute/path/to/node-26.7.0 \
+  cargo test -p unlinger-daemon --lib \
+    real_node_cache_survives_concurrent_import_and_regenerates_offline \
+    -- --ignored --nocapture --test-threads=1
+```

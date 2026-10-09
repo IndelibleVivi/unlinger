@@ -247,7 +247,7 @@ The service retains the prior snapshot and exact generation identity after candi
 ## Verification anchors
 
 - [`crates/unlinger-protocol/src/lib.rs`](../crates/unlinger-protocol/src/lib.rs): v5 DTOs/commands, v4/v3 compatibility responses, receipts, envelopes and fixture decoders;
-- [`crates/unlinger-daemon/src/store.rs`](../crates/unlinger-daemon/src/store.rs): SQLite v13 native cache and v11 clone cleanup attempt/result authority, v10 session-owner leases, v9 attribution repair and v8 task ownership, observation spans, independent impact authority, storage residue, event tokens, namespace/receipt/revision transactions;
+- [`crates/unlinger-daemon/src/store.rs`](../crates/unlinger-daemon/src/store.rs): SQLite v14 independent Node/uv cache and v11 clone cleanup attempt/result authority, v10 session-owner leases, v9 attribution repair and v8 task ownership, observation spans, independent impact authority, storage residue, event tokens, namespace/receipt/revision transactions;
 - [`crates/unlinger-daemon/src/public_action_policy.rs`](../crates/unlinger-daemon/src/public_action_policy.rs): shared policy matrix;
 - [`crates/unlinger-daemon/tests/history_store.rs`](../crates/unlinger-daemon/tests/history_store.rs): migration, atomicity, namespace, replay and recovery tests;
 - [`crates/unlinger-daemon/tests/ipc_roundtrip.rs`](../crates/unlinger-daemon/tests/ipc_roundtrip.rs): v1/v2/v3/v4/v5 routing, atomic browser projection, impact/residue/span compatibility, exact settlement identity, lifecycle serialization and raw-socket behavior;
@@ -305,7 +305,7 @@ incomplete. Complete empty observations remain `clear`, and known positive
 sessions retain their existing phase. No new lifecycle command, automatic retry,
 cleanup eligibility, or public raw-process data is introduced.
 
-## Tool-cache maintenance (source SQLite v13)
+## Tool-cache maintenance (source SQLite v14)
 
 Frontend v5 adds optional `uv_cache_maintenance` with `kind: uv_cache`. Old v5
 payloads may omit it; old v5 clients ignore the new field. The old
@@ -334,3 +334,21 @@ Operator cleanup activity includes the separate cache activity; browser phase
 continues to describe browser/process work. Paths and raw native output are never
 persisted or sent over IPC. A pre-v13 binary requires rollback's restored database.
 Installed generation 41 uses v13 according to [current evidence](current-state.md).
+
+SQLite v14 adds an independent `node_compile_cache_latest` table and the optional
+v5 `node_compile_cache_maintenance` field with `kind: node_compile_cache`.
+Old v5 clients ignore this field; old payloads can omit it. v4/v3 carry none of
+the cache fields and gain no mutation command. Node's availability, observation
+time and lifecycle-derived eligibility use the same typed shapes. Its attempt
+outcomes are `running | completed | busy | failed | delivery_unknown`, with
+prepared/completed times and `removed_entry_count`/`removed_logical_bytes`.
+Those are Unlinger's successful-unlink count and validated logical-size estimate,
+not the uv producer's `native_removed_*` self-report. Completed zero counts are
+explicit; failed/unknown results have no removal credit. No path, filename, V8
+payload, native identity, internal settlement token or raw output is exposed.
+
+The shared worker executes the families sequentially, while their cadence and
+PREPARED/result namespaces remain independent. Node uses the same sticky
+token/epoch cancellation; its terminal result and latest availability commit
+together. Startup/joined-worker recovery of an open Node attempt records
+`delivery_unknown` and fails the instance closed, without later-count inference.

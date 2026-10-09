@@ -1178,15 +1178,36 @@ impl ControlPlane {
         start: impl FnOnce(&str, &str) -> std::io::Result<T>,
     ) -> Result<Option<(crate::PreparedToolCacheAttempt, std::io::Result<T>, String)>, ControlError>
     {
+        self.start_cache_if_ready_enforce(now, false, start)
+    }
+
+    pub fn start_node_compile_cache_if_ready_enforce<T>(
+        &self,
+        now: u64,
+        start: impl FnOnce(&str, &str) -> std::io::Result<T>,
+    ) -> Result<Option<(crate::PreparedToolCacheAttempt, std::io::Result<T>, String)>, ControlError>
+    {
+        self.start_cache_if_ready_enforce(now, true, start)
+    }
+
+    fn start_cache_if_ready_enforce<T>(
+        &self,
+        now: u64,
+        node: bool,
+        start: impl FnOnce(&str, &str) -> std::io::Result<T>,
+    ) -> Result<Option<(crate::PreparedToolCacheAttempt, std::io::Result<T>, String)>, ControlError>
+    {
         self.expire_pause(now)?;
         let mut status = self.lock_status()?;
         if !storage_cleanup_gate_open(&status) {
             return Ok(None);
         }
-        let prepared = self
-            .store
-            .begin_tool_cache_attempt(now)
-            .map_err(map_store_error)?;
+        let prepared = if node {
+            self.store.begin_node_compile_cache_attempt(now)
+        } else {
+            self.store.begin_tool_cache_attempt(now)
+        }
+        .map_err(map_store_error)?;
         let epoch = status
             .enforcement_epoch
             .clone()

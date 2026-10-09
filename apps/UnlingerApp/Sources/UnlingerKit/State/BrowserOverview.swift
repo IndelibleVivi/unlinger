@@ -141,6 +141,7 @@ public enum BrowserPopoverSection: Equatable, Hashable, Sendable {
     case storageResidue
     case toolCacheMaintenance
     case uvCacheMaintenance
+    case nodeCompileCacheMaintenance
     case sessions
     case savedProtections
     case attention
@@ -166,6 +167,7 @@ public struct BrowserOverview: Equatable, Sendable {
     public var storageCleanupResult: StorageCleanupResultPresentation?
     public var toolCacheMaintenance: ToolCachePresentation?
     public var uvCacheMaintenance: ToolCachePresentation? = nil
+    public var nodeCompileCacheMaintenance: ToolCachePresentation? = nil
     public var coverageNotices: [BrowserCoverageNotice]
     public var attention: [BrowserAttentionPresentation]
     public var attentionOverflow: Int
@@ -185,6 +187,7 @@ public struct BrowserOverview: Equatable, Sendable {
         if !sessions.isEmpty { result.append(.sessions) }
         if toolCacheMaintenance != nil { result.append(.toolCacheMaintenance) }
         if uvCacheMaintenance != nil { result.append(.uvCacheMaintenance) }
+        if nodeCompileCacheMaintenance != nil { result.append(.nodeCompileCacheMaintenance) }
         if !savedProtections.isEmpty { result.append(.savedProtections) }
         if !attention.isEmpty || attentionOverflow > 0 { result.append(.attention) }
         if recentSettlement != nil { result.append(.recentSettlement) }

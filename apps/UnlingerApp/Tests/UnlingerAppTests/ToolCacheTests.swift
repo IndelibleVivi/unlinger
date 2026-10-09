@@ -56,4 +56,68 @@ struct ToolCacheTests {
         #expect(mapped.impact == previousImpact)
         #expect(mapped.phase == .clear)
     }
+
+    @Test("node compile cache fixture maps its own accounting copy and preserves uv")
+    func nodeFixtureAndCompatibility() async throws {
+        let data = try FixtureStore.data(
+            named: "browser-overview-node-compile-cache-maintenance",
+            schemaVersion: 5
+        )
+        let snapshot = try ResponseDecoder.decode(
+            BrowserOverviewSnapshot.self,
+            expectedPayloadType: "browser_overview",
+            requestID: 506,
+            expectedSchemaVersion: 5,
+            line: data
+        )
+        #expect(snapshot.nodeCompileCacheMaintenance?.kind == .nodeCompileCache)
+        let mapped = BrowserOverviewMapper.make(connection: .live, snapshot: snapshot)
+        // Node uses its own logical accounting fields, never the producer
+        // native self-report fields.
+        #expect(mapped.nodeCompileCacheMaintenance?.removedEntryCount == 3)
+        #expect(mapped.nodeCompileCacheMaintenance?.removedLogicalBytes == 2048)
+        #expect(mapped.nodeCompileCacheMaintenance?.nativeRemovedEntryCount == nil)
+        #expect(mapped.nodeCompileCacheMaintenance?.titleKey == "cache.node.title")
+        #expect(mapped.nodeCompileCacheMaintenance?.availabilityKey == "cache.node.enabled")
+        #expect(mapped.nodeCompileCacheMaintenance?.accountingKey == "cache.node.estimate")
+        #expect(mapped.nodeCompileCacheMaintenance?.outcomeKey == "cache.maintenance.completed")
+        #expect(mapped.visibleSections(connection: .live).contains(.nodeCompileCacheMaintenance))
+        // The uv family in the same snapshot is unaffected and keeps its own
+        // producer-native accounting.
+        #expect(mapped.uvCacheMaintenance?.nativeRemovedEntryCount == 2)
+        #expect(mapped.uvCacheMaintenance?.removedEntryCount == nil)
+        #expect(mapped.uvCacheMaintenance?.titleKey == "cache.uv.title")
+    }
+
+    @Test("old v5 without the node field stays compatible and shows no section")
+    func nodeFieldAbsentCompatibility() async throws {
+        let old = try await BrowserFixtureClient(scenario: .clear).browserOverview()
+        #expect(old.nodeCompileCacheMaintenance == nil)
+        let mapped = BrowserOverviewMapper.make(connection: .live, snapshot: old)
+        #expect(mapped.nodeCompileCacheMaintenance == nil)
+        #expect(!mapped.visibleSections(connection: .live).contains(.nodeCompileCacheMaintenance))
+    }
+
+    @Test("unknown or disconnected node states never read as automatically runnable")
+    func nodeUnknownIsNotEligible() async throws {
+        var snapshot = try await BrowserFixtureClient(scenario: .clear).browserOverview()
+        snapshot.nodeCompileCacheMaintenance = NodeCompileCacheMaintenanceSummary(
+            kind: .nodeCompileCache, observedAtUnixMillis: 3000, availability: .unsupported,
+            automaticMaintenanceEligible: true,
+            lastAttempt: NodeCompileCacheAttemptSummary(
+                outcome: .failed, preparedAtUnixMillis: 1000, completedAtUnixMillis: 2000,
+                removedEntryCount: nil, removedLogicalBytes: nil)
+        )
+        // Even a claim of eligibility resolves to the unsupported key and never
+        // to the enabled key.
+        let mapped = BrowserOverviewMapper.make(connection: .live, snapshot: snapshot)
+        #expect(mapped.nodeCompileCacheMaintenance?.availabilityKey == "cache.node.unsupported")
+        #expect(mapped.nodeCompileCacheMaintenance?.availabilityKey != "cache.node.enabled")
+        #expect(mapped.nodeCompileCacheMaintenance?.removedEntryCount == nil)
+        #expect(mapped.nodeCompileCacheMaintenance?.removedLogicalBytes == nil)
+
+        // An unavailable transport can never claim automatic upkeep is enabled.
+        let offline = BrowserOverviewMapper.make(connection: .unavailable, snapshot: snapshot)
+        #expect(offline.nodeCompileCacheMaintenance?.availabilityKey != "cache.node.enabled")
+    }
 }

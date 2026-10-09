@@ -238,6 +238,24 @@ fn project_browser_overview(
     } else {
         None
     };
+    let node_compile_cache_maintenance = if schema_version == public::SCHEMA_VERSION {
+        control
+            .store()
+            .latest_node_compile_cache_maintenance()?
+            .map(|mut cache| {
+                cache.automatic_maintenance_eligible = cache.availability
+                    == public::ToolCacheAvailability::Available
+                    && now_unix_millis.saturating_sub(cache.observed_at_unix_millis)
+                        <= 30 * 60 * 1_000
+                    && !cache.last_attempt.as_ref().is_some_and(|attempt| {
+                        attempt.outcome == public::ToolCacheOutcome::Running
+                    })
+                    && crate::ipc::storage_cleanup_gate_open(&source.status);
+                Box::new(cache)
+            })
+    } else {
+        None
+    };
     let settlement_impact = source
         .status
         .most_recent_reclaim
@@ -341,6 +359,7 @@ fn project_browser_overview(
             storage_cleanup_result,
             tool_cache_maintenance,
             uv_cache_maintenance,
+            node_compile_cache_maintenance,
             attention: projected_status.attention,
             protection: projected_status.protection,
             support_catalog,
@@ -1244,6 +1263,38 @@ mod tests {
             public::LEGACY_SCHEMA_VERSION,
         ] {
             assert!(overview(&control, previous).uv_cache_maintenance.is_none());
+        }
+    }
+
+    #[test]
+    fn node_cache_projection_is_independent_optional_v5_and_lifecycle_owned() {
+        let store = test_store("node-cache");
+        store
+            .record_node_compile_cache_observation(2_900, public::ToolCacheAvailability::Available)
+            .unwrap();
+        let control = ControlPlane::new(store, ready_status()).unwrap();
+        let state = overview(&control, public::SCHEMA_VERSION)
+            .node_compile_cache_maintenance
+            .unwrap();
+        assert_eq!(state.kind, public::ToolCacheKind::NodeCompileCache);
+        assert!(!state.automatic_maintenance_eligible);
+        assert!(state.last_attempt.is_none());
+        assert!(
+            overview(&control, public::SCHEMA_VERSION)
+                .uv_cache_maintenance
+                .is_none()
+        );
+        for version in [
+            public::PREVIOUS_SCHEMA_VERSION,
+            public::LEGACY_SCHEMA_VERSION,
+        ] {
+            let snapshot = overview(&control, version);
+            assert!(snapshot.node_compile_cache_maintenance.is_none());
+            assert!(
+                !serde_json::to_string(&snapshot)
+                    .unwrap()
+                    .contains("node_compile_cache_maintenance")
+            );
         }
     }
 

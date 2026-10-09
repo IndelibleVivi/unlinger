@@ -2,7 +2,38 @@
 
 **Updated:** 2026-10-09. **Programme:** 0.1. **Reader posture:** experimental developer source preview; not a signed/notarized App release or multi-day reliability claim.
 
-## Recovery and packaged App resource repair (2026-10-09)
+## Node compile-cache extension (2026-10-09; source verified, installation pending)
+
+The owner approved the exact Node exception to producer-native maintenance,
+including source/App/CLI integration, transactional installation and restoration
+of the existing automatic enforce policy. Source SQLite v14 adds independent
+Node PREPARED/latest-result authority to the unchanged uv and retired-npm
+namespaces. Only Node 26.7.0 on Apple Silicon and the current-user Darwin default
+version/V8-tag bucket are admitted; frozen format-validated regular files can be
+unlinked, while directories, custom locations, other buckets and unknown/user
+content stay protected. The shared cache worker retains independent weekly
+clocks and sticky token/epoch cancellation; uncertain delivery fails closed.
+
+Focused Node tests pass 11 cases, with the real-producer case separately opt-in:
+its test-owned cache was removed while the retained Node child continued a
+subsequent import, then a fresh offline child regenerated cache. Fresh source
+checks pass format, strict workspace clippy, 431 Rust tests (16 explicit opt-in
+ignored), release workspace build and source-only doctor/dry-run. Doctor observed
+552 processes and dry-run 551, each with four unavailable executable identities;
+this is not complete ambient coverage. Swift checks pass 110 tests in 19 suites.
+Release bundling includes relocated resource verification. The isolated SQLite-v14
+report-only socket gate passes 7 + restart + 7, with independent uv/Node
+observations and no maintenance attempt. The unlocked-console history/Accessibility
+gate passes 463 traversals with zero misses, maximum RSS 104,704 KiB and final
+RSS 28,144 KiB. This is fixture evidence, not installed or Node Home interaction.
+The existing architecture source/export was regenerated and visually checked.
+The optional v5 Node field keeps its own counters separate from uv/native
+accounting and browser impact; old v5 and v4/v3 behavior is retained.
+Transaction and normal automatic-result checks are pending.
+The installed generation41 remains accepted/ReadyEnforce on SQLite v13 at this
+checkpoint. [Safety](SAFETY.md#node-compile-cache-exception) owns the exact boundary.
+
+## Recovery and packaged App resource repair (2026-10-09; generation-41 checkpoint)
 
 The installed generation-39 daemon was found terminal `Failed`, loaded but
 unhealthy and report-only, with `history SQLite failed: unable to open database
@@ -12,7 +43,7 @@ failure. No reliable first-failure timestamp is available. Under the owner's
 repair authorization, the exact generation CLI's transactional `set-mode
 report-only` replaced the failed instance, then `set-mode enforce` restored the
 existing policy with a fresh instance/epoch. That recovery preceded the upgrade
-below; the current installation is accepted generation 41.
+below; the recovery checkpoint is accepted generation 41.
 
 Normal scheduling then completed a new native uv maintenance attempt at
 2026-10-09 10:25:37 +08: 20,267 entries and 399,402,598 native logical bytes.
@@ -76,9 +107,9 @@ still unresolved, though the eager Home path is now installed.
 Current Chrome clone observation retains three candidates / 4,498,870,591
 logical bytes with incomplete references and no automatic eligibility. No
 browser-process or clone deletion occurred in this upgrade. Broader cache
-families remain unadmitted: Node compile-cache maintenance needs an explicit
-owner decision on the producer-native-only boundary, and whole-target Cargo
-clean does not establish narrow incremental retention authority.
+families require individual admission: the owner subsequently approved the
+Node exception recorded above. Whole-target Cargo clean does not establish
+narrow incremental retention authority.
 
 An isolated store investigation did not reproduce the SQLite failure under
 normal WAL/SHM permissions, read-only hot-WAL preflight, held writer locks or
@@ -750,7 +781,7 @@ The publication candidate passed fresh local formatting, strict workspace clippy
   authority. This is a real installed usability mismatch, not loss of the impact
   totals and not evidence of a new generation-36 cleanup.
 - The original generation-17 terminal SQLite disk-I/O failure cause remains unproved. Exact-instance containment/recovery and later transactional replacement succeeded; a later healthy database check does not establish the original cause.
-- The command wrapper does not integrate every Codex App host or browser tool automatically. The optional session-owner primitive introduced in v10 and retained by source v13 has no supported automatic Codex adapter. A bounded feasibility review found that later hooks/observers and turn-level lifecycle events cannot supply the current contract's exact parent/child activation plus thread-to-controller/session binding; a real adapter needs Codex host support. Exact CLI/browser compatibility, lifetime/client proof and all ordinary gates remain required; unregistered, active-owner, reused, unsupported or unverified controllers stay protected.
+- The command wrapper does not integrate every Codex App host or browser tool automatically. The optional session-owner primitive introduced in v10 and retained by source v14 has no supported automatic Codex adapter. A bounded feasibility review found that later hooks/observers and turn-level lifecycle events cannot supply the current contract's exact parent/child activation plus thread-to-controller/session binding; a real adapter needs Codex host support. Exact CLI/browser compatibility, lifetime/client proof and all ordinary gates remain required; unregistered, active-owner, reused, unsupported or unverified controllers stay protected.
 - Chrome clone observation accepts the actual `.app.bundle` shape and no-follow framework links. Historical installed generation 34 evaluated candidates independently across two production-interval observations, removed eight stable unreferenced clones and retained the one candidate containing the continuously running ordinary Chrome main. Generation 39 retains that gate; a current-generation clone deletion has not been field-verified. The upgrade readback includes an inherited September-17 terminal v11 result; it is not a generation-39 action. The generation-34 point does not prove generation-36 result persistence, multi-day behavior, all future Chrome clone shapes or physical APFS reclaim equal to the logical byte reduction.
 - All artifact admission is disabled. The dormant DAP engine still has a quarantine-after-crash recovery gap and a final pathname-swap TOCTOU. Native pathname-reference tests also intermittently returned no reference for an owned open ordinary or `O_EVTONLY` descriptor under parallel execution; exact serial tests passed, and the cause is unresolved. The active process path does not use that query. [Safety](SAFETY.md) owns these boundaries.
 - The old zero-deadline offline-lock test failed because a concurrent fork can inherit an `O_CLOEXEC` descriptor until exec. A deterministic owned-child probe established that cause; `f22e08e` retains held-lock denial and gives post-release acquisition its existing bounded wait. The final exact-head CI passed. A later local full workspace run reproduced the separate dormant native-query failures above; no assertions were weakened.

@@ -1,6 +1,6 @@
 # Support truth
 
-Unlinger 不使用一个模糊的 “supported” 标签把识别、自动授权和 field evidence 混在一起。机器可读 authority 是 [`support-matrix.v1.json`](support-matrix.v1.json)，并由 `unlinger-rules` test 对照当前 embedded rule packs。它只记录 source capability 与累计 evidence；易变的 installed generation、active mode 与当前 lease 只由 [`current-state.md`](current-state.md) 记录。
+Unlinger 不使用一个模糊的 “supported” 标签把识别、自动授权和 field evidence 混在一起。process/browser 家族的机器可读 authority 是 [`support-matrix.v1.json`](support-matrix.v1.json)，并由 `unlinger-rules` test 对照当前 embedded rule packs。它只记录 source capability 与累计 evidence；易变的 installed generation、active mode 与当前 lease 只由 [`current-state.md`](current-state.md) 记录。
 
 ## Platform
 
@@ -45,7 +45,7 @@ The controlled DAP results repeat one historical exact admitted point across two
 | Legacy-compatible frontend endpoint | schema v3 existing commands/response meaning retained; overview rejected without downgrade |
 | Schema v2 | historical fixtures retained; superseded before installation; current server returns typed `unsupported_schema` |
 | Reference installation | the dated [current-state](current-state.md) evidence owns exact generation, activation and rollback lease; its SQLite-v13 daemon/App include native uv maintenance, durable Chrome clone-result authority and the native-popup memory repair |
-| Current source implementation | SQLite v13 adds independent uv maintenance, retained retired npm evidence, optional v5 uv facts and App/CLI presentation; schema v5/v4/v3 plus operator v1, Playwright `0.6.0`, other packs `0.4.0`, exact CfT 151/152 process allowlist, clone-result authority and disabled runtime-artifact flags remain intact |
+| Current source implementation | SQLite v14 adds independent Node compile-cache authority to uv maintenance and retained retired npm evidence, with optional v5 family facts and App/CLI presentation; schema v5/v4/v3 plus operator v1, Playwright `0.6.0`, other packs `0.4.0`, exact CfT 151/152 process allowlist, clone-result authority and disabled runtime-artifact flags remain intact |
 
 SQLite v10 has a candidate-specific v8 backup/rollback/open proof: generation 24 really rolled back to healthy, unarmed generation 23 with the old CLI/daemon reopening v8; the exact candidate freshly reinstalled as generation 25, repeated matching-App/socket checks before and after restart, and was accepted before arming. Earlier schema migrations remain historical evidence.
 
@@ -62,10 +62,8 @@ The active non-browser cache adapter is exact `uv 0.11.20 cache prune` at
 shared/exclusive lock. It does not adopt custom roots, project `.venv`, npm/npx
 or pnpm environments, and does not upgrade installed tools. Busy native locks
 retry after 15 minutes; ordinary upkeep is weekly and independent of process
-observation. Generation 39 includes this adapter after v13→v11 rollback/open
-proof and fresh installation; [current state](current-state.md) owns the exact
-activation and bounded live-result evidence (one completed native attempt,
-708 entries / about 32.6 MB logical bytes). npm `11.19.0` / cacache
+observation. The reference installation includes this adapter; [current state](current-state.md)
+owns its exact generation, activation and dated automatic-result evidence. npm `11.19.0` / cacache
 `20.0.4` verify is retired because an exact interleaving destroys an active Git
 fetch; its old results remain isolated historical evidence. See
 [cache safety](SAFETY.md#native-tool-cache-maintenance).
@@ -76,3 +74,18 @@ concurrent installation to fail in a controlled local reproduction. The same
 installation succeeds without prune. See the [admission blocker and repeatable
 probe](SAFETY.md#why-pnpm-11210-is-not-admitted). This is an exact-version result;
 other pnpm versions have not been admitted by that investigation.
+
+## Node compile-cache family
+
+Source admits only Node `26.7.0` on Apple Silicon, using the current user's Darwin
+default temporary `node-compile-cache` root and the exact version/V8-tag/UID
+bucket. This owner-approved exception validates the pinned file format and
+frozen identities before descriptor-relative regular-file removal; directories,
+custom roots, other buckets, unknown contents and user artifacts remain protected.
+A shared background worker preserves independent weekly clocks, PREPARED/results
+and sticky lifecycle cancellation. Node counts successful unlinks and estimates
+logical bytes independently of uv/native accounting and browser impact.
+Isolated real-Node evidence covers continued import in an active child and
+offline cache regeneration; installed/activated and ordinary automatic evidence
+are recorded separately in [current state](current-state.md). See the exact
+[concurrency and containment boundary](SAFETY.md#node-compile-cache-exception).

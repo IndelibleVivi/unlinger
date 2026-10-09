@@ -11,7 +11,7 @@
 - `schema_version: 2`：保留在[`v2/`](v2/)作为历史审计证据；当前server在dispatch前以schema-v1 framing返回typed `unsupported_schema`；
 - source App只发送v5，不会silent downgrade到v4/v3或改走v1 mutation/lifecycle path。
 
-安装中的accepted generation 34提供schema-v5 App endpoint并保留v4/v3 compatibility、operator v1与SQLite v10；当前是healthy `ReadyEnforce`且没有pending lease。Matching `c17e60f` v5 App已经安装。Generation 33完成install/restart并真实rollback到generation 32，同exact artifact才鲜重安装、accept并独立arm为generation 34。随后一个bounded clone field result移除八份stale candidates并保留一份live referenced candidate。App只能投影backend current truth，不能借该结果自行赋予或扩大signal/file-deletion authority。
+Source 使用 SQLite v14 和 frontend v5，保留 v4/v3 compatibility 与 operator v1。安装 generation、App artifact、activation 与 dated field evidence 由 [`current-state.md`](../../../docs/current-state.md) 维护。App 只能投影 backend current truth，不能借历史结果自行赋予或扩大 signal/file-deletion authority。
 
 ## Transport and trust
 
@@ -93,7 +93,7 @@ Capability projection和mutation authorization调用同一Rust public-action pol
 
 `incidents`继续返回transitional `ObservationRoster`，供compatibility、detail和diagnostic testing使用。Never-observed没有fake timestamp/token；replacement cycle完成前保留上一份roster，失败后标`stale_after_failure`。它不是browser screen的composition surface、work queue或manual-kill authority。
 
-每个retained public history event有opaque、stable、unique `event_token`。Equivalent consecutive observations在当前SQLite v10保留的span authority中合并为one span；v5提供first/latest time与count，v4/v3保持旧shape。Observation count/age retention不再驱逐cleanup impact/detail；detail至少保留14天，aggregate lifetime authority继续存在。Swift history index只展示terminal cleanup outcomes，observation span留在detail。Cleanup同时保留process、artifact、overall outcome；`state: FAILED`与`overall_outcome: cleared_with_residue`可以共存。Diagnostics payload有required integer `document_schema_version`；source v5 App要求value 5。Export是semantic-lossless JSON，不承诺原始byte layout或key order。
+每个retained public history event有opaque、stable、unique `event_token`。Equivalent consecutive observations在当前SQLite v14保留的span authority中合并为one span；v5提供first/latest time与count，v4/v3保持旧shape。Observation count/age retention不再驱逐cleanup impact/detail；detail至少保留14天，aggregate lifetime authority继续存在。Swift history index只展示terminal cleanup outcomes，observation span留在detail。Cleanup同时保留process、artifact、overall outcome；`state: FAILED`与`overall_outcome: cleared_with_residue`可以共存。Diagnostics payload有required integer `document_schema_version`；source v5 App要求value 5。Export是semantic-lossless JSON，不承诺原始byte layout或key order。
 
 ## Canonical fixtures and verification
 
@@ -106,3 +106,14 @@ cd apps/UnlingerApp && swift test
 scripts/bundle.sh
 scripts/pre-v0.1-smoke.sh
 ```
+
+## Optional cache family facts
+
+V5 `uv_cache_maintenance` 与 `node_compile_cache_maintenance` 是独立 optional
+fields；旧 v5 payload 可以省略，v4/v3 不获得这些字段或 cache mutation。
+`tool_cache_maintenance` 只保留 retired npm evidence。Node 使用自己的
+`removed_entry_count` / `removed_logical_bytes`，与 uv 的 `native_removed_*`
+分别展示；前者记录成功移除的文件与已验证逻辑长度估算，后者是 producer
+self-report，均不等于物理 APFS 释放量，也不增加 browser impact。
+Daemon owns availability、eligibility、cadence 和 outcome；Swift 仅选择双语 copy，
+没有 Node 删除入口。Canonical Node/uv 同快照 fixture 由 Rust 与 Swift decode。

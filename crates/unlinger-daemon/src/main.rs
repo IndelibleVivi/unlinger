@@ -10,13 +10,17 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use unlinger_core::{CleanupRuntime, ProcessRole};
+use unlinger_daemon::node_compile_cache::NodeCompileCacheMaintenance;
 use unlinger_daemon::tool_cache::{ToolCacheNativeResult, UvCacheMaintenance};
 use unlinger_daemon::{
     ControlPlane, DaemonInstanceLock, DaemonMode, DaemonStatus, EngineConfig, HistoryStore,
     IpcServer, LocalPaths, PreparedStorageCleanupAttempt, ReconciliationEngine, StoreError,
 };
 use unlinger_macos::{ChromeCloneCleanup, ChromeCloneCleanupMode, MacosRuntime, MacosSnapshotter};
-use unlinger_protocol::{ToolCacheAttemptSummary, ToolCacheAvailability, ToolCacheOutcome};
+use unlinger_protocol::{
+    NodeCompileCacheAttemptSummary, ToolCacheAttemptSummary, ToolCacheAvailability,
+    ToolCacheOutcome,
+};
 use unlinger_rules::RuleSet;
 
 static SHUTDOWN_REQUESTED: AtomicBool = AtomicBool::new(false);
@@ -140,6 +144,12 @@ fn run(arguments: Arguments) -> Result<(), Box<dyn Error>> {
         .store()
         .recover_storage_cleanup_attempts(recovery_now)?;
     control.store().recover_tool_cache_attempt(recovery_now)?;
+    if control
+        .store()
+        .recover_node_compile_cache_attempt(recovery_now)?
+    {
+        control.fail_closed(recovery_now, "node cache maintenance delivery is unknown")?;
+    }
     control
         .store()
         .recover_retired_npm_cache_attempt(recovery_now)?;
@@ -217,6 +227,12 @@ fn run(arguments: Arguments) -> Result<(), Box<dyn Error>> {
                         &AtomicBool::new(false),
                         false,
                     )?;
+                    run_node_compile_cache_cycle(
+                        &control,
+                        now_unix_millis()?,
+                        &AtomicBool::new(false),
+                        false,
+                    )?;
                     println!("{}", serde_json::to_string_pretty(&report)?);
                     return Ok(());
                 }
@@ -280,7 +296,8 @@ impl CacheWorker {
     }
     fn start(&mut self, control: ControlPlane, now: u64) -> std::io::Result<()> {
         self.launch(move |cancelled| {
-            let result = run_tool_cache_cycle(&control, now, cancelled, true);
+            let result = run_tool_cache_cycle(&control, now, cancelled, true)
+                .and_then(|()| run_node_compile_cache_cycle(&control, now, cancelled, true));
             if result.is_err() {
                 let _ = control.fail_closed(
                     now_unix_millis().unwrap_or(now),
@@ -316,6 +333,7 @@ impl CacheWorker {
                 // The joined worker can no longer own a native child. A later
                 // observation must never be used as evidence of its result.
                 let _ = control.store().recover_tool_cache_attempt(now);
+                let _ = control.store().recover_node_compile_cache_attempt(now);
                 let _ = control.fail_closed(now, "tool cache maintenance state could not settle");
             }
         }
@@ -430,14 +448,18 @@ impl Drop for StorageWorker {
 
 fn tool_cache_maintenance_due(now: u64, last_attempt: Option<&ToolCacheAttemptSummary>) -> bool {
     last_attempt.is_none_or(|attempt| {
-        let interval = if attempt.outcome == ToolCacheOutcome::Busy {
-            // A proved pre-mutation lock refusal gets the next observation opportunity.
-            STORAGE_RESIDUE_OBSERVATION_INTERVAL_MILLIS
-        } else {
-            TOOL_CACHE_MAINTENANCE_INTERVAL_MILLIS
-        };
-        now.saturating_sub(attempt.prepared_at_unix_millis) >= interval
+        cache_maintenance_due(now, attempt.prepared_at_unix_millis, attempt.outcome)
     })
+}
+
+fn cache_maintenance_due(now: u64, prepared_at: u64, outcome: ToolCacheOutcome) -> bool {
+    let interval = if outcome == ToolCacheOutcome::Busy {
+        // A proved pre-mutation lock refusal gets the next observation opportunity.
+        STORAGE_RESIDUE_OBSERVATION_INTERVAL_MILLIS
+    } else {
+        TOOL_CACHE_MAINTENANCE_INTERVAL_MILLIS
+    };
+    now.saturating_sub(prepared_at) >= interval
 }
 
 /// The worker owns this exact activity until its native child and durable
@@ -534,6 +556,83 @@ fn run_tool_cache_cycle(
         control
             .store()
             .complete_tool_cache_attempt(&prepared, &result, after)?;
+        Ok(())
+    })();
+    activity.finish()?;
+    settled
+}
+
+fn run_node_compile_cache_cycle(
+    control: &ControlPlane,
+    now: u64,
+    cancelled: &AtomicBool,
+    allow_mutation: bool,
+) -> Result<(), Box<dyn Error>> {
+    let previous = control.store().latest_node_compile_cache_maintenance()?;
+    let stopping =
+        || cancelled.load(Ordering::Acquire) || shutdown_requested() || control.is_draining();
+    if stopping() {
+        return Ok(());
+    }
+    let adapter = NodeCompileCacheMaintenance::discover(stopping);
+    let availability = match &adapter {
+        Ok(_) => ToolCacheAvailability::Available,
+        Err(value) => *value,
+    };
+    control
+        .store()
+        .record_node_compile_cache_observation(now, availability)?;
+    if availability != ToolCacheAvailability::Available
+        || stopping()
+        || !allow_mutation
+        || previous
+            .as_ref()
+            .and_then(|state| state.last_attempt.as_ref())
+            .is_some_and(|attempt| {
+                !cache_maintenance_due(now, attempt.prepared_at_unix_millis, attempt.outcome)
+            })
+    {
+        return Ok(());
+    }
+    let Ok(adapter) = adapter else { return Ok(()) };
+    // This factory transfers only the already-proved descriptor plan. The
+    // lifecycle lock publishes PREPARED and its exact activity before execution.
+    let Some((prepared, adapter, epoch)) =
+        control.start_node_compile_cache_if_ready_enforce(now, |_token, _epoch| Ok(adapter))?
+    else {
+        return Ok(());
+    };
+    let activity = CacheActivityGuard {
+        control,
+        prepared: Some(&prepared),
+    };
+    let native = adapter
+        .as_ref()
+        .ok()
+        .map(|adapter| adapter.execute(control, &prepared, &epoch, stopping));
+    let settled = (|| -> Result<(), Box<dyn Error>> {
+        let after = adapter
+            .as_ref()
+            .ok()
+            .map_or(ToolCacheAvailability::Unavailable, |adapter| {
+                adapter.observe(stopping)
+            });
+        let result = NodeCompileCacheAttemptSummary {
+            outcome: native.map_or(ToolCacheOutcome::Failed, |value| value.outcome),
+            prepared_at_unix_millis: now,
+            completed_at_unix_millis: Some(now_unix_millis()?.max(now)),
+            removed_entry_count: native.and_then(|value| value.removed_entry_count),
+            removed_logical_bytes: native.and_then(|value| value.removed_logical_bytes),
+        };
+        control
+            .store()
+            .complete_node_compile_cache_attempt(&prepared, &result, after)?;
+        if result.outcome == ToolCacheOutcome::DeliveryUnknown {
+            control.fail_closed(
+                now_unix_millis()?.max(now),
+                "node cache maintenance delivery is unknown",
+            )?;
+        }
         Ok(())
     })();
     activity.finish()?;
@@ -895,6 +994,60 @@ mod tests {
             control
                 .store()
                 .latest_tool_cache_maintenance()
+                .unwrap()
+                .unwrap()
+                .last_attempt
+                .unwrap()
+                .outcome,
+            ToolCacheOutcome::DeliveryUnknown
+        );
+        drop(control);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn joined_failed_node_cache_worker_releases_activity_and_recovers_unknown() {
+        use super::*;
+        let directory = std::env::temp_dir().join(format!(
+            "unlinger-node-cache-unwind-{}-{}",
+            std::process::id(),
+            now_unix_millis().unwrap()
+        ));
+        std::fs::create_dir(&directory).unwrap();
+        let store = HistoryStore::open(directory.join("history.sqlite3")).unwrap();
+        let control = ControlPlane::new(
+            store,
+            DaemonStatus::new(DaemonMode::Enforce, std::process::id()),
+        )
+        .unwrap();
+        control.complete_successful_cycle(1).unwrap();
+        let worker_control = control.clone();
+        let mut worker = CacheWorker::default();
+        worker
+            .launch(move |_| {
+                let (prepared, _, _) = worker_control
+                    .start_node_compile_cache_if_ready_enforce(2, |_token, _epoch| Ok(()))
+                    .unwrap()
+                    .unwrap();
+                let _activity = CacheActivityGuard {
+                    control: &worker_control,
+                    prepared: Some(&prepared),
+                };
+                panic!("owned cache worker failure fixture");
+            })
+            .unwrap();
+        while !worker.handle.as_ref().unwrap().is_finished() {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        worker.collect(&control, 3);
+        assert!(worker.is_idle());
+        let status = control.status().unwrap();
+        assert!(!status.cleanup_in_progress);
+        assert!(!status.healthy);
+        assert_eq!(
+            control
+                .store()
+                .latest_node_compile_cache_maintenance()
                 .unwrap()
                 .unwrap()
                 .last_attempt

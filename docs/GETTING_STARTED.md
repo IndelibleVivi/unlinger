@@ -101,9 +101,9 @@ Acceptance keeps report-only mode. After reviewing [support](SUPPORT.md) and [sa
 "$UNLINGER_CLI" service set-mode report-only --json
 ```
 
-`enforce` authorizes three bounded operations. It enables automatic process cleanup for CONFIRMED sessions under every existing protection, stability and lifetime gate, and it enables directory deletion inside exactly one admitted storage family: the current user's `com.google.Chrome.code_sign_clone` clone root beside the macOS per-user temporary directory, and only its `code_sign_clone.*` candidate directories that the scanner admitted, proved present unchanged across two consecutive observations, and proved unreferenced by an exact executable or absolute-argv path or a matching `--type=code-sign-clone-cleanup` helper. It also permits weekly native `uv 0.11.20 cache prune` at the default `~/.cache/uv`, including uv-owned cached execution environments, under the producer lock; a proved busy refusal waits for the next 15-minute opportunity. Browser profiles, downloads, cookies, authentication state, project `.venv`, user artifacts, other users' files and unadmitted cache families remain excluded. Report-only observes without mutating any of these three families.
+`enforce` authorizes four bounded operations. It enables automatic process cleanup for CONFIRMED sessions under every existing protection, stability and lifetime gate, and it enables directory deletion inside exactly one admitted storage family: the current user's `com.google.Chrome.code_sign_clone` clone root beside the macOS per-user temporary directory, and only its `code_sign_clone.*` candidate directories that the scanner admitted, proved present unchanged across two consecutive observations, and proved unreferenced by an exact executable or absolute-argv path or a matching `--type=code-sign-clone-cleanup` helper. It also permits weekly native `uv 0.11.20 cache prune` at the default `~/.cache/uv`, including uv-owned cached execution environments, under the producer lock; a proved busy refusal waits for the next 15-minute opportunity. The fourth operation is weekly removal of format-validated regular files from the exact Node 26.7.0/Apple-Silicon default compile-cache bucket; it never removes a directory or adopts a custom cache location. Browser profiles, downloads, cookies, authentication state, project `.venv`, user artifacts, other users' files and unadmitted cache families remain excluded. Report-only observes without mutating any of these four families.
 
-`enforce` 只授权三类有界操作。一是在全部既有保护、稳定性与生命周期门槛下清理已确认（CONFIRMED）的进程；二是只在一个被明确接纳的存储家族内删除目录：当前用户在 macOS 每用户临时目录旁的 `com.google.Chrome.code_sign_clone` clone 根，并且只限其中经扫描器接纳、连续两次观察保持同一身份、且被证明没有任何精确可执行文件/绝对 argv 路径或匹配的 `--type=code-sign-clone-cleanup` helper 引用的 `code_sign_clone.*` 候选目录。第三类是在原生锁保护下，每周对默认 `~/.cache/uv` 执行 `uv 0.11.20 cache prune`，包含 uv 自己的缓存执行环境；明确的锁忙碌拒绝会等待下一次 15 分钟观察机会。浏览器 profile、下载、cookie、登录状态、项目 `.venv`、用户成果、其他用户的文件及未接纳的缓存家族仍不纳入。report-only 仅观察，不执行这三类变更。
+`enforce` 只授权四类有界操作。一是在全部既有保护、稳定性与生命周期门槛下清理已确认（CONFIRMED）的进程；二是只在一个被明确接纳的存储家族内删除目录：当前用户在 macOS 每用户临时目录旁的 `com.google.Chrome.code_sign_clone` clone 根，并且只限其中经扫描器接纳、连续两次观察保持同一身份、且被证明没有任何精确可执行文件/绝对 argv 路径或匹配的 `--type=code-sign-clone-cleanup` helper 引用的 `code_sign_clone.*` 候选目录。第三类是在原生锁保护下，每周对默认 `~/.cache/uv` 执行 `uv 0.11.20 cache prune`，包含 uv 自己的缓存执行环境；明确的锁忙碌拒绝会等待下一次 15 分钟观察机会。第四类是按周移除 Apple Silicon 上精确 Node 26.7.0 默认编译缓存 bucket 中经过格式验证的普通文件，不删除目录，也不接管自定义缓存位置。浏览器 profile、下载、cookie、登录状态、项目 `.venv`、用户成果、其他用户的文件及未接纳的缓存家族仍不纳入。report-only 仅观察，不执行这四类变更。
 
 A timed-out mutation may already have committed: read `service status` before deciding what to do; do not blindly resend it. The installer does not create or update a PATH symlink. Keep the exact CLI path or deliberately update your shell entry when accepting a different generation.
 
@@ -147,6 +147,16 @@ upkeep is weekly. A native lock refusal is deferred for 15 minutes, allowing
 ongoing uv work to finish normally. Pause/disarm/drain cancels the owned child;
 process observation keeps running during slow maintenance. Failed/interrupted
 operations may have partial effects and never promise reclaimed space. Validation
-uses test-created caches only. The reference installation uses SQLite v13; any
+uses test-created caches only. Source uses SQLite v14; the reference installation
+still uses v13 until the Node transaction is accepted. Any
 replacement retains its applicable transactional restart/rollback proof. Exact
 installed status and bounded live results are in [current state](current-state.md).
+
+Node maintenance needs no task registration. The optional Node section is
+separate from uv and browser impact; an older v5 daemon without that field shows
+no Node section. Missing/unsupported/unknown caches stay observation-only. The
+exact Node 26.7.0 version and Darwin default bucket are required, and Unlinger
+does not upgrade Node. A paused attempt cannot resume after a quick Resume.
+Before first mutation, a changed plan/visible writer defers for 15 minutes;
+failed or uncertain attempts receive no removal credit. See
+[Node cache safety](SAFETY.md#node-compile-cache-exception).

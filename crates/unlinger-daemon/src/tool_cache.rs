@@ -1124,7 +1124,7 @@ impl NonblockingPipe {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-struct ProducerBinding(Vec<(u64, u64, u64, i64, i64)>);
+pub(crate) struct ProducerBinding(Vec<(u64, u64, u64, i64, i64)>);
 impl ProducerBinding {
     /// The single identity tuple for one already-open producer object.
     fn of(meta: std::fs::Metadata) -> (u64, u64, u64, i64, i64) {
@@ -1136,7 +1136,7 @@ impl ProducerBinding {
             meta.mtime_nsec(),
         )
     }
-    fn capture(binary: &Path) -> io::Result<Self> {
+    pub(crate) fn capture(binary: &Path) -> io::Result<Self> {
         let uid = unsafe { libc::geteuid() };
         let meta = std::fs::metadata(binary)?;
         if !meta.is_file() || ![0, uid].contains(&meta.uid()) || meta.mode() & 0o022 != 0 {
@@ -1330,11 +1330,24 @@ fn resolve_regular_file(path: &Path) -> Option<PathBuf> {
 /// with a deadline and a capped output read; on overrun or spawn failure the
 /// child is killed and the version is `None`.
 fn producer_version(binary: &Path, should_cancel: &impl Fn() -> bool) -> Option<String> {
+    let text = read_producer_output(binary, &["--version"], should_cancel)?;
+    let mut words = text.split_whitespace();
+    (words.next()? == "uv")
+        .then(|| words.next().map(str::to_owned))
+        .flatten()
+}
+
+pub(crate) fn read_producer_output(
+    binary: &Path,
+    arguments: &[&str],
+    should_cancel: &impl Fn() -> bool,
+) -> Option<String> {
     // Bind safety before executing even the read-only version command.
     ProducerBinding::capture(binary).ok()?;
     let mut child = OwnedChild(
         Command::new(binary)
-            .arg("--version")
+            .args(arguments)
+            .current_dir("/")
             .env_clear()
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
@@ -1376,12 +1389,7 @@ fn producer_version(binary: &Path, should_cancel: &impl Fn() -> bool) -> Option<
     if captured.len() > 4096 {
         return None;
     }
-    let text = String::from_utf8(captured).ok()?;
-    // `uv 0.11.20 (9252ba6b5 2026-06-10 aarch64-apple-darwin)`
-    let mut words = text.split_whitespace();
-    (words.next()? == "uv")
-        .then(|| words.next().map(str::to_owned))
-        .flatten()
+    String::from_utf8(captured).ok()
 }
 
 #[cfg(test)]

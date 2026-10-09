@@ -317,3 +317,12 @@
 "cache.uv.observing" = "Observation only or waiting for maintenance";
 "cache.uv.absent" = "No default uv cache found.";
 "cache.uv.unsupported" = "This uv installation is not supported; native maintenance requires uv 0.11.20.";
+"cache.node.title" = "Node compile cache";
+"cache.node.scope" = "Rebuildable V8/Node compile cache in the current user's default temp location, maintained weekly only for Node 26.7.0 and while enforcement is healthy. Unknown content, custom cache locations, project files and user artifacts are protected.";
+"cache.node.estimate" = "Counts record successful file removals. Sizes use the validated files' logical lengths; they are not measured physical disk-space savings.";
+"cache.node.enabled" = "Automatic weekly upkeep enabled";
+"cache.node.observing" = "Observation only or waiting for the weekly maintenance window";
+"cache.node.absent" = "No default Node compile cache found.";
+"cache.node.unsupported" = "This Node installation or cache format is not supported; automatic upkeep currently requires Node 26.7.0 on Apple Silicon.";
+"cache.node.removed_count" = "Unlinger removed %llu compile-cache entries.";
+"cache.node.removed_size" = "Approximately %@ logical compile-cache bytes removed.";

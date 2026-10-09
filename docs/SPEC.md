@@ -371,7 +371,7 @@ Each automatic removal attempt is durable before it can destroy anything and hon
 
 ---
 
-### 7.6 Producer-native tool-cache maintenance
+### 7.6 Tool-cache maintenance
 
 The owner-approved extension covers rebuildable tool caches outside Git without
 requiring each task to register. Unlinger schedules a fixed, version-supported
@@ -387,13 +387,15 @@ Each supported operation must have an inspected producer contract for concurrent
 use, reference preservation and deletion containment. A native command's name
 alone supplies none of those guarantees. Unsupported versions remain observation
 only; Unlinger neither upgrades a tool nor substitutes recursive directory
-deletion. Maintenance uses a fixed discovered tool and cache location, bounded
-execution, no network or project scripts, and no force/whole-cache purge option.
+deletion. The owner-approved Node exception below uses exact regular-file
+unlinking, not recursive directory deletion. Maintenance uses a fixed discovered
+tool and cache location, bounded execution, no network or project scripts, and
+no force/whole-cache purge option.
 The ordinary report-only default and ready/healthy/unpaused enforce gate apply.
 
 Cache maintenance has independent durable attempt authority. PREPARED must commit
-before starting a mutating child; failure to persist it prevents execution.
-Terminal results preserve native accounting separately from observations. A
+before starting any mutation; failure to persist it prevents execution.
+Terminal results preserve each family's accounting separately from observations. A
 crash, timeout or unproved delivery remains unknown; a later smaller cache never
 turns it into success. A failed command may have made partial changes. Native
 reported logical bytes are estimates, not measured physical APFS reclaim, and
@@ -413,6 +415,40 @@ only. Source implementation, installation, activation and field evidence remain
 separate. The implementation plan and current-state document identify the exact
 admitted producer and completed verification; this scope approval does not make
 an unverified adapter or the installed service enforce-capable.
+
+On 2026-10-09 the owner approved one bounded exception to the native-command
+mechanism: Node module compile-cache maintenance. It covers only the current
+user's Darwin default temporary `node-compile-cache` root and the exact
+Node v26.7.0 Apple-Silicon version/architecture/default V8 tag/user bucket.
+Custom roots, other tags or versions, workspaces, package stores and user artifacts
+remain excluded. The producer's inspected cache-miss/rebuild and atomic
+temporary-file-to-final-file publication contract supplies disposable-cache
+semantics; absence of an open file or an old timestamp does not.
+
+The scanner binds the producer and default-root/bucket descriptors, admits only
+owned single-link regular files with exact lower-case cache-key names, and checks
+the actual five-word Node header, payload length and CRC. Foreign contents,
+symlinks, writable/unsupported shapes, visible temporary writers and incomplete
+bounded inspection prevent mutation. Other root-level buckets remain untouched.
+The frozen plan rechecks exact identities before no-follow descriptor-relative
+unlinking; it never removes a directory, follows a symlink or adopts a newly
+published file into the plan. This admits normal producer concurrency and does
+not claim resistance to hostile same-UID path swapping. A producer can atomically
+replace a final file in the last pathname-check-to-unlink interval; the operation
+still removes a rebuildable cache name, while its byte estimate uses the validated
+file length rather than claiming inode-atomic accounting.
+
+SQLite gives Node its own PREPARED/latest-result namespace. The existing single
+cache worker runs it outside the lifecycle lock, with the same ready/enforce,
+sticky cancellation and weekly clock; a proved pre-effect busy plan may retry
+at the next 15-minute observation. Failed or uncertain attempts never receive
+success accounting. An interrupted PREPARED action becomes `delivery_unknown`
+and fails the daemon closed; a later smaller cache cannot establish delivery.
+Node's `removed_entry_count`/`removed_logical_bytes` are Unlinger action counts
+and validated logical-size estimates, distinct from native uv counters and
+browser impact.
+The optional v5 `node_compile_cache_maintenance` summary exposes only those
+aggregate facts, statuses and timestamps; v4/v3 do not acquire it.
 
 ---
 

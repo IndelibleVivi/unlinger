@@ -10,6 +10,7 @@ This document describes incorporated material. The owner confirmed authority to 
 | Retired menu-bar source and PNGs in Git history | The other project-requested generated image, also introduced in `df161af`; derived template PNGs removed in `32fd467` | Historical assets remain reachable; current App uses the system `circle.dashed` symbol |
 | `docs/architecture.mmd` and `docs/architecture.svg` | Project-authored architecture model; SVG rendered with Mermaid | Diagram of inspected source; no imported artwork |
 | Canonical fixtures | Synthetic or deliberately redacted process topology and protocol data | No browser contents, credentials or real profile identifiers are intended for these files |
+| Node compile-cache adapter | Project-authored Rust using the inspected Node v26.7.0 [format/publication implementation](https://github.com/nodejs/node/blob/v26.7.0/src/compile_cache.cc) and [header indices](https://github.com/nodejs/node/blob/v26.7.0/src/compile_cache.h) as admission facts | No Node source file, binary, cache payload or private package data is vendored; upstream material retains its own terms |
 
 Rust dependencies are resolved by `Cargo.lock` from their own upstream packages; they retain their own licenses. SwiftPM declares no external package dependency. This source tree does not vendor browser binaries or browser profiles. Building/downloading dependencies and distributing a compiled App are different publication scopes; dependency notices must be reconciled for any future binary distribution.
 

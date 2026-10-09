@@ -4,13 +4,15 @@
 
 [简体中文](README.zh-CN.md) · [Getting started](docs/GETTING_STARTED.md) · [How it works](docs/ARCHITECTURE.md)
 
-Unlinger maintains abandoned automation resources on macOS: verified browser-process leftovers, exact Chrome clone residue, and producer-managed rebuildable tool caches. A native menu-bar App shows what is running, why a session is protected, and what cleanup actually achieved.
+Unlinger maintains abandoned automation resources on macOS: verified browser-process leftovers, exact Chrome clone residue, and specifically admitted rebuildable tool caches. A native menu-bar App shows what is running, why a session is protected, and what cleanup actually achieved.
 
 **Experimental developer preview, built from source.** The daemon defaults to **report-only**. Automatic cleanup requires a separately enabled service and every safety gate. There is no signed/notarized download, multi-day reliability claim, or general integration with every AI-agent task.
 
 ## What you can do
 
 - **Maintain uv caches automatically.** Source supports native `uv 0.11.20 cache prune` for the default `~/.cache/uv`, including uv-owned cached execution environments. The producer's lock protects active uv work; a busy cache is deferred for 15 minutes. Healthy enforce mode schedules ordinary upkeep weekly, while process observation continues on its own schedule. App/CLI show independent availability and durable native results. The reference installation includes this capability; [current state](docs/current-state.md) records its bounded field evidence and remaining reliability limits. It does not upgrade uv, adopt custom cache locations, or clean project `.venv` directories and user artifacts.
+
+- **Maintain the default Node compile cache automatically.** Source admits Node `26.7.0` on Apple Silicon, at the current user's Darwin default temp location and exact producer-version/V8-tag bucket. Healthy enforce mode performs weekly maintenance without task registration. Unlinger validates the Node file format and frozen file identities, records PREPARED, and removes only admitted regular files; directories, custom locations, unknown content and project/user artifacts remain protected. Pause cancels the exact attempt even if Resume follows immediately. App/CLI show this result separately from uv and browser impact, with Unlinger's file counts and logical-size estimates. [Cache safety](docs/SAFETY.md#node-compile-cache-exception) explains the concurrency boundary; [current state](docs/current-state.md) owns installation and actual automatic results.
 
 - **See browser leftovers and their explanation.** Native snapshots, explicit compatibility, protection reasons and redacted local history.
 - **Track a command's browser lifetime.** `unlinger task run -- COMMAND` registers an exact command owner. Its compatible Playwright CLI sessions become candidates after the task ends; release alone never authorizes cleanup.

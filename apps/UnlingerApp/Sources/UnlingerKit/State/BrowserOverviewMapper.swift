@@ -82,6 +82,9 @@ public enum BrowserOverviewMapper {
             uvCacheMaintenance: snapshot?.uvCacheMaintenance.map {
                 ToolCachePresentation($0, connection: connection)
             },
+            nodeCompileCacheMaintenance: snapshot?.nodeCompileCacheMaintenance.map {
+                ToolCachePresentation($0, connection: connection)
+            },
             coverageNotices: notices,
             attention: attention,
             attentionOverflow: attentionOverflow,

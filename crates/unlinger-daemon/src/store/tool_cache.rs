@@ -1,8 +1,8 @@
 //! Latest producer-cache observation and attempt. No raw paths or output.
 use super::*;
 use unlinger_protocol::{
-    ToolCacheAttemptSummary, ToolCacheAvailability, ToolCacheKind, ToolCacheMaintenanceSummary,
-    ToolCacheOutcome,
+    NodeCompileCacheAttemptSummary, NodeCompileCacheMaintenanceSummary, ToolCacheAttemptSummary,
+    ToolCacheAvailability, ToolCacheKind, ToolCacheMaintenanceSummary, ToolCacheOutcome,
 };
 
 pub(crate) const SCHEMA_SQL: &str = "
@@ -14,15 +14,29 @@ CREATE TABLE tool_cache_latest (
     attempt_json TEXT
 );";
 
+pub(crate) const NODE_SCHEMA_SQL: &str = "
+CREATE TABLE node_compile_cache_latest (
+    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+    observed_at_ms INTEGER NOT NULL CHECK (observed_at_ms >= 0),
+    availability_json TEXT NOT NULL,
+    attempt_token TEXT,
+    attempt_json TEXT
+);";
+
 #[derive(Debug)]
 pub struct PreparedToolCacheAttempt {
     token: String,
     prepared_at_unix_millis: u64,
+    kind: ToolCacheKind,
 }
 
 impl PreparedToolCacheAttempt {
     pub(crate) fn token(&self) -> &str {
         &self.token
+    }
+
+    pub(crate) fn kind(&self) -> ToolCacheKind {
+        self.kind
     }
 }
 
@@ -146,6 +160,7 @@ impl HistoryStore {
         Ok(PreparedToolCacheAttempt {
             token,
             prepared_at_unix_millis: now,
+            kind: ToolCacheKind::UvCache,
         })
     }
 
@@ -164,10 +179,12 @@ impl HistoryStore {
             result.outcome,
             ToolCacheOutcome::Completed | ToolCacheOutcome::NoOp
         );
-        if matches!(
-            result.outcome,
-            ToolCacheOutcome::Running | ToolCacheOutcome::NoOp
-        ) || result.prepared_at_unix_millis != prepared.prepared_at_unix_millis
+        if prepared.kind != ToolCacheKind::UvCache
+            || matches!(
+                result.outcome,
+                ToolCacheOutcome::Running | ToolCacheOutcome::NoOp
+            )
+            || result.prepared_at_unix_millis != prepared.prepared_at_unix_millis
             || completed < prepared.prepared_at_unix_millis
             || (!success
                 && (result.native_removed_entry_count.is_some()
@@ -225,6 +242,145 @@ impl HistoryStore {
         transaction.commit()?;
         Ok(true)
     }
+
+    pub fn record_node_compile_cache_observation(
+        &self,
+        now: u64,
+        availability: ToolCacheAvailability,
+    ) -> Result<(), StoreError> {
+        record_node_observation(&self.connection()?, now, availability)
+    }
+
+    pub fn latest_node_compile_cache_maintenance(
+        &self,
+    ) -> Result<Option<NodeCompileCacheMaintenanceSummary>, StoreError> {
+        let connection = self.connection()?;
+        let row = connection.query_row(
+            "SELECT observed_at_ms, availability_json, attempt_json FROM node_compile_cache_latest WHERE singleton = 1", [],
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?, row.get::<_, Option<String>>(2)?)),
+        ).optional()?;
+        row.map(|(observed, availability, attempt)| {
+            Ok(NodeCompileCacheMaintenanceSummary {
+                kind: ToolCacheKind::NodeCompileCache,
+                observed_at_unix_millis: parse_nonnegative_millis(
+                    observed,
+                    "node cache observation",
+                )?,
+                availability: serde_json::from_str(&availability)?,
+                automatic_maintenance_eligible: false,
+                last_attempt: attempt
+                    .map(|value| serde_json::from_str(&value))
+                    .transpose()?,
+            })
+        })
+        .transpose()
+    }
+
+    pub fn begin_node_compile_cache_attempt(
+        &self,
+        now: u64,
+    ) -> Result<PreparedToolCacheAttempt, StoreError> {
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let open: bool = transaction.query_row(
+            "SELECT EXISTS(SELECT 1 FROM node_compile_cache_latest WHERE singleton = 1 AND attempt_token IS NOT NULL)", [], |row| row.get(0),
+        )?;
+        if open {
+            return Err(StoreError::Invalid(
+                "node cache maintenance already prepared".into(),
+            ));
+        }
+        record_node_observation(&transaction, now, ToolCacheAvailability::Available)?;
+        let attempt = NodeCompileCacheAttemptSummary {
+            outcome: ToolCacheOutcome::Running,
+            prepared_at_unix_millis: now,
+            completed_at_unix_millis: None,
+            removed_entry_count: None,
+            removed_logical_bytes: None,
+        };
+        transaction.execute(
+            "UPDATE node_compile_cache_latest SET attempt_token = lower(hex(randomblob(16))), attempt_json = ?1 WHERE singleton = 1", [serde_json::to_string(&attempt)?],
+        )?;
+        let token = transaction.query_row(
+            "SELECT attempt_token FROM node_compile_cache_latest WHERE singleton = 1",
+            [],
+            |row| row.get(0),
+        )?;
+        transaction.commit()?;
+        Ok(PreparedToolCacheAttempt {
+            token,
+            prepared_at_unix_millis: now,
+            kind: ToolCacheKind::NodeCompileCache,
+        })
+    }
+
+    pub fn complete_node_compile_cache_attempt(
+        &self,
+        prepared: &PreparedToolCacheAttempt,
+        result: &NodeCompileCacheAttemptSummary,
+        availability: ToolCacheAvailability,
+    ) -> Result<(), StoreError> {
+        let completed = result.completed_at_unix_millis.ok_or_else(|| {
+            StoreError::Invalid("node cache result has no completion time".into())
+        })?;
+        if prepared.kind != ToolCacheKind::NodeCompileCache
+            || matches!(
+                result.outcome,
+                ToolCacheOutcome::Running | ToolCacheOutcome::NoOp
+            )
+            || result.prepared_at_unix_millis != prepared.prepared_at_unix_millis
+            || completed < prepared.prepared_at_unix_millis
+            || (result.outcome != ToolCacheOutcome::Completed
+                && (result.removed_entry_count.is_some() || result.removed_logical_bytes.is_some()))
+            || (result.outcome == ToolCacheOutcome::Completed
+                && (result.removed_entry_count.is_none() || result.removed_logical_bytes.is_none()))
+        {
+            return Err(StoreError::Invalid("inconsistent node cache result".into()));
+        }
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let changed = transaction.execute(
+            "UPDATE node_compile_cache_latest SET attempt_json = ?1, attempt_token = NULL WHERE singleton = 1 AND attempt_token = ?2",
+            params![serde_json::to_string(result)?, prepared.token],
+        )?;
+        if changed != 1 {
+            return Err(StoreError::Invalid(
+                "node cache attempt is no longer prepared".into(),
+            ));
+        }
+        record_node_observation(&transaction, completed, availability)?;
+        transaction.commit()?;
+        Ok(())
+    }
+
+    pub fn recover_node_compile_cache_attempt(&self, now: u64) -> Result<bool, StoreError> {
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let json: Option<String> = transaction.query_row(
+            "SELECT attempt_json FROM node_compile_cache_latest WHERE singleton = 1 AND attempt_token IS NOT NULL", [], |row| row.get(0),
+        ).optional()?;
+        let Some(json) = json else { return Ok(false) };
+        let mut result: NodeCompileCacheAttemptSummary = serde_json::from_str(&json)?;
+        result.outcome = ToolCacheOutcome::DeliveryUnknown;
+        result.completed_at_unix_millis = Some(now.max(result.prepared_at_unix_millis));
+        result.removed_entry_count = None;
+        result.removed_logical_bytes = None;
+        transaction.execute("UPDATE node_compile_cache_latest SET attempt_token = NULL, attempt_json = ?1 WHERE singleton = 1", [serde_json::to_string(&result)?])?;
+        transaction.commit()?;
+        Ok(true)
+    }
+}
+
+fn record_node_observation(
+    connection: &Connection,
+    now: u64,
+    availability: ToolCacheAvailability,
+) -> Result<(), StoreError> {
+    connection.execute(
+        "INSERT INTO node_compile_cache_latest(singleton, observed_at_ms, availability_json) VALUES(1, ?1, ?2) ON CONFLICT(singleton) DO UPDATE SET observed_at_ms = excluded.observed_at_ms, availability_json = excluded.availability_json",
+        params![sqlite_millis(now, "node cache observation")?, serde_json::to_string(&availability)?],
+    )?;
+    Ok(())
 }
 
 fn record_observation(
@@ -283,7 +439,7 @@ mod tests {
             native_removed_logical_bytes: Some(0),
         };
         let connection = temp.store.connection().unwrap();
-        connection.execute_batch("DROP TABLE tool_cache_latest; ALTER TABLE retired_npm_cache_latest RENAME TO tool_cache_latest; PRAGMA user_version = 12;").unwrap();
+        connection.execute_batch("DROP TABLE tool_cache_latest; DROP TABLE node_compile_cache_latest; ALTER TABLE retired_npm_cache_latest RENAME TO tool_cache_latest; PRAGMA user_version = 12;").unwrap();
         connection
             .execute(
                 "INSERT INTO tool_cache_latest VALUES(1, 101, ?1, NULL, ?2)",
@@ -451,10 +607,10 @@ mod tests {
         temp.store
             .connection()
             .unwrap()
-            .execute_batch("DROP TABLE tool_cache_latest; DROP TABLE retired_npm_cache_latest; PRAGMA user_version = 11;")
+            .execute_batch("DROP TABLE tool_cache_latest; DROP TABLE node_compile_cache_latest; DROP TABLE retired_npm_cache_latest; PRAGMA user_version = 11;")
             .unwrap();
         let migrated = HistoryStore::open(temp.store.path()).unwrap();
-        assert_eq!(HistoryStore::schema_version(), 13);
+        assert_eq!(HistoryStore::schema_version(), 14);
         assert_eq!(migrated.pause_until().unwrap(), Some(500));
         assert!(migrated.latest_tool_cache_maintenance().unwrap().is_none());
         let prepared = migrated.begin_tool_cache_attempt(100).unwrap();

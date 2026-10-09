@@ -1,5 +1,6 @@
 mod engine;
 mod ipc;
+pub mod node_compile_cache;
 mod paths;
 mod public_action_policy;
 mod public_ipc;

@@ -87,19 +87,22 @@ import sys
 import time
 
 with sqlite3.connect(f"file:{sys.argv[1]}?mode=ro", uri=True) as connection:
-    assert connection.execute("PRAGMA user_version").fetchone() == (13,)
-    deadline = time.monotonic() + 10
-    while True:
-        row = connection.execute(
-            "SELECT availability_json, attempt_token, attempt_json FROM tool_cache_latest"
-        ).fetchone()
-        if row is not None or time.monotonic() >= deadline:
-            break
-        time.sleep(0.1)
-    assert row is not None, "report-only daemon did not observe tool-cache availability"
-    assert json.loads(row[0]) in {"available", "absent", "unsupported", "unavailable"}
-    assert row[1:] == (None, None), "report-only daemon prepared cache maintenance"
-print("report-only cache observation persisted without a maintenance attempt")
+    assert connection.execute("PRAGMA user_version").fetchone() == (14,)
+    # Two producer probes plus Node's bounded 120-second validation can run
+    # independently of socket readiness. This does not shorten a live clock.
+    deadline = time.monotonic() + 160
+    for table in ("tool_cache_latest", "node_compile_cache_latest"):
+        while True:
+            row = connection.execute(
+                f"SELECT availability_json, attempt_token, attempt_json FROM {table}"
+            ).fetchone()
+            if row is not None or time.monotonic() >= deadline:
+                break
+            time.sleep(0.1)
+        assert row is not None, f"report-only daemon did not observe {table}"
+        assert json.loads(row[0]) in {"available", "absent", "unsupported", "unavailable"}
+        assert row[1:] == (None, None), f"report-only daemon prepared {table} maintenance"
+print("independent uv/Node observations persisted without any maintenance attempt")
 PY
 }
 

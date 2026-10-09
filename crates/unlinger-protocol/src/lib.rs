@@ -677,6 +677,12 @@ pub enum ToolCacheAvailability {
 pub enum ToolCacheKind {
     NpmDownloadCache,
     UvCache,
+    /// Node's default per-user module compile cache. This is the shared V8 code
+    /// cache used by CommonJS, ESM and stripped-TypeScript modules alike, in an
+    /// exact pinned producer on-disk format. Bounded to an exact supported Node
+    /// version and the owner's default temp location; unknown/custom/user
+    /// content is never eligible.
+    NodeCompileCache,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -716,6 +722,35 @@ pub struct ToolCacheMaintenanceSummary {
     pub last_attempt: Option<ToolCacheAttemptSummary>,
 }
 
+/// A Node compile-cache maintenance result as recorded by Unlinger. These are
+/// Unlinger's own file/logical-byte counts for the entries it removed; they are
+/// never the producer's `native_removed_*` self-report and never a measured
+/// physical APFS reclaim.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct NodeCompileCacheAttemptSummary {
+    pub outcome: ToolCacheOutcome,
+    pub prepared_at_unix_millis: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub completed_at_unix_millis: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub removed_entry_count: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub removed_logical_bytes: Option<u64>,
+}
+
+/// Path-free facts for the Node compile-cache maintenance family. Kept
+/// separate from the uv/npm `ToolCacheMaintenanceSummary` so retired npm and
+/// current uv evidence is never mistaken for Node native-prune results.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct NodeCompileCacheMaintenanceSummary {
+    pub kind: ToolCacheKind,
+    pub observed_at_unix_millis: u64,
+    pub availability: ToolCacheAvailability,
+    pub automatic_maintenance_eligible: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_attempt: Option<NodeCompileCacheAttemptSummary>,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct BrowserOverviewSnapshot {
     pub generated_at_unix_millis: u64,
@@ -744,6 +779,11 @@ pub struct BrowserOverviewSnapshot {
     /// Separate additive field keeps old v5 clients from decoding a new kind.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub uv_cache_maintenance: Option<ToolCacheMaintenanceSummary>,
+    /// Separate additive field for the Node compile-cache family. Old v5
+    /// clients that predate it observe no change; v4/v3 projections never carry
+    /// it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node_compile_cache_maintenance: Option<Box<NodeCompileCacheMaintenanceSummary>>,
     pub attention: AttentionProjection,
     pub protection: ProtectionProjection,
     pub support_catalog: BrowserSupportCatalog,
@@ -1059,6 +1099,7 @@ mod tests {
             storage_cleanup_result: None,
             tool_cache_maintenance: None,
             uv_cache_maintenance: None,
+            node_compile_cache_maintenance: None,
             attention: AttentionProjection::default(),
             protection: ProtectionProjection::default(),
             support_catalog: BrowserSupportCatalog {
@@ -1161,6 +1202,78 @@ mod tests {
     }
 
     #[test]
+    fn v5_node_compile_cache_is_optional_additive_and_never_native_accounting() {
+        // An older v5 payload that never carried the field must still decode.
+        let legacy: ResponseEnvelope = serde_json::from_value(serde_json::json!({
+            "schema_version": 5,
+            "request_id": 52,
+            "ok": true,
+            "payload": minimal_overview_encoding(),
+        }))
+        .expect("decode legacy v5 payload without the node compile-cache field");
+        let Payload::BrowserOverview(overview) = legacy.payload.as_ref().expect("legacy payload")
+        else {
+            panic!("legacy v5 payload is not a browser overview");
+        };
+        assert!(overview.node_compile_cache_maintenance.is_none());
+
+        // Encoding omits the field entirely, so clients that predate it observe
+        // no change.
+        let encoded = serde_json::to_string(&legacy).expect("encode without node cache");
+        assert!(!encoded.contains("node_compile_cache_maintenance"));
+        let reparsed: ResponseEnvelope =
+            serde_json::from_str(&encoded).expect("reparse without node cache");
+        assert_eq!(reparsed, legacy);
+
+        // A new payload carrying the family round-trips with exact typing and
+        // never uses the producer `native_removed_*` field names.
+        let mut with_cache = legacy.clone();
+        let Payload::BrowserOverview(overview) =
+            with_cache.payload.as_mut().expect("overview payload")
+        else {
+            panic!("expected a browser overview");
+        };
+        overview.node_compile_cache_maintenance =
+            Some(Box::new(NodeCompileCacheMaintenanceSummary {
+                kind: ToolCacheKind::NodeCompileCache,
+                observed_at_unix_millis: 3_000,
+                availability: ToolCacheAvailability::Available,
+                automatic_maintenance_eligible: true,
+                last_attempt: Some(NodeCompileCacheAttemptSummary {
+                    outcome: ToolCacheOutcome::Completed,
+                    prepared_at_unix_millis: 1_000,
+                    completed_at_unix_millis: Some(1_050),
+                    removed_entry_count: Some(3),
+                    removed_logical_bytes: Some(2048),
+                }),
+            }));
+        let encoded = serde_json::to_string(&with_cache).expect("encode with node cache");
+        assert!(encoded.contains(r#""node_compile_cache_maintenance""#));
+        assert!(encoded.contains(r#""kind":"node_compile_cache""#));
+        assert!(encoded.contains(r#""removed_entry_count":3"#));
+        assert!(
+            !encoded.contains("native_removed"),
+            "node cache reused producer native accounting field names"
+        );
+        for forbidden in [
+            "/",
+            "Library",
+            "node_modules",
+            "profile",
+            "user_data_dir",
+            "command_line",
+        ] {
+            assert!(
+                !encoded.contains(forbidden),
+                "node cache summary leaked {forbidden}"
+            );
+        }
+        let reparsed: ResponseEnvelope =
+            serde_json::from_str(&encoded).expect("reparse with node cache");
+        assert_eq!(reparsed, with_cache);
+    }
+
+    #[test]
     fn v3_response_constructor_preserves_the_requested_schema() {
         let response =
             ResponseEnvelope::success_for(LEGACY_SCHEMA_VERSION, 9, Payload::History(Vec::new()));
@@ -1237,6 +1350,7 @@ mod tests {
             fixture!("browser-overview-impact-residue"),
             fixture!("browser-overview-cache-maintenance"),
             fixture!("browser-overview-uv-cache-maintenance"),
+            fixture!("browser-overview-node-compile-cache-maintenance"),
             fixture!("history-observation-span"),
         ] {
             let decoded: ResponseEnvelope =

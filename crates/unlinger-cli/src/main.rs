@@ -537,6 +537,34 @@ fn browser_status_lines(overview: &BrowserOverviewSnapshot) -> Vec<String> {
             }
         }
     }
+    if let Some(cache) = &overview.node_compile_cache_maintenance {
+        lines.push(format!(
+            "{:?} maintenance: {:?}; automatic upkeep {}; checked at Unix ms {}",
+            cache.kind,
+            cache.availability,
+            if cache.automatic_maintenance_eligible {
+                "eligible"
+            } else {
+                "not eligible"
+            },
+            cache.observed_at_unix_millis,
+        ));
+        if let Some(attempt) = &cache.last_attempt {
+            lines.push(format!("Latest node compile-cache maintenance: {:?}; prepared at Unix ms {}; completed at Unix ms {:?}",
+                attempt.outcome, attempt.prepared_at_unix_millis, attempt.completed_at_unix_millis));
+            if let Some(count) = attempt.removed_entry_count {
+                lines.push(format!(
+                    "Unlinger report: {count} compile-cache items removed."
+                ));
+            }
+            if let Some(bytes) = attempt.removed_logical_bytes {
+                lines.push(format!("Unlinger report: approximately {bytes} logical bytes removed (not physical disk-space savings)."));
+            }
+            if attempt.removed_entry_count.is_some() || attempt.removed_logical_bytes.is_some() {
+                lines.push("Counts record successful file removals; logical bytes use the validated file lengths and are not physical disk-space savings.".into());
+            }
+        }
+    }
     lines
 }
 
@@ -1564,6 +1592,60 @@ mod tests {
         let lines = browser_status_lines(&overview);
         assert!(lines.iter().any(|line| line.contains("DeliveryUnknown")));
         assert!(!lines.iter().any(|line| line.starts_with("Native report:")));
+    }
+
+    #[test]
+    fn node_compile_cache_status_displays_unlinger_accounting_separately() {
+        let response: unlinger_protocol::ResponseEnvelope = serde_json::from_str(include_str!(
+            "../../../apps/UnlingerApp/Contract/v5/browser-overview-node-compile-cache-maintenance.json"
+        ))
+        .unwrap();
+        let Some(unlinger_protocol::Payload::BrowserOverview(mut overview)) = response.payload
+        else {
+            panic!("node cache fixture")
+        };
+        let lines = browser_status_lines(&overview);
+        assert!(lines.iter().any(|line| line.contains("NodeCompileCache")));
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.contains("3 compile-cache items removed"))
+        );
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.contains("2048 logical bytes") && line.contains("not physical"))
+        );
+        // The same snapshot retains uv's native self-report, while Node's
+        // three removals must use its own accounting wording.
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.contains("2 native summary items"))
+        );
+        assert!(
+            !lines
+                .iter()
+                .any(|line| line.contains("3 native summary items"))
+        );
+
+        let attempt = overview
+            .node_compile_cache_maintenance
+            .as_mut()
+            .unwrap()
+            .last_attempt
+            .as_mut()
+            .unwrap();
+        attempt.outcome = unlinger_protocol::ToolCacheOutcome::DeliveryUnknown;
+        attempt.removed_entry_count = None;
+        attempt.removed_logical_bytes = None;
+        let lines = browser_status_lines(&overview);
+        assert!(lines.iter().any(|line| line.contains("DeliveryUnknown")));
+        assert!(
+            !lines
+                .iter()
+                .any(|line| line.starts_with("Unlinger report:"))
+        );
     }
 
     #[test]
