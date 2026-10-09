@@ -27,8 +27,15 @@ preserves old v12 npm evidence in `retired_npm_cache_latest`, and the active
 `tool_cache_latest` table belongs only to uv. Frontend v5 uses additive optional
 `uv_cache_maintenance`; the old `tool_cache_maintenance` field is retired npm
 evidence only. Native zero counters mean completed maintenance, not no effects.
-The installed generation is 39 / SQLite v13, built from `89001f5`, accepted
-and healthy `ReadyEnforce` on 2026-09-21. The same-artifact generation 38 passed
+The current installed generation is 41 / SQLite v13 from source candidate
+`c867da7`, accepted and healthy `ReadyEnforce` on 2026-10-09. Generation 40 passed
+restart/App socket checks, actually rolled back to generation 39 reopening its
+restored v13 database, and the unchanged artifact was freshly installed as 41
+before repeat checks, acceptance and restoration of the existing enforce policy.
+The repaired packaged App is installed and passed its resource check and a
+300-sample RSS guard; desktop/notification acceptance remains blocked by the
+locked console and denied notification permission. Generation 39 from `89001f5`
+was the dated September-21 installed baseline. The same-artifact generation 38 passed
 restart/App checks, really rolled back to generation 36 reopening its restored
 v11 database, and was freshly installed as generation 39 before repeat checks,
 acceptance and arm. The installed uv/uvx pair is exact 0.11.20. Native `.lock`
@@ -44,14 +51,14 @@ before each new candidate/recursive entry, Resume never resurrects that lease,
 and exact-owner unwind cleanup prevents a stale activity from blocking service
 replacement. The SQLite error display now includes path-free primary and extended
 codes. The App's bounded Home sections use eager `VStack` rather than the captured
-lazy-layout path. The September-25 corrections are source-only at the October-9
-recovery checkpoint. Generation 39 was transactionally restarted and restored
-to healthy enforce, then completed normal native uv maintenance. Source also
-repairs a separately reproduced packaged-App resource crash: `UnlingerResources`
-owns Contents/Resources selection, packaged fixtures never probe the source
-tree, and bundling executes a relocated resource-only check before AppKit/IPC.
-The replacement App is not yet installed. The historical SQLite and intermittent
-layout field root causes remain unresolved; current-state owns fresh status.
+lazy-layout path. These corrections are installed in generation 41 and the
+matching resource-repaired App. Before the upgrade, recovered generation 39
+completed one normal native uv maintenance attempt; do not attribute it to 41.
+`UnlingerResources` owns packaged Contents/Resources selection, packaged fixtures
+never probe the source tree, and bundling executes a relocated resource-only
+check before AppKit/IPC. The isolated socket smoke stages a byte-identical daemon
+on the startup volume. The historical SQLite and intermittent layout field root
+causes remain unresolved; current-state owns exact field and desktop scope.
 
 The following generation-36 narrative is dated 2026-09-17 history; its later
 terminal SQLite failure and current replacement are recorded in current-state.
@@ -117,7 +124,7 @@ exact installed and activation boundary.
 
 ## Current hard boundary
 
-The ordinary daemon default remains report-only. Reference generation 39 uses
+The ordinary daemon default remains report-only. Reference generation 41 uses
 SQLite v13, Playwright `0.6.0`, other packs `0.4.0`, frontend v5/v4/v3 and
 operator v1. It retains mapped-vnode identity, exact per-candidate Chrome-clone
 cleanup and durable clone results, and adds bounded native uv maintenance.
@@ -137,9 +144,9 @@ unresolved causes; `docs/current-state.md` owns their observed scope.
 - The dormant artifact path still has two known P2 residuals: a crash after canonical-to-quarantine rename may strand the exact quarantine entry, and the final pathname revalidation-to-`unlinkat` interval retains a same-UID swap TOCTOU. Historical generation-9 and generation-13 controlled runs removed the admitted DAP; do not turn those point results into current artifact acceptance or re-enable any pack flag without a separate owner decision after the residuals are resolved or explicitly accepted.
 - Managed `Failed` is terminal for that daemon instance. `Disarm` may durably remove any stale signal authority but must not rehabilitate it; replacement proceeds only through exact generation/instance validation, `BeginDrain`, captured-process bootout, and a fresh report-only restart. A ready report-only service acceptance also requires a stable quiescent projection: no scan or cleanup in progress.
 - IPC clients make one bounded attempt. The ordinary/default and service clients use a 15-second I/O timeout; each accepted server connection uses 3 seconds and the daemon serves at most eight connections concurrently. Never automatically resend a timed-out mutation or lifecycle command, because its delivery may already have committed; read back exact state instead. The managed field harness is the narrow exception only for read-only exact-incident `Explain`: it polls on a separate worker and may retry `not_found`, unavailable, or transient local I/O within its overall deadline while native identity sampling continues.
-- Installed generation 39 and the native App use frontend schema v5 with strict v4 and v3 compatibility endpoints, operator schema v1, and SQLite v13. The App emits v5 only and requires the daemon-owned atomic `browser_overview`, including impact/residue, optional storage-cleanup-result and observation-span facts. Frontend schemas expose only `unlinger-protocol` ordinary commands/public DTOs and contain no lifecycle command. Schema v2 is historical and must receive typed `unsupported_schema`; never silently downgrade the App to v4, v3 or v1.
+- Installed generation 41 and the native App use frontend schema v5 with strict v4 and v3 compatibility endpoints, operator schema v1, and SQLite v13. The App emits v5 only and requires the daemon-owned atomic `browser_overview`, including impact/residue, optional storage-cleanup-result and observation-span facts. Frontend schemas expose only `unlinger-protocol` ordinary commands/public DTOs and contain no lifecycle command. Schema v2 is historical and must receive typed `unsupported_schema`; never silently downgrade the App to v4, v3 or v1.
 - Independent cleanup-impact authority, observation spans, exact CfT `152.0.7977.42` eligibility and gated Chrome clone cleanup remain installed. Task release supplies lifetime evidence only; it is never storage-deletion authority.
-- Generation 39 is accepted and has no rollback lease. Its PATH CLI symlink points to the exact generation-39 binary. Future replacements must perform their applicable transaction proof. A successful scan must never rehabilitate a terminal Failed instance. Rollback persists `RollbackInProgress` before physical mutation and replays only transaction-owned selection states until the prior report-only generation is healthy. Only rollback of the exact transaction-owned selection may disarm and drain an unhealthy, non-ready `FirstScanReportOnly` instance; ordinary install and uninstall still require a stable ready or terminal-failed projection.
+- Generation 41 is accepted and has no rollback lease. Its PATH CLI symlink points to the exact generation-41 binary. Future replacements must perform their applicable transaction proof. A successful scan must never rehabilitate a terminal Failed instance. Rollback persists `RollbackInProgress` before physical mutation and replays only transaction-owned selection states until the prior report-only generation is healthy. Only rollback of the exact transaction-owned selection may disarm and drain an unhealthy, non-ready `FirstScanReportOnly` instance; ordinary install and uninstall still require a stable ready or terminal-failed projection.
 - Whole-plan `FAILED` and public `cleared_with_residue` may coexist. A known no-removal artifact disposition after exact tree absence/revival proof keeps an incident attention/retry block but does not by itself fail the managed daemon closed. Any process/artifact delivery uncertainty, open PREPARED action, or unproved failure after a delivered side effect still triggers global fail-close.
 - The installed process-only policy retains all deterministic gates, durable abandonment grace, frozen-plan revalidation, exact identity signals, terminal receipts, bounded revival behavior, durable process-action journaling, restart recovery, generation-bound arming, fresh enforcement-epoch cooling, and report-only rollback. Runtime-artifact admission remains disabled. Do not describe one controlled run plus one stable ambient sweep as multi-day dogfood or an ordinary ambient eligible cleanup.
 

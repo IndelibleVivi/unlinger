@@ -70,15 +70,23 @@ Deterministic product-state QA can instead use `UNLINGER_FIXTURE=browser-clear|b
 
 ## Installed boundary
 
-The 2026-10-09 revisit found a repeatable startup crash in that installed App:
-SwiftPM's generated accessor searched outside `Contents/Resources`. The source
-repair and relocated-executable gate pass 107 Swift tests and release bundling,
-but replacement and desktop acceptance remain pending. The installed daemon
-was separately recovered through its transactional CLI and completed normal
-automatic uv maintenance. [Current state](../../docs/current-state.md) owns
-fresh installation and field truth; the September checks below are dated history.
+The current reference is the resource-repaired schema-v5 App against accepted
+generation 41 / SQLite v13, installed on 2026-10-09. The old App's generated
+accessor reproducibly crashed while searching outside `Contents/Resources`.
+The repair passes 107 Swift tests, release bundling and relocated executable
+verification; the installed resource check also passes. Its exact owned process
+stayed alive through 300 one-second samples, maximum RSS 89,552 KiB and maximum
+sampled CPU 29.9%. Installed v5 socket checks passed 7 + 7 across restart on both
+generation 40 and fresh generation 41, with a real rollback to generation 39 in
+between. The existing enforce policy is restored. The earlier same-day uv prune
+belongs to recovered generation 39, not a new generation-41 attempt.
 
-The reference installation is the schema-v5 App against generation 39 / SQLite
+The console remained locked: fresh Accessibility/visual/notification/login-item
+acceptance is incomplete, and notification permission remains denied. These
+bounded process samples do not prove the intermittent layout trigger is fixed.
+[Current state](../../docs/current-state.md) owns exact evidence.
+
+The September-21 installation was the schema-v5 App against generation 39 / SQLite
 v13, with the uv maintenance section, durable Chrome clone-result presentation
 and the native-popup memory repair. The `89001f5` App passes 104 Swift tests,
 release bundling and the fixture history/Accessibility gate: 448 probes, no

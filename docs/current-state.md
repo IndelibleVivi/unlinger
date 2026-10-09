@@ -11,7 +11,8 @@ the live SQLite-v13 database returned `ok`; this does not explain the earlier
 failure. No reliable first-failure timestamp is available. Under the owner's
 repair authorization, the exact generation CLI's transactional `set-mode
 report-only` replaced the failed instance, then `set-mode enforce` restored the
-existing policy with a fresh instance/epoch. The generation remains 39.
+existing policy with a fresh instance/epoch. That recovery preceded the upgrade
+below; the current installation is accepted generation 41.
 
 Normal scheduling then completed a new native uv maintenance attempt at
 2026-10-09 10:25:37 +08: 20,267 entries and 399,402,598 native logical bytes.
@@ -37,29 +38,57 @@ isolated socket gate initially timed out waiting for a daemon executed from the
 removable checkout volume. A byte-identical startup-volume copy became ready,
 and the canonical smoke now stages that owned copy before its two report-only
 passes; both passes executed all seven socket tests and proved no cache attempt.
-This does not attribute the earlier live SQLite fault to that launch boundary. Fresh backend checks pass format, strict workspace clippy, 417 Rust tests
+This does not attribute the earlier live SQLite fault to that launch boundary.
+
+Fresh backend checks pass format, strict workspace clippy, 417 Rust tests
 (15 opt-in ignored), release workspace build, source-only doctor and nonmutating
 dry-run. Doctor inspected 507 processes and dry-run inspected 527; both retained
 four unavailable executable identities, so ambient coverage is not complete.
 The resource-repair commit `356b703` also passes
 [exact-head macOS CI](https://github.com/IndelibleVivi/unlinger/actions/runs/37875581886).
-The Accessibility gate could not start because the console was locked. This source
-repair is not yet installed; the old App crash is not a successful App field
-observation. Notification authorization was denied in the retained App ledger,
-and actual notification delivery remains unverified.
+The final source candidate `c867da7` passes
+[exact-head macOS CI](https://github.com/IndelibleVivi/unlinger/actions/runs/37876551588).
+
+Generation 40 passed installed schema-v5 socket checks before and after restart
+(7 + 7), then actually rolled back to generation 39. The old generation-39
+binary reopened the restored SQLite-v13 database healthy, ready, report-only
+and unarmed. The unchanged artifact was freshly installed as generation 41,
+which repeated restart/socket checks (7 + 7), was accepted and restored to the
+existing enforce policy with a fresh epoch. It is healthy `ReadyEnforce`, has no
+rollback lease and has zero service problems. Both installed binaries match the
+staged release artifacts; PATH resolves to the exact generation-41 CLI. A
+read-only SQLite-v13 quick check returns `ok`. No generation-41 cleanup result
+is inferred from the earlier same-day generation-39 maintenance result.
+
+The resource-repaired schema-v5 App is installed; previous App bundles remain
+recoverable. The installed resource-only check passes and its exact owned
+process stayed running through 300 one-second samples, maximum RSS 89,552 KiB
+and maximum sampled CPU 29.9%. This is a bounded startup/polling observation.
+The console remained locked, so Accessibility, visual interaction, notification
+delivery and login-item behavior are not accepted by this run. Fresh App ledger
+authorization remains `denied`. The intermittent historical layout trigger is
+still unresolved, though the eager Home path is now installed.
+
+Current Chrome clone observation retains three candidates / 4,498,870,591
+logical bytes with incomplete references and no automatic eligibility. No
+browser-process or clone deletion occurred in this upgrade. Broader cache
+families remain unadmitted: Node compile-cache maintenance needs an explicit
+owner decision on the producer-native-only boundary, and whole-target Cargo
+clean does not establish narrow incremental retention authority.
 
 An isolated store investigation did not reproduce the SQLite failure under
 normal WAL/SHM permissions, read-only hot-WAL preflight, held writer locks or
 concurrent reads/writes. No speculative store retry/refactor was added. The
-exact cause remains unknown. Installing the existing path-free primary/extended
-SQLite diagnostics is the next discriminating observation boundary; terminal
+exact cause remains unknown. The installed path-free primary/extended
+SQLite diagnostics now support the next discriminating recurrence observation; terminal
 fail-close and uncertain-delivery protection remain unchanged.
 
 ## Source-only safety and responsiveness repair (2026-09-25; historical source verification)
 
-Current source addresses bounded authority, responsiveness, diagnostic and App
-layout issues without widening cleanup eligibility, changing the ordinary
-report-only default or touching the accepted generation-39 service.
+At this dated source-only checkpoint, the repairs addressed bounded authority,
+responsiveness, diagnostics and App layout without widening eligibility or
+touching generation 39. They are now installed in generation 41; the following
+verification and unresolved field observations retain their September dates.
 
 The uv path now binds native spawn to the exact durable PREPARED attempt. The
 parent writes its attempt token, enforcement epoch, proved cache-root

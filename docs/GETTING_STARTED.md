@@ -133,7 +133,7 @@ Uninstall unloads the LaunchAgent and removes managed binaries; history and logs
 
 A clean-checkout build and isolated preview can be checked without installing anything. The maintainer's managed install/restart/rollback and cleanup evidence is recorded separately in [current state](current-state.md). A walkthrough on an existing development account does not establish first-time installation on a separate clean macOS account.
 
-## Tool caches in the source candidate
+## Tool-cache maintenance
 
 The source App home and `unlinger browser status` (including `--json`) expose uv
 cache availability and the latest native attempt. Report-only previews never
@@ -147,5 +147,6 @@ upkeep is weekly. A native lock refusal is deferred for 15 minutes, allowing
 ongoing uv work to finish normally. Pause/disarm/drain cancels the owned child;
 process observation keeps running during slow maintenance. Failed/interrupted
 operations may have partial effects and never promise reclaimed space. Validation
-uses test-created caches only. SQLite v13 is a source candidate; replacing the
-reference v11 service requires the transactional rollback proof.
+uses test-created caches only. The reference installation uses SQLite v13; any
+replacement retains its applicable transactional restart/rollback proof. Exact
+installed status and bounded live results are in [current state](current-state.md).
