@@ -15,6 +15,7 @@ DATABASE="$SMOKE_DIR/history.sqlite3"
 LOCK="$SMOKE_DIR/unlingerd.lock"
 LOG="$SMOKE_DIR/unlingerd.log"
 DAEMON_PID=""
+DAEMON_BIN="$SMOKE_DIR/unlingerd"
 EXPECTED_LIVE_TESTS="$(swift test list | rg -c '^UnlingerAppTests\.LiveSocketTests/')"
 if [[ "$EXPECTED_LIVE_TESTS" -lt 1 ]]; then
     echo "no LiveSocketTests were discovered" >&2
@@ -32,7 +33,7 @@ trap cleanup EXIT INT TERM
 
 start_daemon() {
     : > "$LOG"
-    "$REPO_ROOT/target/debug/unlingerd" \
+    "$DAEMON_BIN" \
         --report-only \
         --interval-seconds 3600 \
         --database "$DATABASE" \
@@ -104,6 +105,11 @@ PY
 
 echo "==> build isolated source daemon"
 (cd "$REPO_ROOT" && cargo build -p unlinger-daemon)
+# The checkout/build volume may be removable. Keep this exact owned daemon on
+# the startup volume for the whole two-pass test, as the install lane does.
+cp "$REPO_ROOT/target/debug/unlingerd" "$DAEMON_BIN"
+cmp "$REPO_ROOT/target/debug/unlingerd" "$DAEMON_BIN"
+codesign --verify --strict "$DAEMON_BIN"
 
 echo "==> first report-only v5 App socket pass"
 start_daemon

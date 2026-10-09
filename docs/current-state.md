@@ -33,7 +33,17 @@ copy and v3/v4/v5 fixtures rather than only checking copied files.
 
 Fresh App checks pass 107 Swift tests in 19 suites, 11 Python verifier tests and
 release bundling, including relocated executable resource verification. The
-Accessibility gate could not start because the console was locked. This source
+isolated socket gate initially timed out waiting for a daemon executed from the
+removable checkout volume. A byte-identical startup-volume copy became ready,
+and the canonical smoke now stages that owned copy before its two report-only
+passes; both passes executed all seven socket tests and proved no cache attempt.
+This does not attribute the earlier live SQLite fault to that launch boundary. Fresh backend checks pass format, strict workspace clippy, 417 Rust tests
+(15 opt-in ignored), release workspace build, source-only doctor and nonmutating
+dry-run. Doctor inspected 507 processes and dry-run inspected 527; both retained
+four unavailable executable identities, so ambient coverage is not complete.
+The resource-repair commit `356b703` also passes
+[exact-head macOS CI](https://github.com/IndelibleVivi/unlinger/actions/runs/37875581886).
+The Accessibility gate could not start because the console was locked. This source
 repair is not yet installed; the old App crash is not a successful App field
 observation. Notification authorization was denied in the retained App ledger,
 and actual notification delivery remains unverified.
