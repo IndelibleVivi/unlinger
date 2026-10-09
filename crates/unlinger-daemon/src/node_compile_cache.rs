@@ -20,7 +20,6 @@ pub const SUPPORTED_NODE_VERSION: &str = "v26.7.0";
 const ROOT_NAME: &CStr = c"node-compile-cache";
 const MAGIC: u32 = 0x8adf_dbb2;
 const MAX_ENTRIES: usize = 65_536;
-const MAX_FILE_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_SCAN_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 const BUDGET: Duration = Duration::from_secs(120);
 const NODE_INFO: &str = "console.log(JSON.stringify({version:process.version,arch:process.arch,tag:require('node:v8').cachedDataVersionTag().toString(16).padStart(8,'0'),uid:process.getuid()}))";
@@ -318,9 +317,11 @@ fn scan_entries(
         }
         let mut file = open_at(bucket, &name, false)?;
         let meta = file.metadata()?;
-        if !safe_file(&meta) || meta.len() > MAX_FILE_BYTES || meta.len() < 20 {
+        if !safe_file(&meta) || meta.len() < 20 {
             return Err(ScanError::Unsafe);
         }
+        // The fixed-size CRC buffer already bounds memory. Apply the same
+        // whole-scan byte budget to every file, including large native entries.
         total = total.checked_add(meta.len()).ok_or(ScanError::Unsafe)?;
         if total > MAX_SCAN_BYTES {
             return Err(ScanError::Unsafe);

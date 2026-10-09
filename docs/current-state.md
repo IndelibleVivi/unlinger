@@ -14,12 +14,12 @@ unlinked, while directories, custom locations, other buckets and unknown/user
 content stay protected. The shared cache worker retains independent weekly
 clocks and sticky token/epoch cancellation; uncertain delivery fails closed.
 
-Focused Node tests pass 11 cases, with the real-producer case separately opt-in:
+Focused Node tests pass 14 cases, with the real-producer case separately opt-in:
 its test-owned cache was removed while the retained Node child continued a
 subsequent import, then a fresh offline child regenerated cache. Fresh source
-checks pass format, strict workspace clippy, 431 Rust tests (16 explicit opt-in
+checks pass format, strict workspace clippy, 434 Rust tests (16 explicit opt-in
 ignored), release workspace build and source-only doctor/dry-run. Doctor observed
-552 processes and dry-run 551, each with four unavailable executable identities;
+512 processes and dry-run 514, each with four unavailable executable identities;
 this is not complete ambient coverage. Swift checks pass 110 tests in 19 suites.
 Release bundling includes relocated resource verification. The isolated SQLite-v14
 report-only socket gate passes 7 + restart + 7, with independent uv/Node
@@ -29,26 +29,36 @@ RSS 28,144 KiB. This is fixture evidence, not installed or Node Home interaction
 The existing architecture source/export was regenerated and visually checked.
 The optional v5 Node field keeps its own counters separate from uv/native
 accounting and browser impact; old v5 and v4/v3 behavior is retained.
-The first exact-head candidate `48d9b72` passed macOS CI and generation 42
-passed installed socket checks before and after restart (7 + 7), but its producer
-queries returned unsupported/unavailable observations on the managed service
-despite exact supported local versions. The explicit query cwd was the only
-related behavioral change in the shared helper; its removal remains a candidate
-fix until checked on the installed service. Its real rollback
-restored generation 41: the old binary reopened SQLite v13 healthy, quiescent,
-unarmed and report-only, and uv discovery returned available. Source restores
-the established inherited-cwd spawn path for fixed version/builtin queries;
-empty environment and absence of project-script loading remain unchanged.
-The corrected artifact still requires exact-head verification, transactional
-installation and a normal automatic result. The restored generation 41 subsequently re-entered terminal `Failed` with
-path-free `SystemIoFailure` / extended code 4874 (WAL shared-memory sizing).
-The startup volume had about 227 MiB available; an isolated database on that
-volume completed 32 transactions without error, so the cause is not established.
-The new packaged App is installed with the prior bundle preserved, and its
-normal LaunchServices process remains alive; current desktop interaction is not
-yet accepted. A workspace rerun hit the previously observed owned-inode kernel
-query failure; the exact test passed alone, followed by a fresh full workspace
-and release pass without weakening the assertion. [Safety](SAFETY.md#node-compile-cache-exception) owns the exact boundary.
+The first candidate `48d9b72` passed macOS CI and generation 42 passed
+installed socket checks before and after restart (7 + 7), but its shared producer
+queries returned unsupported/unavailable despite exact local versions. Real
+rollback restored generation 41 and SQLite v13. Restoring the established
+inherited-cwd query path in `3378e14` passed local checks and
+[exact-head CI](https://github.com/IndelibleVivi/unlinger/actions/runs/37887891913).
+Installed generation 43 then restored uv discovery to available and passed
+socket/restart checks (7 + 7), followed by another actual rollback to 41/v13.
+
+Node producer discovery also worked, but the implementation's extra 64 MiB
+per-file cutoff blocked the whole bucket on one 106,039,836-byte native file.
+A read-only check confirmed that file's exact magic, payload length and CRC.
+The approved family has no separate size-based deletion meaning; source now
+uses the existing 2 GiB whole-scan budget and fixed 64 KiB CRC buffer for all
+validated files, retaining the 120-second deadline. Tests cover a valid file
+larger than 64 MiB, incorrect CRC beyond the first buffer and aggregate-budget
+refusal. This final artifact passes the source checks above and still needs
+exact-head CI, transactional installation and a normal automatic result.
+
+During the first rollback, generation 41 re-entered terminal `Failed` with
+`SystemIoFailure` / extended code 4874 (WAL shared-memory sizing). The startup
+volume had about 227 MiB available; a temporary database on that volume completed
+32 transactions without error, so the cause is not established. The following
+43-to-41 rollback again reopened v13 healthy/report-only; that is a point result,
+not a root-cause repair. The new packaged App is installed with the prior bundle
+preserved and its LaunchServices process remains alive. Desktop interaction is
+not yet accepted. A source workspace run hit the previously observed owned-inode
+kernel query failure; the exact test passed alone, then full workspace/release
+passed without weakening assertions. [Safety](SAFETY.md#node-compile-cache-exception)
+owns the exact boundary.
 
 ## Recovery and packaged App resource repair (2026-10-09; generation-41 checkpoint)
 

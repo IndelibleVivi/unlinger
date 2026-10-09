@@ -270,7 +270,8 @@ tag/UID bucket beneath `node-compile-cache`; it does not consume `TMPDIR`,
 `NODE_COMPILE_CACHE`, custom cache configuration or project paths as authority.
 Other buckets and every directory remain untouched. The producer is selected
 from fixed installation locations, bound by file identity, and queried with a
-cleared environment, root working directory and built-in code only.
+cleared environment and fixed version/built-in arguments only; queries inherit
+the daemon working directory and never load project input.
 
 The pinned [Node implementation](https://github.com/nodejs/node/blob/v26.7.0/src/compile_cache.cc)
 and [header indices](https://github.com/nodejs/node/blob/v26.7.0/src/compile_cache.h)
@@ -282,7 +283,9 @@ The scanner requires current-user-owned, single-link regular files, eight
 lower-case hex names, the five-word header, exact payload length and payload
 CRC. Symlinks, hard links, subdirectories, foreign contents, writable shapes,
 unsupported versions and incomplete validation prevent deletion. Inspection is
-bounded to 65,536 files, 64 MiB per file, 2 GiB total and 120 seconds per scan.
+bounded to 65,536 files, 2 GiB total and 120 seconds per scan. Payload CRC is
+validated with a fixed 64 KiB buffer, including larger native files; every file
+must fit in the remaining whole-scan byte budget.
 
 A descriptor-held frozen plan is rescanned before the first effect. PREPARED
 commits before execution; the exact token/epoch lease is checked before each

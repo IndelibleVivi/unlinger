@@ -48,6 +48,18 @@ impl Fixture {
         fs::set_permissions(self.bucket().join(name), fs::Permissions::from_mode(0o600)).unwrap();
         bytes.len() as u64
     }
+    fn seed_sparse(&self, name: &str, payload_bytes: u64, crc: u32) -> u64 {
+        use std::io::Write;
+        let path = self.bucket().join(name);
+        let mut file = File::create(&path).unwrap();
+        let length = payload_bytes + 20;
+        file.set_len(length).unwrap();
+        for value in [MAGIC, 0, u32::try_from(payload_bytes).unwrap(), 0, crc] {
+            file.write_all(&value.to_le_bytes()).unwrap();
+        }
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600)).unwrap();
+        length
+    }
     fn adapter(&self) -> Result<NodeCompileCacheMaintenance, ToolCacheAvailability> {
         let producer = std::env::current_exe().unwrap();
         let binding = ProducerBinding::capture(&producer).unwrap();
@@ -84,6 +96,54 @@ impl Drop for Fixture {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.temp);
     }
+}
+
+#[test]
+fn large_validated_native_shape_uses_the_shared_scan_budget() {
+    let fixture = Fixture::new();
+    // Independent zlib vector for 64 MiB + 1 zero bytes; sparse storage avoids
+    // allocating that space on the test volume. Production still reads every
+    // byte through its fixed 64 KiB buffer before admitting the entry.
+    let bytes = fixture.seed_sparse("12345678", 64 * 1024 * 1024 + 1, 0x0c0b_9a78);
+    let small = fixture.seed("abcdef01");
+    let adapter = fixture.adapter().ok().unwrap();
+    let control = fixture.control(true);
+    let (prepared, plan, epoch) = control
+        .start_node_compile_cache_if_ready_enforce(10, |_, _| Ok(adapter))
+        .unwrap()
+        .unwrap();
+    let result = plan.unwrap().execute(&control, &prepared, &epoch, || false);
+    assert_eq!(result.outcome, ToolCacheOutcome::Completed);
+    assert_eq!(result.removed_entry_count, Some(2));
+    assert_eq!(result.removed_logical_bytes, Some(bytes + small));
+    assert!(fixture.bucket().exists());
+    assert_eq!(fs::read_dir(fixture.bucket()).unwrap().count(), 0);
+    control.finish_tool_cache_action(&prepared).unwrap();
+}
+
+#[test]
+fn crc_validation_does_not_stop_after_one_buffer() {
+    let fixture = Fixture::new();
+    // This is the independent CRC of only the first 65,536 zero bytes. A
+    // validator that ignores the last payload byte would incorrectly admit it.
+    fixture.seed_sparse("12345678", 65_537, 0xd797_8eeb);
+    assert!(matches!(
+        fixture.adapter(),
+        Err(ToolCacheAvailability::Unavailable)
+    ));
+    assert!(fixture.bucket().join("12345678").exists());
+}
+
+#[test]
+fn aggregate_scan_budget_still_rejects_large_entries_before_effects() {
+    let fixture = Fixture::new();
+    fixture.seed("12345678");
+    fixture.seed_sparse("abcdef01", MAX_SCAN_BYTES - 20, 0);
+    assert!(matches!(
+        fixture.adapter(),
+        Err(ToolCacheAvailability::Unavailable)
+    ));
+    assert_eq!(fs::read_dir(fixture.bucket()).unwrap().count(), 2);
 }
 
 #[test]
