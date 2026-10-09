@@ -44,9 +44,14 @@ before each new candidate/recursive entry, Resume never resurrects that lease,
 and exact-owner unwind cleanup prevents a stale activity from blocking service
 replacement. The SQLite error display now includes path-free primary and extended
 codes. The App's bounded Home sections use eager `VStack` rather than the captured
-lazy-layout path. These 2026-09-25 corrections are source-only; generation 39 and
-the installed App remain unchanged, and the two historical field root causes
-remain unresolved.
+lazy-layout path. The September-25 corrections are source-only at the October-9
+recovery checkpoint. Generation 39 was transactionally restarted and restored
+to healthy enforce, then completed normal native uv maintenance. Source also
+repairs a separately reproduced packaged-App resource crash: `UnlingerResources`
+owns Contents/Resources selection, packaged fixtures never probe the source
+tree, and bundling executes a relocated resource-only check before AppKit/IPC.
+The replacement App is not yet installed. The historical SQLite and intermittent
+layout field root causes remain unresolved; current-state owns fresh status.
 
 The following generation-36 narrative is dated 2026-09-17 history; its later
 terminal SQLite failure and current replacement are recorded in current-state.

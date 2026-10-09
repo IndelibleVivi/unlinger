@@ -18,6 +18,7 @@ The App owns no classification, cleanup policy, signal authorization, daemon ins
 - bilingual browser copy, matching formatter locale, VoiceOver state/reason/mode/freshness labels, Settings/About and explicit “Quit Unlinger App” semantics—the daemon continues unchanged;
 - a direct AppKit `@main` whose strong process-lifetime delegate owns the status item/popover and reusable ordinary window independently of any SwiftUI scene or window lifetime; the square status item uses the system `circle.dashed` symbol and stable autosave identity `app.unlinger.menu.primary`, while the App remains a regular Dock app so the window route is available even when a third-party menu host cannot resolve the status item; both hosts share one `AppState` and one `340 × 420` content size but own independent `AppRouter` paths, each host creates its SwiftUI root only while presented, and the ordinary-window controller clears its direct host references on close before creating a fresh host on reopen; opening a current popover route in the ordinary window copies it once before clearing the hidden popover path;
 - stored browser overview/history presentation rebuilt only when its daemon-owned source facts change, equal refreshes and equal settings writes left unpublished, stable localization resources reused until the chosen language changes, and language/pause/notification popups backed by an idempotently configured native `NSPopUpButton` rather than SwiftUI's popup item adaptor; the small bounded Home section list uses an eager `VStack`, while stable-identity SwiftUI iteration and one outer Accessibility element per history link keep Accessibility traversal from entering the captured lazy-layout invalidation path, triggering history regrouping or competing navigation writes inside view evaluation;
+- one packaged-resource owner: `UnlingerResources` reads localization and fixtures from the App’s `Contents/Resources`; packaged execution never depends on an old build directory or a reachable source checkout, while unbundled development/tests retain their SwiftPM/source fixtures;
 - local notifications with `off`, `attention` (default), and `attention_and_reclaims`; first trusted refresh baselines retained events, suppressed events are still marked seen, and a mode change never replays backlog;
 - duplicate-avoidance notification ledger: durable claim before one schedule attempt, stable request IDs, no sound, foreground quiet, and public-safe click routing through the reusable ordinary-window router;
 - launch-at-login controls only this menu-bar client via `SMAppService.mainApp`. It never manages the daemon.
@@ -47,7 +48,7 @@ swift test
 scripts/bundle.sh
 ```
 
-`scripts/bundle.sh` builds `build/Unlinger.app` in a temporary internal SwiftPM scratch path, copies the current v5 fixtures plus compatibility v4/v3 fixtures, rejects packaged resource fallbacks or loader paths that still point at a removable volume, verifies both localizations and Info.plist, then applies a private ad-hoc signature. That is not Developer ID signing or notarization.
+`scripts/bundle.sh` builds `build/Unlinger.app` in a temporary internal SwiftPM scratch path, copies the current v5 fixtures plus compatibility v4/v3 fixtures, rejects packaged resource fallbacks or loader paths that still point at a removable volume, verifies both localizations and Info.plist, then applies a private ad-hoc signature. The final gate relocates the assembled App and runs `--verify-bundle-resources`, which checks the same localization/fixture owners as ordinary execution before starting AppKit, IPC or notifications. Missing packaged resources fail instead of borrowing a build-tree copy. That is not Developer ID signing or notarization.
 
 The repeatable pre-v0.1 integration gate owns a unique temporary database/socket/lock, remains report-only, runs the live Swift suite before and after daemon restart, checks private file modes, absence of IP listeners and persisted cache observations with no maintenance attempt, and deletes only its own temp root:
 
@@ -68,6 +69,14 @@ For manual source-only UI work, `scripts/demo-window.sh` (Python 3 required) bui
 Deterministic product-state QA can instead use `UNLINGER_FIXTURE=browser-clear|browser-active|browser-verifying|browser-confirmed-report-only|browser-reclaiming|browser-protected-unsupported|browser-attention|browser-recent-settlement|browser-impact-residue|browser-history-stress` together with `UNLINGER_WINDOW=1`. The dedicated impact/residue scenario renders impact, current residue and the latest terminal storage-cleanup result with partial-history, aggregate-count and logical-size/APFS caveats. Set `UNLINGER_FIXTURE_ROUTE=history` to open the isolated window directly on its history route. These scenarios return typed v5 browser snapshots and never contact or mutate the installed service.
 
 ## Installed boundary
+
+The 2026-10-09 revisit found a repeatable startup crash in that installed App:
+SwiftPM's generated accessor searched outside `Contents/Resources`. The source
+repair and relocated-executable gate pass 107 Swift tests and release bundling,
+but replacement and desktop acceptance remain pending. The installed daemon
+was separately recovered through its transactional CLI and completed normal
+automatic uv maintenance. [Current state](../../docs/current-state.md) owns
+fresh installation and field truth; the September checks below are dated history.
 
 The reference installation is the schema-v5 App against generation 39 / SQLite
 v13, with the uv maintenance section, durable Chrome clone-result presentation

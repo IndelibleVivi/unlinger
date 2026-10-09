@@ -1,8 +1,51 @@
 # Current state
 
-**Updated:** 2026-09-25. **Programme:** 0.1. **Reader posture:** experimental developer source preview; not a signed/notarized App release or multi-day reliability claim.
+**Updated:** 2026-10-09. **Programme:** 0.1. **Reader posture:** experimental developer source preview; not a signed/notarized App release or multi-day reliability claim.
 
-## Source-only safety and responsiveness repair (2026-09-25; not installed)
+## Recovery and packaged App resource repair (2026-10-09)
+
+The installed generation-39 daemon was found terminal `Failed`, loaded but
+unhealthy and report-only, with `history SQLite failed: unable to open database
+file`. Its retained log also contained disk I/O failures. A read-only check of
+the live SQLite-v13 database returned `ok`; this does not explain the earlier
+failure. No reliable first-failure timestamp is available. Under the owner's
+repair authorization, the exact generation CLI's transactional `set-mode
+report-only` replaced the failed instance, then `set-mode enforce` restored the
+existing policy with a fresh instance/epoch. The generation remains 39.
+
+Normal scheduling then completed a new native uv maintenance attempt at
+2026-10-09 10:25:37 +08: 20,267 entries and 399,402,598 native logical bytes.
+Fifty readbacks remained healthy/ready/enforce through the attempt and its
+following observation. No manual prune, timer override or cache injection was
+used. Logical accounting does not prove physical APFS reclaim. There is no new
+browser-process or Chrome-clone deletion claim in this recovery.
+
+The installed App independently reproduced an immediate resource-accessor
+crash. Its localization bundle existed under `Contents/Resources`, while the
+generated SwiftPM accessor searched the App root and an obsolete temporary
+build path. Current source gives `UnlingerResources` sole ownership of runtime
+resource selection: packaged Apps use their own `Contents/Resources` and never
+fall back to a development copy; unbundled development/test executables retain
+SwiftPM lookup. Packaged fixtures likewise use only the shipped resources.
+The bundle gate relocates the assembled App and runs its resource-only entry
+before AppKit, IPC, preferences or notifications. It checks real English/Chinese
+copy and v3/v4/v5 fixtures rather than only checking copied files.
+
+Fresh App checks pass 107 Swift tests in 19 suites, 11 Python verifier tests and
+release bundling, including relocated executable resource verification. The
+Accessibility gate could not start because the console was locked. This source
+repair is not yet installed; the old App crash is not a successful App field
+observation. Notification authorization was denied in the retained App ledger,
+and actual notification delivery remains unverified.
+
+An isolated store investigation did not reproduce the SQLite failure under
+normal WAL/SHM permissions, read-only hot-WAL preflight, held writer locks or
+concurrent reads/writes. No speculative store retry/refactor was added. The
+exact cause remains unknown. Installing the existing path-free primary/extended
+SQLite diagnostics is the next discriminating observation boundary; terminal
+fail-close and uncertain-delivery protection remain unchanged.
+
+## Source-only safety and responsiveness repair (2026-09-25; historical source verification)
 
 Current source addresses bounded authority, responsiveness, diagnostic and App
 layout issues without widening cleanup eligibility, changing the ordinary

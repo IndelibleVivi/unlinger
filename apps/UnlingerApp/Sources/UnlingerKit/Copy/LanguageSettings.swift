@@ -2,7 +2,7 @@ import Foundation
 import Observation
 
 /// UI language preference, persisted in UserDefaults. `system` follows macOS;
-/// explicit choices resolve copy from the matching `.lproj` in `Bundle.module`.
+/// explicit choices resolve copy from the matching `.lproj` in the owned resources.
 /// Tracked by Observation: every view body reads copy through `L10n`, which
 /// reads `bundle`, so changing `preference` re-renders the UI immediately.
 @MainActor
@@ -63,15 +63,16 @@ public final class LanguageSettings {
     }
 
     private static func resolveBundle(for preference: Preference) -> Bundle {
-        guard preference != .system else { return .module }
+        let resources = UnlingerResources.bundle
+        guard preference != .system else { return resources }
         // SwiftPM lowercases the region subtag: zh-Hans.lproj → zh-hans.lproj
         let names = preference == .zhHans ? ["zh-hans", "zh-Hans"] : [preference.rawValue]
         for name in names {
-            if let path = Bundle.module.path(forResource: name, ofType: "lproj"),
+            if let path = resources.path(forResource: name, ofType: "lproj"),
                let bundle = Bundle(path: path) {
                 return bundle
             }
         }
-        return .module
+        return resources
     }
 }

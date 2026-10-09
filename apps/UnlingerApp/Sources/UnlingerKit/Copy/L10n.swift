@@ -1,7 +1,7 @@
 import Foundation
 
 /// All user-visible copy resolves through here, from `Localizable.strings`
-/// bundled in `Bundle.module`. Unknown reason/evidence IDs fall back to
+/// bundled in the App's owned resources. Unknown reason/evidence IDs fall back to
 /// generic keys chosen by the mapping layer — never interpolated raw.
 @MainActor
 public enum L10n {

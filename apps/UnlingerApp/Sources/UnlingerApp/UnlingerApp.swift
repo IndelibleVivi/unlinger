@@ -168,6 +168,16 @@ private struct RootView: View {
 enum UnlingerApplication {
     @MainActor
     static func main() {
+        if CommandLine.arguments.dropFirst() == ["--verify-bundle-resources"] {
+            do {
+                try UnlingerResources.verifyPackagedResources()
+                print("unlinger_bundle_resources_ok")
+                return
+            } catch {
+                FileHandle.standardError.write(Data("packaged resource verification failed\n".utf8))
+                exit(EXIT_FAILURE)
+            }
+        }
         let application = NSApplication.shared
         let delegate = UnlingerAppDelegate()
         application.delegate = delegate

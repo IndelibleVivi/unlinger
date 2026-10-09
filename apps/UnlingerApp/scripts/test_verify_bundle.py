@@ -7,10 +7,34 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from verify_bundle import verify_executable, verify_fixtures
+from verify_bundle import verify_executable, verify_fixtures, verify_packaged_resources
 
 
 class BundleVerificationTests(unittest.TestCase):
+    def test_relocated_executable_must_report_resource_success(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            bundle = Path(temporary) / "source.app"
+            bundle.mkdir()
+            with patch("verify_bundle.subprocess.run", return_value=subprocess.CompletedProcess([], 0, stdout="unlinger_bundle_resources_ok\n")) as run:
+                verify_packaged_resources(bundle)
+                call = run.call_args
+                self.assertNotEqual(Path(call.args[0][0]).parents[2], bundle)
+                self.assertEqual(call.args[0][1], "--verify-bundle-resources")
+                self.assertTrue(call.kwargs["check"])
+                self.assertEqual(call.kwargs["timeout"], 15)
+                self.assertFalse(any(key.startswith("UNLINGER_") for key in call.kwargs["env"]))
+
+    def test_resource_crash_timeout_and_wrong_response_fail_the_gate(self):
+        for result in (subprocess.CalledProcessError(-5, "UnlingerApp"),
+                       subprocess.TimeoutExpired("UnlingerApp", 15),
+                       subprocess.CompletedProcess([], 0, stdout="wrong")):
+            with self.subTest(result=result), tempfile.TemporaryDirectory() as temporary:
+                bundle = Path(temporary) / "source.app"
+                bundle.mkdir()
+                with patch("verify_bundle.subprocess.run", side_effect=[result]):
+                    with self.assertRaises((subprocess.SubprocessError, ValueError)):
+                        verify_packaged_resources(bundle)
+
     def test_missing_tool_and_producer_failure_are_not_clean_results(self):
         for failure in (FileNotFoundError("otool"), subprocess.CalledProcessError(1, "otool")):
             with self.subTest(failure=type(failure).__name__), patch("verify_bundle.subprocess.run", side_effect=failure):

@@ -4,8 +4,8 @@ import Foundation
 /// Fixtures are read in place — never rewritten by the app —
 /// so previews and tests always exercise the Rust-roundtripped wire truth.
 ///
-/// Two lookup modes: source-tree path (previews/tests/dev runs from the repo)
-/// and bundled copies under `Fixtures/` in the resource bundle, which
+/// Unbundled previews/tests/dev runs use the source-tree path. Packaged Apps
+/// use only copies under `Fixtures/` in their owned resource bundle, which
 /// `scripts/bundle.sh` copies in so a standalone `.app` can still run fixture
 /// scenarios away from the repo.
 public enum FixtureStore {
@@ -19,7 +19,8 @@ public enum FixtureStore {
     public static func url(named name: String, schemaVersion: Int = 3) -> URL {
         let sourceURL = sourceDirectory(schemaVersion: schemaVersion)
             .appending(path: "\(name).json")
-        if FileManager.default.isReadableFile(atPath: sourceURL.path()) {
+        if !UnlingerResources.isPackagedApp,
+           FileManager.default.isReadableFile(atPath: sourceURL.path()) {
             return sourceURL
         }
         return bundledDirectory(schemaVersion: schemaVersion)
@@ -27,10 +28,7 @@ public enum FixtureStore {
     }
 
     public static func data(named name: String, schemaVersion: Int = 3) throws -> Data {
-        // Prefer the in-place source-tree copy; if it is unreachable (e.g.
-        // macOS removable-volume permission on an external drive), fall back
-        // to the copy bundled inside the .app.
-        if let data = try? Data(
+        if !UnlingerResources.isPackagedApp, let data = try? Data(
             contentsOf: sourceDirectory(schemaVersion: schemaVersion)
                 .appending(path: "\(name).json")
         ) {
@@ -47,7 +45,7 @@ public enum FixtureStore {
     }
 
     private static func bundledDirectory(schemaVersion: Int) -> URL {
-        Bundle.module.bundleURL
+        UnlingerResources.bundle.bundleURL
             .appending(path: "Fixtures", directoryHint: .isDirectory)
             .appending(path: "v\(schemaVersion)", directoryHint: .isDirectory)
     }
