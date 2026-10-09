@@ -44,7 +44,7 @@ The controlled DAP results repeat one historical exact admitted point across two
 | Transitional frontend endpoint | schema v4 prior overview/response shapes retained without v5-only fields |
 | Legacy-compatible frontend endpoint | schema v3 existing commands/response meaning retained; overview rejected without downgrade |
 | Schema v2 | historical fixtures retained; superseded before installation; current server returns typed `unsupported_schema` |
-| Reference installation | the dated [current-state](current-state.md) evidence owns exact generation, activation and rollback lease; its SQLite-v13 daemon/App include native uv maintenance, durable Chrome clone-result authority and the native-popup memory repair |
+| Reference installation | the dated [current-state](current-state.md) evidence owns exact generation, activation and rollback lease; its SQLite-v14 daemon/App include separate Node compile-cache maintenance, native uv maintenance, durable Chrome clone-result authority and the native-popup memory repair |
 | Current source implementation | SQLite v14 adds independent Node compile-cache authority to uv maintenance and retained retired npm evidence, with optional v5 family facts and App/CLI presentation; schema v5/v4/v3 plus operator v1, Playwright `0.6.0`, other packs `0.4.0`, exact CfT 151/152 process allowlist, clone-result authority and disabled runtime-artifact flags remain intact |
 
 SQLite v10 has a candidate-specific v8 backup/rollback/open proof: generation 24 really rolled back to healthy, unarmed generation 23 with the old CLI/daemon reopening v8; the exact candidate freshly reinstalled as generation 25, repeated matching-App/socket checks before and after restart, and was accepted before arming. Earlier schema migrations remain historical evidence.
@@ -77,7 +77,8 @@ other pnpm versions have not been admitted by that investigation.
 
 ## Node compile-cache family
 
-Source admits only Node `26.7.0` on Apple Silicon, using the current user's Darwin
+Source and the reference installation admit only Node `26.7.0` on Apple Silicon,
+using the current user's Darwin
 default temporary `node-compile-cache` root and the exact version/V8-tag/UID
 bucket. This owner-approved exception validates the pinned file format and
 frozen identities before descriptor-relative regular-file removal; directories,

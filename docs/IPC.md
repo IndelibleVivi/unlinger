@@ -240,7 +240,7 @@ V1 may expose bounded internal diagnostic identities needed by CLI/service trans
 
 Current source accepts schemas 1, 3, 4 and 5. The source App emits schema v5 only and treats a v4-, v3-, or v1-only endpoint as incompatible rather than silently downgrading. Schema v4 preserves its prior atomic overview and response shapes; schema v3 preserves its existing commands; schema v1 remains operator-only and returns a trusted `unsupported_schema` envelope to an unsupported frontend request.
 
-Current source uses SQLite v13 and serves frontend v5 with v4/v3 compatibility and operator v1. V13 separates current uv authority from retired v12 npm evidence; v11 clone results, v10 optional host ownership and earlier migrations remain intact. The current reference installation is accepted generation 41 on SQLite v13. Its unchanged-artifact candidate generation 40 completed restart/socket checks and really rolled back to generation 39 reopening v13; fresh generation 41 repeated restart/socket checks before acceptance and restoration of the existing enforce policy. [Current state](current-state.md) owns exact installed evidence.
+Current source uses SQLite v14 and serves frontend v5 with v4/v3 compatibility and operator v1. V14 adds independent Node compile-cache authority to v13 uv/retired-npm separation; v11 clone results, v10 optional host ownership and earlier migrations remain intact. The current reference installation is accepted generation 45 on SQLite v14. Its unchanged-artifact candidate generation 44 completed restart/socket checks and really rolled back to generation 41 reopening v13; fresh generation 45 repeated restart/socket checks before acceptance and restoration of the existing enforce policy. [Current state](current-state.md) owns exact installed evidence.
 
 The service retains the prior snapshot and exact generation identity after candidate readiness, blocks mode/install/uninstall mutations during the lease, and exposes explicit report-only restart, accept and rollback commands. A first install can roll back to the absence of a prior service; an upgrade restores the exact prior generation/database. Readiness, acceptance and enforcement are separate durable states.
 
@@ -262,7 +262,7 @@ Changing wire shape, requiredness, limits, error discriminators, readiness/fresh
 
 Source schema v1 adds `task_reserve {task_id}`, `task_activate {task_id, capability, owner_pid}`, `task_finish {task_id, capability}` and read-only `task_status {task_id}`. These commands do not exist in frontend schemas v3/v4/v5 and never arm or change service mode. Reserve/activate require a healthy ready daemon and authenticated local socket peer PID (`LOCAL_PEERPID`) in addition to the existing same-UID check. Activation requires the registrar's exact current child; finish checks native owner absence. Registry transitions are durable and conditional, released tasks cannot reactivate, and one timed-out mutation is never resent.
 
-`task_lease` contains the fresh opaque task/session selector and a private capability; only the registering CLI receives it. `task_status` returns task/session selector, phase, optional release reason and bound incident IDs. It does not return capability, command, workspace, native owner identity or a synthetic cleaned state. Existing incident receipt/impact routes remain the process-cleanup result authority. SQLite v8 added the two task tables transactionally; current source v13 retains them without changing their meaning. See [TASKS.md](TASKS.md).
+`task_lease` contains the fresh opaque task/session selector and a private capability; only the registering CLI receives it. `task_status` returns task/session selector, phase, optional release reason and bound incident IDs. It does not return capability, command, workspace, native owner identity or a synthetic cleaned state. Existing incident receipt/impact routes remain the process-cleanup result authority. SQLite v8 added the two task tables transactionally; current source and installed v14 retain them without changing their meaning. See [TASKS.md](TASKS.md).
 
 ## Optional host session-owner commands
 
@@ -333,7 +333,7 @@ ordinary observations must not recover an active cache attempt.
 Operator cleanup activity includes the separate cache activity; browser phase
 continues to describe browser/process work. Paths and raw native output are never
 persisted or sent over IPC. A pre-v13 binary requires rollback's restored database.
-Installed generation 41 uses v13 according to [current evidence](current-state.md).
+Installed generation 45 uses v14 according to [current evidence](current-state.md). A pre-v14 binary likewise requires the rollback-restored v13 database.
 
 SQLite v14 adds an independent `node_compile_cache_latest` table and the optional
 v5 `node_compile_cache_maintenance` field with `kind: node_compile_cache`.

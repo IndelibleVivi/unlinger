@@ -71,23 +71,25 @@ Deterministic product-state QA can instead use `UNLINGER_FIXTURE=browser-clear|b
 
 ## Installed boundary
 
-The current reference is the resource-repaired schema-v5 App against accepted
-generation 41 / SQLite v13, installed on 2026-10-09. The old App's generated
-accessor reproducibly crashed while searching outside `Contents/Resources`.
-The repair passes 107 Swift tests, release bundling and relocated executable
-verification; the installed resource check also passes. Its exact owned process
-stayed alive through 300 one-second samples, maximum RSS 89,552 KiB and maximum
-sampled CPU 29.9%. Installed v5 socket checks passed 7 + 7 across restart on both
-generation 40 and fresh generation 41, with a real rollback to generation 39 in
-between. The existing enforce policy is restored. The earlier same-day uv prune
-belongs to recovered generation 39, not a new generation-41 attempt.
-A normal LaunchServices launch also remained running after its separate
-observer exited; the directly spawned guard child later ended with status 0
-and no new crash report.
+The current reference is the Node-aware, resource-repaired schema-v5 App from
+`48d9b72`, against accepted generation 45 / SQLite v14 from `346daa9`, installed
+on 2026-10-09. Source checks pass 110 Swift tests in 19 suites and relocated
+release-bundle resource verification; the installed resource check also passes.
+Generation 44 and fresh generation 45 each passed all seven v5 socket checks
+before and after report-only restart, with an actual rollback to the old
+41/v13 daemon between them. The existing enforce policy is restored.
+A normal LaunchServices App process remains alive independently of the observer;
+88 sparse identity/resource samples across 17m31s reached a maximum RSS of
+14,112 KiB. These are separate from the earlier resource-repair App's 300-sample
+guard and do not prove visual behavior. The earlier same-day uv result belongs to recovered
+generation 39, while Node automatic-result evidence belongs to its own authority.
 
-The console remained locked: fresh Accessibility/visual/notification/login-item
-acceptance is incomplete, and notification permission remains denied. These
-bounded process samples do not prove the intermittent layout trigger is fixed.
+The console is unlocked and source history Accessibility/RSS passed 463
+traversals with zero misses. Current installed ordinary-window visual/AX
+acceptance remains incomplete because the desktop transport cannot acquire a
+window from the menu-only process. Notification authorization is denied;
+notification delivery and ad-hoc login-item registration remain unaccepted.
+The intermittent historical layout trigger is still unresolved.
 [Current state](../../docs/current-state.md) owns exact evidence.
 
 The September-21 installation was the schema-v5 App against generation 39 / SQLite

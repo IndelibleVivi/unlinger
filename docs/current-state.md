@@ -2,7 +2,7 @@
 
 **Updated:** 2026-10-09. **Programme:** 0.1. **Reader posture:** experimental developer source preview; not a signed/notarized App release or multi-day reliability claim.
 
-## Node compile-cache extension (2026-10-09; source verified, installation pending)
+## Node compile-cache extension (2026-10-09; installed and activated)
 
 The owner approved the exact Node exception to producer-native maintenance,
 including source/App/CLI integration, transactional installation and restoration
@@ -13,6 +13,29 @@ version/V8-tag bucket are admitted; frozen format-validated regular files can be
 unlinked, while directories, custom locations, other buckets and unknown/user
 content stay protected. The shared cache worker retains independent weekly
 clocks and sticky token/epoch cancellation; uncertain delivery fails closed.
+
+The accepted reference is generation 45 / SQLite v14, built from `346daa9` with
+[exact-head macOS CI](https://github.com/IndelibleVivi/unlinger/actions/runs/37890561746).
+Generation 44 passed v5 socket checks before and after report-only restart
+(7 + 7), then actually rolled back to generation 41: its exact old CLI/daemon
+reopened the restored SQLite-v13 database healthy, quiescent, unarmed and
+report-only. The unchanged candidate freshly installed as generation 45,
+repeated 7 + restart + 7 checks, was accepted and then separately restored to
+healthy `ReadyEnforce`. Installed binaries match the staged candidate; PATH
+resolves to the exact generation-45 CLI. No rollback lease remains. Node and uv
+discovery are available.
+
+Normal scheduling completed generation 45's first Node maintenance at
+2026-10-09 14:19:44 +08: **26,090 successful file unlinks / 343,549,504 validated
+logical bytes** (about 327.6 MiB). No manual prune, timer override or live-cache
+injection was used. SQLite-v14 `attempt_json`, the actual v5 response and CLI
+overview agree exactly; the PREPARED token is settled and read-only SQLite
+`quick_check` returns `ok`. All 88 readbacks across 17m31s were healthy, ready
+and enforce, continuing for more than 90 seconds after completion. The normal
+LaunchServices App remained the same exact process in all 88 sparse samples,
+maximum RSS 14,112 KiB and sampled CPU 10.5%; these are polling/lifetime samples,
+not visual/AX or multi-day acceptance. Node's own counts do not become uv/native
+or browser impact, and logical bytes do not prove physical APFS reclaim.
 
 Focused Node tests pass 14 cases, with the real-producer case separately opt-in:
 its test-owned cache was removed while the retained Node child continued a
@@ -45,8 +68,8 @@ The approved family has no separate size-based deletion meaning; source now
 uses the existing 2 GiB whole-scan budget and fixed 64 KiB CRC buffer for all
 validated files, retaining the 120-second deadline. Tests cover a valid file
 larger than 64 MiB, incorrect CRC beyond the first buffer and aggregate-budget
-refusal. This final artifact passes the source checks above and still needs
-exact-head CI, transactional installation and a normal automatic result.
+refusal. This final artifact passes the source checks, installed transaction and
+bounded normal automatic result above; sustained reliability remains unverified.
 
 During the first rollback, generation 41 re-entered terminal `Failed` with
 `SystemIoFailure` / extended code 4874 (WAL shared-memory sizing). The startup
@@ -55,7 +78,9 @@ volume had about 227 MiB available; a temporary database on that volume complete
 43-to-41 rollback again reopened v13 healthy/report-only; that is a point result,
 not a root-cause repair. The new packaged App is installed with the prior bundle
 preserved and its LaunchServices process remains alive. Desktop interaction is
-not yet accepted. A source workspace run hit the previously observed owned-inode
+not yet accepted despite an unlocked console: the desktop transport cannot
+acquire a current window from the menu-only process. A source workspace run hit
+the previously observed owned-inode
 kernel query failure; the exact test passed alone, then full workspace/release
 passed without weakening assertions. [Safety](SAFETY.md#node-compile-cache-exception)
 owns the exact boundary.
@@ -775,7 +800,7 @@ No Codex hook, App configuration or host integration was installed by this
 investigation. Zero-touch Codex ownership and ordinary owner-bound field cleanup
 remain unimplemented and unverified; unbound ordinary sessions stay protected.
 
-## Current controlled evidence
+## Historical controlled evidence (generation 23 and source publication)
 
 Generation 22 installed report-only, passed the seven App socket tests before and after restart, then **actually rolled back** to generation 19 with its exact old CLI/daemon reopening SQLite v7. A fresh generation 23 repeated installation/restart/App checks, was accepted, and was explicitly armed. Earlier initial-source candidates were rolled back before final acceptance and do not supply final-binary acceptance.
 
@@ -809,10 +834,10 @@ The publication candidate passed fresh local formatting, strict workspace clippy
   totals and not evidence of a new generation-36 cleanup.
 - The original generation-17 terminal SQLite disk-I/O failure cause remains unproved. Exact-instance containment/recovery and later transactional replacement succeeded; a later healthy database check does not establish the original cause.
 - The command wrapper does not integrate every Codex App host or browser tool automatically. The optional session-owner primitive introduced in v10 and retained by source v14 has no supported automatic Codex adapter. A bounded feasibility review found that later hooks/observers and turn-level lifecycle events cannot supply the current contract's exact parent/child activation plus thread-to-controller/session binding; a real adapter needs Codex host support. Exact CLI/browser compatibility, lifetime/client proof and all ordinary gates remain required; unregistered, active-owner, reused, unsupported or unverified controllers stay protected.
-- Chrome clone observation accepts the actual `.app.bundle` shape and no-follow framework links. Historical installed generation 34 evaluated candidates independently across two production-interval observations, removed eight stable unreferenced clones and retained the one candidate containing the continuously running ordinary Chrome main. Generation 39 retains that gate; a current-generation clone deletion has not been field-verified. The upgrade readback includes an inherited September-17 terminal v11 result; it is not a generation-39 action. The generation-34 point does not prove generation-36 result persistence, multi-day behavior, all future Chrome clone shapes or physical APFS reclaim equal to the logical byte reduction.
+- Chrome clone observation accepts the actual `.app.bundle` shape and no-follow framework links. Historical installed generation 34 evaluated candidates independently across two production-interval observations, removed eight stable unreferenced clones and retained the one candidate containing the continuously running ordinary Chrome main. Generation 45 retains that gate; a current-generation clone deletion has not been field-verified. Its readback includes an inherited September-22 terminal result from generation 39; it is not a generation-45 action. The generation-34 point does not prove generation-36 result persistence, multi-day behavior, all future Chrome clone shapes or physical APFS reclaim equal to the logical byte reduction.
 - All artifact admission is disabled. The dormant DAP engine still has a quarantine-after-crash recovery gap and a final pathname-swap TOCTOU. Native pathname-reference tests also intermittently returned no reference for an owned open ordinary or `O_EVTONLY` descriptor under parallel execution; exact serial tests passed, and the cause is unresolved. The active process path does not use that query. [Safety](SAFETY.md) owns these boundaries.
 - The old zero-deadline offline-lock test failed because a concurrent fork can inherit an `O_CLOEXEC` descriptor until exec. A deterministic owned-child probe established that cause; `f22e08e` retains held-lock denial and gives post-release acquisition its existing bounded wait. The final exact-head CI passed. A later local full workspace run reproduced the separate dormant native-query failures above; no assertions were weakened.
-- The source fixture passed 460 Accessibility-tree probes with zero read failures and an external 22,208 KiB final RSS sample. The installed `628d822` App's earlier 300-sample/one-tree acceptance was superseded by the later 19-GB recurrence. The installed `c17e60f` native-popup repair then passed 2,400 one-second RSS samples with a 22,192 KiB maximum and the same process later reached 18h45m at 12,992 KiB. The current installed cleanup-result/localization/root-title App passed rendered Home/History/Settings navigation and 180 one-second Settings/native-popup samples with a 37,520 KiB maximum during repeated Accessibility traversal. These bounded observations still do not establish the exact intermittent trigger, multi-day App behavior, packaged notifications or every menu organizer/display arrangement.
+- The source fixture passed 460 Accessibility-tree probes with zero read failures and an external 22,208 KiB final RSS sample. The installed `628d822` App's earlier 300-sample/one-tree acceptance was superseded by the later 19-GB recurrence. The installed `c17e60f` native-popup repair then passed 2,400 one-second RSS samples with a 22,192 KiB maximum and the same process later reached 18h45m at 12,992 KiB. The September-17 installed cleanup-result/localization/root-title App passed rendered Home/History/Settings navigation and 180 one-second Settings/native-popup samples with a 37,520 KiB maximum during repeated Accessibility traversal. These bounded observations still do not establish the exact intermittent trigger, multi-day App behavior, packaged notifications or every menu organizer/display arrangement.
 - No Intel/universal verification, signed/notarized distribution, automatic update path or public release is claimed. Recognition of agent-browser/Puppeteer is not controlled field acceptance.
 
 ## Publication preparation

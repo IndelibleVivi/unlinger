@@ -11,7 +11,7 @@ Unlinger 在 macOS 上维护自动化工作留下的资源：经过验证的浏�
 ## 现在能做什么
 
 - **自动维护 uv 缓存。** 源码支持 `uv 0.11.20 cache prune`，维护默认 `~/.cache/uv`，包括 uv 自己的可重建缓存执行环境。原生锁保护正在运行的 uv 工作；忙碌时延后 15 分钟，健康 enforce 模式按周维护，进程巡检独立继续。App 和 CLI 展示独立状态与持久结果。参考安装已包含此能力，[当前状态](docs/current-state.md) 记录有限的实机证据与尚未验证的可靠性边界；维护本身不升级 uv、不接管自定义缓存位置、不清理项目 `.venv` 或用户成果。
-- **自动维护默认 Node 编译缓存。** 源码准入 Apple Silicon 上的 Node `26.7.0`，仅处理当前用户 Darwin 默认临时位置中精确版本/V8-tag bucket 内的缓存。健康 enforce 模式按周维护，无需逐任务登记。Unlinger 验证 Node 文件格式和冻结的文件身份，先写入 PREPARED，再移除符合条件的普通文件；目录、自定义位置、未知内容、项目文件和用户成果保持保护。Pause 会取消精确 attempt，即使马上 Resume 也不续上旧动作。App 和 CLI 单独展示 Node 结果，以 Unlinger 的文件计数和逻辑大小估算记账，不并入 uv 或浏览器成绩。[缓存安全说明](docs/SAFETY.md#node-compile-cache-exception) 记录并发边界，[当前状态](docs/current-state.md) 记录安装与真实自动清理结果。
+- **自动维护默认 Node 编译缓存。** 源码准入 Apple Silicon 上的 Node `26.7.0`，仅处理当前用户 Darwin 默认临时位置中精确版本/V8-tag bucket 内的缓存。健康 enforce 模式按周维护，无需逐任务登记。Unlinger 验证 Node 文件格式和冻结的文件身份，先写入 PREPARED，再移除符合条件的普通文件；目录、自定义位置、未知内容、项目文件和用户成果保持保护。Pause 会取消精确 attempt，即使马上 Resume 也不续上旧动作。App 和 CLI 单独展示 Node 结果，以 Unlinger 的文件计数和逻辑大小估算记账，不并入 uv 或浏览器成绩。参考安装已包含此能力。[缓存安全说明](docs/SAFETY.md#node-compile-cache-exception) 记录并发边界，[当前状态](docs/current-state.md) 记录安装与真实自动清理结果。
 - **看见遗留会话及其原因。** 原生进程快照、版本兼容性、保护原因和脱敏的本地历史。
 - **跟踪一个命令的浏览器生命周期。** `unlinger task run -- COMMAND` 注册实际 command owner；兼容的 Playwright CLI 会话在任务结束后进入候选判断。任务结束本身不授权清理。
 - **准确解释普通 Playwright 为什么受保护。** 源码能识别已评估的 `playwright-core` `1.62.1` daemon 形态；如果宿主没有提供精确生命周期证据，App 会明确说明并保留会话不动。Operator schema v1 与 `unlinger session` 已提供 adapter primitive，但目前还没有 Codex adapter 自动驱动它。

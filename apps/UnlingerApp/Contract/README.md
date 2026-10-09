@@ -11,7 +11,7 @@
 - `schema_version: 2`：保留在[`v2/`](v2/)作为历史审计证据；当前server在dispatch前以schema-v1 framing返回typed `unsupported_schema`；
 - source App只发送v5，不会silent downgrade到v4/v3或改走v1 mutation/lifecycle path。
 
-Source 使用 SQLite v14 和 frontend v5，保留 v4/v3 compatibility 与 operator v1。安装 generation、App artifact、activation 与 dated field evidence 由 [`current-state.md`](../../../docs/current-state.md) 维护。App 只能投影 backend current truth，不能借历史结果自行赋予或扩大 signal/file-deletion authority。
+Source 与参考安装使用 SQLite v14 和 frontend v5，保留 v4/v3 compatibility 与 operator v1。安装 generation、App artifact、activation 与 dated field evidence 由 [`current-state.md`](../../../docs/current-state.md) 维护。App 只能投影 backend current truth，不能借历史结果自行赋予或扩大 signal/file-deletion authority。
 
 ## Transport and trust
 

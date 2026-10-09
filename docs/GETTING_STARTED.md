@@ -147,8 +147,8 @@ upkeep is weekly. A native lock refusal is deferred for 15 minutes, allowing
 ongoing uv work to finish normally. Pause/disarm/drain cancels the owned child;
 process observation keeps running during slow maintenance. Failed/interrupted
 operations may have partial effects and never promise reclaimed space. Validation
-uses test-created caches only. Source uses SQLite v14; the reference installation
-still uses v13 until the Node transaction is accepted. Any
+uses test-created caches only. Source and the accepted reference installation
+use SQLite v14, including separate Node authority. Any
 replacement retains its applicable transactional restart/rollback proof. Exact
 installed status and bounded live results are in [current state](current-state.md).
 
