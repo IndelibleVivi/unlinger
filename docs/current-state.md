@@ -29,9 +29,26 @@ RSS 28,144 KiB. This is fixture evidence, not installed or Node Home interaction
 The existing architecture source/export was regenerated and visually checked.
 The optional v5 Node field keeps its own counters separate from uv/native
 accounting and browser impact; old v5 and v4/v3 behavior is retained.
-Transaction and normal automatic-result checks are pending.
-The installed generation41 remains accepted/ReadyEnforce on SQLite v13 at this
-checkpoint. [Safety](SAFETY.md#node-compile-cache-exception) owns the exact boundary.
+The first exact-head candidate `48d9b72` passed macOS CI and generation 42
+passed installed socket checks before and after restart (7 + 7), but its producer
+queries returned unsupported/unavailable observations on the managed service
+despite exact supported local versions. The explicit query cwd was the only
+related behavioral change in the shared helper; its removal remains a candidate
+fix until checked on the installed service. Its real rollback
+restored generation 41: the old binary reopened SQLite v13 healthy, quiescent,
+unarmed and report-only, and uv discovery returned available. Source restores
+the established inherited-cwd spawn path for fixed version/builtin queries;
+empty environment and absence of project-script loading remain unchanged.
+The corrected artifact still requires exact-head verification, transactional
+installation and a normal automatic result. The restored generation 41 subsequently re-entered terminal `Failed` with
+path-free `SystemIoFailure` / extended code 4874 (WAL shared-memory sizing).
+The startup volume had about 227 MiB available; an isolated database on that
+volume completed 32 transactions without error, so the cause is not established.
+The new packaged App is installed with the prior bundle preserved, and its
+normal LaunchServices process remains alive; current desktop interaction is not
+yet accepted. A workspace rerun hit the previously observed owned-inode kernel
+query failure; the exact test passed alone, followed by a fresh full workspace
+and release pass without weakening the assertion. [Safety](SAFETY.md#node-compile-cache-exception) owns the exact boundary.
 
 ## Recovery and packaged App resource repair (2026-10-09; generation-41 checkpoint)
 

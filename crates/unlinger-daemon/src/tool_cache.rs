@@ -1344,10 +1344,11 @@ pub(crate) fn read_producer_output(
 ) -> Option<String> {
     // Bind safety before executing even the read-only version command.
     ProducerBinding::capture(binary).ok()?;
+    // The fixed version/builtin queries load no project input. Keep the
+    // established inherited-cwd spawn path used by the managed uv service.
     let mut child = OwnedChild(
         Command::new(binary)
             .args(arguments)
-            .current_dir("/")
             .env_clear()
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
