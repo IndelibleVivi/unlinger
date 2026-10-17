@@ -829,9 +829,15 @@ The publication candidate passed fresh local formatting, strict workspace clippy
   that no automatic-cleanup result is available. The history endpoint's bounded
   recent window now contains only protected observations; the older cleanup rows
   were pruned even though independent impact/recent-settlement authority remains.
-  The App does not currently synthesize a history row from that separate
-  authority. This is a real installed usability mismatch, not loss of the impact
-  totals and not evidence of a new generation-36 cleanup.
+  Source was repaired on 2026-10-17: the exact typed recent settlement can
+  supply a missing history row, and the newer terminal result wins when both
+  sources exist. Current protection, outcome truth, and retained-event detail
+  remain intact. Fresh source validation passed 122 Swift tests in 19 suites;
+  all 18 history regressions passed, and a baseline run rejected the old mapper
+  with 13 issues.
+  This repair was not installed, bundle-activated, or visually accepted, so it
+  does not close the reference installation finding. It changes no daemon,
+  SQLite, cleanup eligibility, impact totals, or retained event history.
 - The original generation-17 terminal SQLite disk-I/O failure cause remains unproved. Exact-instance containment/recovery and later transactional replacement succeeded; a later healthy database check does not establish the original cause.
 - The command wrapper does not integrate every Codex App host or browser tool automatically. The optional session-owner primitive introduced in v10 and retained by source v14 has no supported automatic Codex adapter. A bounded feasibility review found that later hooks/observers and turn-level lifecycle events cannot supply the current contract's exact parent/child activation plus thread-to-controller/session binding; a real adapter needs Codex host support. Exact CLI/browser compatibility, lifetime/client proof and all ordinary gates remain required; unregistered, active-owner, reused, unsupported or unverified controllers stay protected.
 - Chrome clone observation accepts the actual `.app.bundle` shape and no-follow framework links. Historical installed generation 34 evaluated candidates independently across two production-interval observations, removed eight stable unreferenced clones and retained the one candidate containing the continuously running ordinary Chrome main. Generation 45 retains that gate; a current-generation clone deletion has not been field-verified. Its readback includes an inherited September-22 terminal result from generation 39; it is not a generation-45 action. The generation-34 point does not prove generation-36 result persistence, multi-day behavior, all future Chrome clone shapes or physical APFS reclaim equal to the logical byte reduction.
