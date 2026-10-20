@@ -248,7 +248,7 @@ V1 may expose bounded internal diagnostic identities needed by CLI/service trans
 
 Current source accepts schemas 1, 3, 4 and 5. The source App emits schema v5 only and treats a v4-, v3-, or v1-only endpoint as incompatible rather than silently downgrading. Schema v4 preserves its prior atomic overview and response shapes; schema v3 preserves its existing commands; schema v1 remains operator-only and returns a trusted `unsupported_schema` envelope to an unsupported frontend request.
 
-Current source uses SQLite v14 and serves frontend v5 with v4/v3 compatibility and operator v1. V14 adds independent Node compile-cache authority to v13 uv/retired-npm separation; v11 clone results, v10 optional host ownership and earlier migrations remain intact. The current reference installation is accepted generation 45 on SQLite v14. Its unchanged-artifact candidate generation 44 completed restart/socket checks and really rolled back to generation 41 reopening v13; fresh generation 45 repeated restart/socket checks before acceptance and restoration of the existing enforce policy. [Current state](current-state.md) owns exact installed evidence.
+Current source uses SQLite v14 and serves frontend v5 with v4/v3 compatibility and operator v1. V14 adds independent Node compile-cache authority to v13 uv/retired-npm separation; v11 clone results, v10 optional host ownership and earlier migrations remain intact. The current reference installation is accepted generation 47 on SQLite v14 from `e8faf7a`. Candidate generation 46 completed restart/socket checks and really rolled back to the exact generation-45 daemon reopening v14; the unchanged artifact freshly installed as generation 47 and repeated restart/socket checks before acceptance and restoration of the existing enforce policy. [Current state](current-state.md) owns exact installed evidence.
 
 The service retains the prior snapshot and exact generation identity after candidate readiness, blocks mode/install/uninstall mutations during the lease, and exposes explicit report-only restart, accept and rollback commands. A first install can roll back to the absence of a prior service; an upgrade restores the exact prior generation/database. Readiness, acceptance and enforcement are separate durable states.
 
@@ -341,7 +341,7 @@ ordinary observations must not recover an active cache attempt.
 Operator cleanup activity includes the separate cache activity; browser phase
 continues to describe browser/process work. Paths and raw native output are never
 persisted or sent over IPC. A pre-v13 binary requires rollback's restored database.
-Installed generation 45 uses v14 according to [current evidence](current-state.md). A pre-v14 binary likewise requires the rollback-restored v13 database.
+Installed generation 47 uses v14 according to [current evidence](current-state.md). A pre-v14 binary likewise requires the rollback-restored v13 database.
 
 SQLite v14 adds an independent `node_compile_cache_latest` table and the optional
 v5 `node_compile_cache_maintenance` field with `kind: node_compile_cache`.

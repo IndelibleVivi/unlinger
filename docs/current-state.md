@@ -1,8 +1,8 @@
 # Current state
 
-**Updated:** 2026-10-20. **Programme:** 0.1. **Reader posture:** experimental developer source preview; not a signed/notarized App release or multi-day reliability claim.
+**Updated:** 2026-10-21. **Programme:** 0.1. **Reader posture:** experimental developer source preview; not a signed/notarized App release or multi-day reliability claim.
 
-## Reliability repair (2026-10-20; source candidate, installation pending)
+## Reliability repair (2026-10-20; installed and activated)
 
 Fresh service readback found generation 45 loaded with exact generation/binary
 identity but terminal `Failed`, unhealthy/not ready and effective report-only.
@@ -13,7 +13,7 @@ instance in report-only mode, verified fresh healthy/quiescent readiness and
 restored the existing enforce policy. Recovered generation 45 subsequently
 completed a normally scheduled native uv attempt with zero reported removals;
 zero counters mean completion, not proof of no effects. Node on that unchanged
-binary remains blocked by its temporary entry. A test-owned six-lane workload
+binary remained blocked by its temporary entry before the upgrade. A test-owned six-lane workload
 completed 1,200 history/cache
 reads and writes without reproducing that error. Source therefore retains the
 existing store architecture and terminal fail-close policy. It adds path-free
@@ -41,11 +41,46 @@ isolated report-only v5 socket gate passes 7 + restart + 7 with no cache attempt
 The final default history Accessibility/RSS lane passes 461 traversals with zero
 misses and maximum RSS 80,288 KiB; the existing owned-child gate with the
 service-failed Home fixture passes 457 traversals with zero misses and maximum
-RSS 85,296 KiB. These are fixture results. Candidate installation, App activation
-and ordinary-window acceptance remain pending at this source checkpoint.
-Historical installed results below keep their own dates.
+RSS 85,296 KiB. These are fixture results. Artifact `e8faf7a` is pushed and passes
+[exact-head macOS CI](https://github.com/IndelibleVivi/unlinger/actions/runs/39448729783).
 
-## Node compile-cache extension (2026-10-09; installed and activated)
+Generation 46 passed 7 + report-only restart + 7 schema-v5 socket checks, then
+actually rolled back to generation 45. Its exact old CLI/daemon reopened SQLite
+v14 healthy, quiescent, unarmed and report-only. The unchanged candidate freshly
+installed as generation 47 and repeated those checks before acceptance and
+separate restoration of the existing enforce policy. Generation 47 is healthy
+`ReadyEnforce`, armed to its exact generation with a fresh epoch, zero service
+problems and no rollback lease. Both installed binaries match the startup-volume
+candidate; PATH resolves to the exact generation-47 CLI. Both uv and Node were
+available in the candidate/restart acceptance readbacks. The following normal
+observation returned `unsupported` for both producer-discovery lanes, with no new
+maintenance attempt. The daemon remains healthy, but a successful generation-47
+normal Node maintenance result is unverified. No manual cache operation, timer
+override or live-cache injection is used; the native temporary entry is retained.
+
+A bounded observer on 2026-10-20/21 completed 76 readbacks across 19m47s:
+all retained the same exact healthy/ready/enforce generation-47 instance, with
+zero read errors. The same exact App process remained present in all 76 sparse
+identity/resource samples, maximum RSS 42,496 KiB and sampled CPU 10.0%. These
+are bounded polling measurements, not a repeated AX stress gate or multi-day
+acceptance. The safe temporary entry retained its identity and metadata; no new
+Node automatic deletion result was observed. The producer-discovery refusal is
+unexplained and must not be reported as a successful maintenance attempt.
+
+The matching App is installed, with strict signature/resource verification and
+the displaced bundle preserved. Ordinary-window Home/History/Settings, current
+protected-session roster/detail and the native notification popup were read and
+exercised across the installed boundary. The App also exported a valid schema-v5
+diagnostic document to an owner-private 0600 file without private path content.
+The current History empty state matches read-only SQLite: no cleanup detail or
+cleanup-impact rows remain within the 14-day detail retention window; lifetime
+impact separately retains the historical two proved reclaims / 16 processes /
+256,671,744 estimated memory bytes. Missing terminal details are not recreated
+from that aggregate. Notifications remain denied, and the ad-hoc login item is
+off/unregistered. No new browser-process or Chrome-clone removal is claimed at
+this checkpoint. Historical installed results below keep their own dates.
+
+## Historical Node compile-cache extension (2026-10-09; installed and activated)
 
 The owner approved the exact Node exception to producer-native maintenance,
 including source/App/CLI integration, transactional installation and restoration
@@ -867,26 +902,21 @@ The publication candidate passed fresh local formatting, strict workspace clippy
 
 ## Known limits and verification gaps
 
-- The installed Home surface truthfully shows two independently retained proved
-  reclaims and the most recent settlement, while Browser History currently says
-  that no automatic-cleanup result is available. The history endpoint's bounded
-  recent window now contains only protected observations; the older cleanup rows
-  were pruned even though independent impact/recent-settlement authority remains.
-  Source was repaired on 2026-10-17: the exact typed recent settlement can
-  supply a missing history row, and the newer terminal result wins when both
-  sources exist. Current protection, outcome truth, and retained-event detail
-  remain intact. Fresh source validation passed 122 Swift tests in 19 suites;
-  all 18 history regressions passed, and a baseline run rejected the old mapper
-  with 13 issues.
-  This repair was not installed, bundle-activated, or visually accepted, so it
-  does not close the reference installation finding. It changes no daemon,
-  SQLite, cleanup eligibility, impact totals, or retained event history.
-- The original generation-17 terminal SQLite disk-I/O failure cause remains unproved. Exact-instance containment/recovery and later transactional replacement succeeded; a later healthy database check does not establish the original cause.
+- Installed generation 47 shows the independently retained two proved browser
+  reclaims while History is empty. Read-only SQLite contains no retained cleanup
+  events or cleanup-impact detail rows; those details have passed their 14-day
+  retention window. A lifetime aggregate is not enough to reconstruct receipts.
+  The October-17 settlement fallback and October-20 same-millisecond ordering/
+  anchoring repairs are installed; the fallback can supply a row only while the
+  daemon still returns that exact recent settlement. The October-17 baseline
+  rejected the old mapper with 13 issues; current Swift validation passes 131
+  tests, and ordinary Home/History navigation is accepted at its observed scope.
+- The original generation-17 SQLite disk-I/O failure and generation-45 `CannotOpen` causes remain unproved. Exact-instance containment/recovery and later transactional replacement succeeded; a later healthy database check does not establish the original cause.
 - The command wrapper does not integrate every Codex App host or browser tool automatically. The optional session-owner primitive introduced in v10 and retained by source v14 has no supported automatic Codex adapter. A bounded feasibility review found that later hooks/observers and turn-level lifecycle events cannot supply the current contract's exact parent/child activation plus thread-to-controller/session binding; a real adapter needs Codex host support. Exact CLI/browser compatibility, lifetime/client proof and all ordinary gates remain required; unregistered, active-owner, reused, unsupported or unverified controllers stay protected.
-- Chrome clone observation accepts the actual `.app.bundle` shape and no-follow framework links. Historical installed generation 34 evaluated candidates independently across two production-interval observations, removed eight stable unreferenced clones and retained the one candidate containing the continuously running ordinary Chrome main. Generation 45 retains that gate; a current-generation clone deletion has not been field-verified. Its readback includes an inherited September-22 terminal result from generation 39; it is not a generation-45 action. The generation-34 point does not prove generation-36 result persistence, multi-day behavior, all future Chrome clone shapes or physical APFS reclaim equal to the logical byte reduction.
+- Chrome clone observation accepts the actual `.app.bundle` shape and no-follow framework links. Historical installed generation 34 evaluated candidates independently across two production-interval observations, removed eight stable unreferenced clones and retained the one candidate containing the continuously running ordinary Chrome main. Generation 47 retains that gate; a current-generation clone deletion has not been field-verified. Its readback includes an inherited September-22 terminal result from generation 39; it is not a generation-47 action. The generation-34 point does not prove generation-36 result persistence, multi-day behavior, all future Chrome clone shapes or physical APFS reclaim equal to the logical byte reduction.
 - All artifact admission is disabled. The dormant DAP engine still has a quarantine-after-crash recovery gap and a final pathname-swap TOCTOU. Native pathname-reference tests also intermittently returned no reference for an owned open ordinary or `O_EVTONLY` descriptor under parallel execution; exact serial tests passed, and the cause is unresolved. The active process path does not use that query. [Safety](SAFETY.md) owns these boundaries.
 - The old zero-deadline offline-lock test failed because a concurrent fork can inherit an `O_CLOEXEC` descriptor until exec. A deterministic owned-child probe established that cause; `f22e08e` retains held-lock denial and gives post-release acquisition its existing bounded wait. The final exact-head CI passed. A later local full workspace run reproduced the separate dormant native-query failures above; no assertions were weakened.
-- The source fixture passed 460 Accessibility-tree probes with zero read failures and an external 22,208 KiB final RSS sample. The installed `628d822` App's earlier 300-sample/one-tree acceptance was superseded by the later 19-GB recurrence. The installed `c17e60f` native-popup repair then passed 2,400 one-second RSS samples with a 22,192 KiB maximum and the same process later reached 18h45m at 12,992 KiB. The September-17 installed cleanup-result/localization/root-title App passed rendered Home/History/Settings navigation and 180 one-second Settings/native-popup samples with a 37,520 KiB maximum during repeated Accessibility traversal. These bounded observations still do not establish the exact intermittent trigger, multi-day App behavior, packaged notifications or every menu organizer/display arrangement.
+- An earlier source fixture passed 460 Accessibility-tree probes with zero read failures and an external 22,208 KiB final RSS sample. The installed `628d822` App's earlier 300-sample/one-tree acceptance was superseded by the later 19-GB recurrence. The installed `c17e60f` native-popup repair then passed 2,400 one-second RSS samples with a 22,192 KiB maximum and the same process later reached 18h45m at 12,992 KiB. The September-17 installed cleanup-result/localization/root-title App passed rendered Home/History/Settings navigation and 180 one-second Settings/native-popup samples with a 37,520 KiB maximum during repeated Accessibility traversal. These bounded observations still do not establish the exact intermittent trigger, multi-day App behavior, packaged notifications or every menu organizer/display arrangement.
 - No Intel/universal verification, signed/notarized distribution, automatic update path or public release is claimed. Recognition of agent-browser/Puppeteer is not controlled field acceptance.
 
 ## Publication preparation

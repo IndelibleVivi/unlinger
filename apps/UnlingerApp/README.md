@@ -29,7 +29,7 @@ The `service-failed` fixture exercises persistent failure presentation without c
 
 Notification delivery is a best-effort local projection over bounded status/history refreshes, not a gap-free event feed. The App reads current OS authorization every time; a denied prompt does not affect daemon behavior and is not repeatedly requested.
 
-On macOS 26, the system-level **System Settings → Menu Bar → Allow in the Menu Bar → Unlinger** switch must be on before AppKit can place the status item. Third-party organizers still own their section policy: with Thaw, put the stable Unlinger item in **Visible**. The current installed bundle was verified with Thaw 2.0.1-rc.1 on one built-in display; that bounded result does not claim every organizer, version, display or auto-hidden-menu-bar arrangement.
+On macOS 26, the system-level **System Settings → Menu Bar → Allow in the Menu Bar → Unlinger** switch must be on before AppKit can place the status item. Third-party organizers still own their section policy: with Thaw, put the stable Unlinger item in **Visible**. An earlier installed bundle was verified with Thaw 2.0.1-rc.1 on one built-in display; that bounded result does not claim every organizer, version, display or auto-hidden-menu-bar arrangement.
 
 ## Layout
 
@@ -74,26 +74,28 @@ Deterministic product-state QA can instead use `UNLINGER_FIXTURE=browser-clear|b
 
 ## Installed boundary
 
-The current reference is the Node-aware, resource-repaired schema-v5 App from
-`48d9b72`, against accepted generation 45 / SQLite v14 from `346daa9`, installed
-on 2026-10-09. Source checks pass 110 Swift tests in 19 suites and relocated
-release-bundle resource verification; the installed resource check also passes.
-Generation 44 and fresh generation 45 each passed all seven v5 socket checks
-before and after report-only restart, with an actual rollback to the old
-41/v13 daemon between them. The existing enforce policy is restored.
-A normal LaunchServices App process remains alive independently of the observer;
-88 sparse identity/resource samples across 17m31s reached a maximum RSS of
-14,112 KiB. These are separate from the earlier resource-repair App's 300-sample
-guard and do not prove visual behavior. The earlier same-day uv result belongs to recovered
-generation 39, while Node automatic-result evidence belongs to its own authority.
+The current reference is the schema-v5 App from `e8faf7a`, installed with
+accepted generation 47 / SQLite v14 on 2026-10-20. That source passes 131 Swift
+tests in 19 suites, 11 bundle-verifier tests and relocated release-resource
+verification. The installed copy passes strict signature/resource verification.
+Generation 46 and fresh generation 47 each pass 7 + report-only restart + 7 v5
+socket checks, with an actual rollback to the exact old 45/v14 daemon between
+them. The existing enforce policy is restored after separate acceptance.
 
-The console is unlocked and source history Accessibility/RSS passed 463
-traversals with zero misses. Current installed ordinary-window visual/AX
-acceptance remains incomplete because the desktop transport cannot acquire a
-window from the menu-only process. Notification authorization is denied;
-notification delivery and ad-hoc login-item registration remain unaccepted.
-The intermittent historical layout trigger is still unresolved.
-[Current state](../../docs/current-state.md) owns exact evidence.
+Ordinary-window Home, History, Settings, the protected-session roster/detail
+and the native notification popup were exercised against the installed service.
+The App diagnostic export also produced a valid schema-v5 private 0600 file.
+History is currently empty:
+its 14-day terminal details have expired, while independent lifetime impact
+still retains the older aggregate. The App does not reconstruct missing receipts
+from that aggregate. Notification authorization remains denied and the ad-hoc
+login item remains off/unregistered; delivery is not accepted. The historical
+intermittent layout trigger and multi-day reliability remain unresolved.
+The source fixture history/RSS lane passes 461 traversals with zero misses and
+maximum RSS 80,288 KiB; service-failed Home passes 457 with zero misses and
+maximum RSS 85,296 KiB. These fixture measurements do not become installed-App
+resource measurements. [Current state](../../docs/current-state.md) owns current
+runtime samples and the dated earlier App evidence.
 
 The September-21 installation was the schema-v5 App against generation 39 / SQLite
 v13, with the uv maintenance section, durable Chrome clone-result presentation
