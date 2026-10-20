@@ -154,6 +154,7 @@ public enum BrowserPopoverSection: Equatable, Hashable, Sendable {
 public struct BrowserOverview: Equatable, Sendable {
     public var phase: BrowserOverviewPhase
     public var tone: BrowserOverviewTone
+    public var requiresServiceAttention: Bool
     public var headlineKey: String
     public var detailKey: String?
     public var modeKey: String

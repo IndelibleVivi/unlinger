@@ -135,6 +135,7 @@ final class UnlingerAppDelegate: NSObject, NSApplicationDelegate {
                     allowsWindowPresentation: true
                 )
             }
+            menuBarController?.observe(environment.state)
         }
     }
 

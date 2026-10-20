@@ -11,7 +11,10 @@ public enum BrowserHistoryMapper {
         recentSettlement: RecentBrowserSettlement?,
         mode: EffectiveMode?
     ) -> [BrowserHistoryEntryPresentation] {
-        var groupedEvents = Dictionary(grouping: events, by: \HistoryEvent.incidentId)
+        // Swift's stable sort preserves the daemon's durable array order for
+        // equal timestamps. Opaque tokens identify events; they are not clocks.
+        let newestFirst = events.sorted { $0.occurredAtUnixMillis > $1.occurredAtUnixMillis }
+        var groupedEvents = Dictionary(grouping: newestFirst, by: \HistoryEvent.incidentId)
         if let recentSettlement,
            groupedEvents[recentSettlement.incidentID] == nil
         {
@@ -67,7 +70,7 @@ public enum BrowserHistoryMapper {
         mode: EffectiveMode?
     ) -> BrowserHistoryEntryPresentation? {
         let terminalEvents = events.filter(isTerminalCleanup)
-        let latestTerminal = terminalEvents.max(by: eventPrecedes)
+        let latestTerminal = terminalEvents.first
         if latestTerminal == nil, let recentSettlement {
             return settlementEntry(
                 recentSettlement,
@@ -79,9 +82,7 @@ public enum BrowserHistoryMapper {
         else { return nil }
         if let recentSettlement,
            recentSettlement.eventToken != terminalEvent.eventToken,
-           (recentSettlement.occurredAt > Date(unixMillis: terminalEvent.occurredAtUnixMillis)
-               || (recentSettlement.occurredAt == Date(unixMillis: terminalEvent.occurredAtUnixMillis)
-                   && terminalEvent.eventToken < recentSettlement.eventToken))
+           recentSettlement.occurredAt > Date(unixMillis: terminalEvent.occurredAtUnixMillis)
         {
             return settlementEntry(
                 recentSettlement,
@@ -107,15 +108,14 @@ public enum BrowserHistoryMapper {
         recentSettlement: RecentBrowserSettlement?,
         mode: EffectiveMode?
     ) -> BrowserHistoryEntryPresentation? {
-        let anchoredEvents = events.filter {
-            $0.occurredAtUnixMillis <= terminalEvent.occurredAtUnixMillis
-        }
+        // The suffix also excludes a later observation in the same millisecond.
+        let anchoredEvents = events.drop { $0.eventToken != terminalEvent.eventToken }
         let latestObservation = anchoredEvents
             .compactMap { event -> (HistoryEvent, ObservationRecord)? in
                 guard case .observation(let observation) = event.payload else { return nil }
                 return (event, observation)
             }
-            .max { eventPrecedes($0.0, $1.0) }?.1
+            .first?.1
         let compatibility = latestObservation?.browserCompatibility
         guard case .cleanup(let terminalCleanup) = terminalEvent.payload else { return nil }
         let matchingSettlement = recentSettlement?.eventToken == terminalEvent.eventToken
@@ -221,13 +221,6 @@ public enum BrowserHistoryMapper {
     private static func isTerminalCleanup(_ event: HistoryEvent) -> Bool {
         guard case .cleanup = event.payload else { return false }
         return [.cleared, .failed, .revived].contains(event.state)
-    }
-
-    private static func eventPrecedes(_ lhs: HistoryEvent, _ rhs: HistoryEvent) -> Bool {
-        if lhs.occurredAtUnixMillis == rhs.occurredAtUnixMillis {
-            return lhs.eventToken < rhs.eventToken
-        }
-        return lhs.occurredAtUnixMillis < rhs.occurredAtUnixMillis
     }
 
     private static func observationsCanCoalesce(

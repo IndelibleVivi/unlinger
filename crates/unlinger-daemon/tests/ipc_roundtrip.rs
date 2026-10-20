@@ -445,6 +445,15 @@ fn failed_managed_lifecycle_requires_restart_instead_of_reusing_first_scan_compl
         durable.startup_phase,
         unlinger_daemon::ManagedStartupPhase::Failed
     );
+    let first = failed.first_failure.expect("capture the original failure");
+    assert_eq!(first.occurred_at_unix_millis, 1_050);
+    assert_eq!(first.message, "primary post-delivery cleanup failure");
+    assert_eq!(first.source_file, "ipc_roundtrip.rs");
+    assert!(first.source_line > 0);
+    control
+        .fail_closed(1_080, "later failed cycle")
+        .expect("reassert terminal containment");
+    assert_eq!(control.status().unwrap().first_failure, Some(first));
 }
 
 #[test]

@@ -278,12 +278,16 @@ and [header indices](https://github.com/nodejs/node/blob/v26.7.0/src/compile_cac
 define the file format and atomic temporary-file publication. Node treats a
 missing compile-cache file as a cache miss and can rebuild it; this disposable
 semantics permits normal concurrent Node execution without an open-file or
-process-age heuristic. A visible temporary writer blocks the whole bucket.
+process-age heuristic. Safe owned single-link regular files with Node's exact
+temporary-name shape remain untouched outside the frozen plan. They do not block
+maintenance of validated final files. A temporary name does not exempt symlinks,
+directories, hard links or writable/foreign objects from whole-bucket refusal.
 The scanner requires current-user-owned, single-link regular files, eight
 lower-case hex names, the five-word header, exact payload length and payload
 CRC. Symlinks, hard links, subdirectories, foreign contents, writable shapes,
 unsupported versions and incomplete validation prevent deletion. Inspection is
-bounded to 65,536 files, 2 GiB total and 120 seconds per scan. Payload CRC is
+bounded to 65,536 directory entries, 2 GiB of validated final-file bytes and
+120 seconds per scan. Payload CRC is
 validated with a fixed 64 KiB buffer, including larger native files; every file
 must fit in the remaining whole-scan byte budget.
 
@@ -292,7 +296,7 @@ commits before execution; the exact token/epoch lease is checked before each
 file removal. Producer/root/bucket/file identity is revalidated, and `unlinkat`
 is relative to the proved bucket descriptor with no recursive operation.
 Pause, Disarm, Drain and fail-close cancel that lease permanently; Resume does
-not restore it. A pre-effect changed plan or temporary writer may return `busy`
+not restore it. A pre-effect changed final-file plan may return `busy`
 and wait 15 minutes. Other completed/failed attempts retain the weekly clock.
 Unknown delivery or an interrupted PREPARED action fails the daemon closed,
 with no success counts inferred from later observations.

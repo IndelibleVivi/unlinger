@@ -428,8 +428,13 @@ semantics; absence of an open file or an old timestamp does not.
 The scanner binds the producer and default-root/bucket descriptors, admits only
 owned single-link regular files with exact lower-case cache-key names, and checks
 the actual five-word Node header, payload length and CRC. Foreign contents,
-symlinks, writable/unsupported shapes, visible temporary writers and incomplete
-bounded inspection prevent mutation. Other root-level buckets remain untouched.
+symlinks, writable/unsupported shapes and incomplete bounded inspection prevent
+mutation. On 2026-10-20 the owner approved retaining safe regular entries with
+Node's exact temporary-name shape outside the frozen plan while independently
+maintaining validated final files. Temporary files are never read for format
+proof or deleted; their age is not authority. A newly published final file still
+changes the frozen set and defers that attempt. Other root-level buckets remain
+untouched.
 The frozen plan rechecks exact identities before no-follow descriptor-relative
 unlinking; it never removes a directory, follows a symlink or adopts a newly
 published file into the plan. This admits normal producer concurrency and does

@@ -6,11 +6,14 @@ import Foundation
 public enum BrowserOverviewMapper {
     public static func make(
         connection: ConnectionState,
-        snapshot: BrowserOverviewSnapshot?
+        snapshot: BrowserOverviewSnapshot?,
+        readiness: Readiness? = nil
     ) -> BrowserOverview {
         let phase = connection == .live ? (snapshot?.phase ?? .unknown) : .unknown
+        let requiresServiceAttention = connection == .live && readiness == .failed
         let trusted = connection == .live
             && snapshot?.healthy == true
+            && readiness != .failed
             && snapshot?.freshness == .current
             && phase != .unknown
         let sessions = snapshot.map { snapshot in
@@ -22,7 +25,8 @@ public enum BrowserOverviewMapper {
             phase: phase,
             connection: connection,
             freshness: snapshot?.freshness,
-            mode: snapshot?.effectiveMode
+            mode: snapshot?.effectiveMode,
+            requiresServiceAttention: requiresServiceAttention
         )
         let currentIDs = Set(sessions.map(\.incidentID))
         let savedProtections = snapshot?.protection.items.filter {
@@ -32,7 +36,8 @@ public enum BrowserOverviewMapper {
 
         return BrowserOverview(
             phase: phase,
-            tone: tone(for: phase),
+            tone: requiresServiceAttention ? .attention : tone(for: phase),
+            requiresServiceAttention: requiresServiceAttention,
             headlineKey: copy.headline,
             detailKey: copy.detail,
             modeKey: modeKey(mode: snapshot?.effectiveMode, paused: snapshot?.pausedUntilUnixMillis),
@@ -210,9 +215,13 @@ public enum BrowserOverviewMapper {
         phase: BrowserOverviewPhase,
         connection: ConnectionState,
         freshness: ObservationFreshness?,
-        mode: EffectiveMode?
+        mode: EffectiveMode?,
+        requiresServiceAttention: Bool
     ) -> (headline: String, detail: String?) {
-        switch phase {
+        if requiresServiceAttention {
+            return ("browser.overview.failed", "browser.overview.failed.detail")
+        }
+        return switch phase {
         case .clear: ("browser.overview.clear", "browser.overview.clear.detail")
         case .active: ("browser.overview.active", "browser.overview.active.detail")
         case .verifying: ("browser.overview.verifying", "browser.overview.verifying.detail")

@@ -253,6 +253,8 @@ extension FixtureClient {
             FixtureClient(statusFixture: "status-scanning")
         case "paused":
             FixtureClient(statusFixture: "status-paused")
+        case "service-failed":
+            FixtureClient(statusFixture: "status-failed")
         case "recently-reclaimed", "browser-recent-settlement":
             BrowserFixtureClient(scenario: .recentSettlement)
         case "browser-impact-residue":

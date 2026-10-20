@@ -1,4 +1,5 @@
 import AppKit
+import Observation
 import SwiftUI
 
 /// AppKit owns the status item and popover lifecycle. This avoids coupling the
@@ -69,10 +70,50 @@ public final class MenuBarPopoverController: NSObject, NSPopoverDelegate {
         popover.contentViewController != nil
     }
 
+    var statusItemLabelForTesting: String? {
+        statusItem.button?.accessibilityLabel()
+    }
+
+    var statusItemToolTipForTesting: String? {
+        statusItem.button?.toolTip
+    }
+
+    var statusItemTintForTesting: NSColor? {
+        statusItem.button?.contentTintColor
+    }
+
     public func close() {
         if popover.isShown {
             popover.performClose(nil)
         }
+    }
+
+    /// Mirror AppState's existing stored presentation into the status item.
+    /// This observes publications already produced by the one polling loop.
+    public func observe(_ state: AppState) {
+        withObservationTracking {
+            updateStatusItem(for: state.browserOverview)
+        } onChange: { [weak self, weak state] in
+            Task { @MainActor in
+                guard let self, let state else { return }
+                self.observe(state)
+            }
+        }
+    }
+
+    func updateStatusItem(for overview: BrowserOverview) {
+        guard let button = statusItem.button else { return }
+        // Resolve copy inside observation tracking, including language changes.
+        let label = L10n.text(overview.headlineKey)
+        let help = overview.requiresServiceAttention
+            ? L10n.text("browser.overview.failed.detail")
+            : L10n.text("status_item.hint")
+        let tooltip = label + " · " + L10n.text(overview.modeKey)
+        let tint: NSColor? = overview.requiresServiceAttention ? .systemRed : nil
+        if button.contentTintColor != tint { button.contentTintColor = tint }
+        if button.toolTip != tooltip { button.toolTip = tooltip }
+        if button.accessibilityLabel() != label { button.setAccessibilityLabel(label) }
+        if button.accessibilityHelp() != help { button.setAccessibilityHelp(help) }
     }
 
     public func popoverDidClose(_ notification: Notification) {

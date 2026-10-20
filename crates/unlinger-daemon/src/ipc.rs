@@ -147,6 +147,15 @@ impl From<&StorageRecoveryOccurrence> for StorageRecoveryStatus {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct FirstFailure {
+    pub occurred_at_unix_millis: u64,
+    pub message: String,
+    /// Source basename and line only; never a local checkout/database path.
+    pub source_file: String,
+    pub source_line: u32,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct DaemonStatus {
     #[serde(default)]
     pub lifecycle_schema_version: u32,
@@ -220,6 +229,8 @@ pub struct DaemonStatus {
     pub most_recent_reclaim: Option<RecentReclaim>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_failure: Option<FirstFailure>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -329,6 +340,7 @@ impl DaemonStatus {
             ambiguous_incidents: 0,
             most_recent_reclaim: None,
             last_error: None,
+            first_failure: None,
         }
     }
 
@@ -1011,6 +1023,7 @@ impl ControlPlane {
         Ok(())
     }
 
+    #[track_caller]
     pub fn fail_closed(
         &self,
         now_unix_millis: u64,
@@ -1019,6 +1032,33 @@ impl ControlPlane {
         let message = bounded_message(&message.into());
         let mut status = self.lock_status()?;
         status.cancel_prompt_activities();
+        if status.first_failure.is_none() {
+            let location = std::panic::Location::caller();
+            let source_file = location
+                .file()
+                .rsplit(['/', '\\'])
+                .next()
+                .unwrap_or("daemon");
+            let first = FirstFailure {
+                occurred_at_unix_millis: now_unix_millis,
+                message: message.clone(),
+                source_file: source_file.to_owned(),
+                source_line: location.line(),
+            };
+            // launchd retains stderr across replacements. Record this before
+            // trying SQLite, which may itself be the failed component.
+            eprintln!(
+                "unlingerd: first failure [at_unix_millis={}, generation={:?}, pid={}, instance={}, source={}:{}]: {}",
+                first.occurred_at_unix_millis,
+                status.activation_generation,
+                status.pid,
+                status.instance_id,
+                first.source_file,
+                first.source_line,
+                first.message
+            );
+            status.first_failure = Some(first);
+        }
         let durable_result = if status.managed {
             managed_identity(&status).and_then(|(generation, instance_id)| {
                 self.store

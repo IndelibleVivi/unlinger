@@ -1,6 +1,49 @@
 # Current state
 
-**Updated:** 2026-10-09. **Programme:** 0.1. **Reader posture:** experimental developer source preview; not a signed/notarized App release or multi-day reliability claim.
+**Updated:** 2026-10-20. **Programme:** 0.1. **Reader posture:** experimental developer source preview; not a signed/notarized App release or multi-day reliability claim.
+
+## Reliability repair (2026-10-20; source candidate, installation pending)
+
+Fresh service readback found generation 45 loaded with exact generation/binary
+identity but terminal `Failed`, unhealthy/not ready and effective report-only.
+Its retained primary error was SQLite `CannotOpen`, extended code 14. A consistent
+read-only backup and `quick_check` returned `ok`; the first failure time and cause
+remain unproved. The installed transactional CLI replaced that exact Failed
+instance in report-only mode, verified fresh healthy/quiescent readiness and
+restored the existing enforce policy. Recovered generation 45 subsequently
+completed a normally scheduled native uv attempt with zero reported removals;
+zero counters mean completion, not proof of no effects. Node on that unchanged
+binary remains blocked by its temporary entry. A test-owned six-lane workload
+completed 1,200 history/cache
+reads and writes without reproducing that error. Source therefore retains the
+existing store architecture and terminal fail-close policy. It adds path-free
+SQLite source basename/line and an instance-sticky first-failure record, logged
+with time/generation/instance before the durable fail-close attempt.
+
+The owner approved independent maintenance of frozen validated Node final files
+while safe native temporary entries remain untouched. The scanner replaces its
+old whole-bucket temporary-writer refusal directly; no additional cache schema,
+retry mechanism or parallel cleanup path is added. Unknown/unsafe contents still
+block the bucket, and newly published final files invalidate the frozen plan.
+Sixteen focused Node tests and the explicit isolated real-producer continued
+import/offline-regeneration test pass. The current installed bucket's temporary
+entry has not been manually removed or changed. The repaired source App also keeps daemon order for equal-millisecond history
+events and anchors observation context before the exact terminal event. It
+replaces random-token comparison rather than retaining another ordering path.
+Home and the existing status item use live readiness for persistent Failed
+visibility without a new service state machine or polling loop. Fresh Swift
+validation passes 131 tests in 19 suites; Rust formatting, strict workspace
+clippy, 438 workspace tests (16 explicit opt-in ignored), release build and
+source-only doctor/dry-run pass. One local run reproduced the previously dated
+dormant `O_EVTONLY` reference-query miss; exact serial and final full workspace
+runs pass without changing its assertion. The final relocated bundle/resource gate and 11 verifier tests pass. The
+isolated report-only v5 socket gate passes 7 + restart + 7 with no cache attempt.
+The final default history Accessibility/RSS lane passes 461 traversals with zero
+misses and maximum RSS 80,288 KiB; the existing owned-child gate with the
+service-failed Home fixture passes 457 traversals with zero misses and maximum
+RSS 85,296 KiB. These are fixture results. Candidate installation, App activation
+and ordinary-window acceptance remain pending at this source checkpoint.
+Historical installed results below keep their own dates.
 
 ## Node compile-cache extension (2026-10-09; installed and activated)
 

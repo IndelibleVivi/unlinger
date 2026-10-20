@@ -18,6 +18,9 @@
 "browser.overview.updating.detail" = "当前浏览器结果尚未准备完成。";
 "browser.overview.unavailable" = "无法确认浏览器清理状态";
 "browser.overview.unavailable.detail" = "根据现有事实，Unlinger 无法给出当前浏览器结论。";
+"browser.overview.failed" = "后台服务已停止自动维护";
+"browser.overview.failed.detail" = "后台服务需要修复。App 仍可显示状态；进程清理和缓存维护已停止。";
+"status_item.hint" = "打开 Unlinger 查看当前浏览器与维护状态。";
 "browser.overview.verified_at" = "已于%@验证";
 "browser.overview.last_known_at" = "最近一次完成观察：%@";
 
@@ -95,9 +98,9 @@
 "cache.maintenance.unsupported" = "此 npm 安装版本尚不支持自动维护。";
 "cache.maintenance.unavailable" = "暂时无法安全检查此缓存。";
 "cache.maintenance.observed" = "最近检查：%@";
-"cache.maintenance.running" = "正在运行原生缓存维护。";
-"cache.maintenance.no_op" = "原生维护已完成";
-"cache.maintenance.completed" = "原生缓存维护已完成。";
+"cache.maintenance.running" = "正在进行缓存维护。";
+"cache.maintenance.no_op" = "缓存维护已完成";
+"cache.maintenance.completed" = "缓存维护已完成。";
 "cache.maintenance.failed" = "维护失败，可能已有部分变更。";
 "cache.maintenance.delivery_unknown" = "此次维护结果未知。";
 "cache.maintenance.estimate" = "原生工具的统计不等于实际释放的物理磁盘空间。零计数不表示没有副作用。";

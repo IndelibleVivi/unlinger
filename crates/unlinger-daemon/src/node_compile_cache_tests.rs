@@ -333,24 +333,75 @@ fn default_tag_only_unknown_version_and_custom_root_are_retained() {
 }
 
 #[test]
-fn temporary_writer_blocks_discovery_and_defers_prepared_execution() {
+fn temporary_writer_survives_maintenance_of_frozen_final_files() {
+    use std::io::Write;
+
+    let fixture = Fixture::new();
+    let bytes = fixture.seed("12345678");
+    let adapter = fixture.adapter().ok().unwrap();
+    let temporary = fixture.bucket().join("abcdef01.Abc123");
+    let mut writer = OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .mode(0o600)
+        .open(&temporary)
+        .unwrap();
+    writer.write_all(b"in-progress").unwrap();
+    assert!(fixture.adapter().is_ok());
+
+    let result = adapter.remove_files(&|| false);
+    assert_eq!(result.outcome, ToolCacheOutcome::Completed);
+    assert_eq!(result.removed_entry_count, Some(1));
+    assert_eq!(result.removed_logical_bytes, Some(bytes));
+    assert!(!fixture.bucket().join("12345678").exists());
+    assert_eq!(fs::read(&temporary).unwrap(), b"in-progress");
+    writer.write_all(b" writer continues").unwrap();
+    assert_eq!(
+        fs::read(&temporary).unwrap(),
+        b"in-progress writer continues"
+    );
+}
+
+#[test]
+fn a_newly_published_final_file_is_not_adopted_into_a_frozen_plan() {
     let fixture = Fixture::new();
     fixture.seed("12345678");
+    let bytes = fs::read(fixture.bucket().join("12345678")).unwrap();
+    let temporary = fixture.bucket().join("abcdef01.Abc123");
+    fs::write(&temporary, &bytes).unwrap();
     let adapter = fixture.adapter().ok().unwrap();
-    fs::write(
-        fixture.bucket().join("abcdef01.Abc123"),
-        b"in-progress writer",
-    )
-    .unwrap();
-    assert!(matches!(
-        fixture.adapter(),
-        Err(ToolCacheAvailability::Unavailable)
-    ));
+    fs::rename(&temporary, fixture.bucket().join("abcdef01")).unwrap();
+
     assert_eq!(
         adapter.remove_files(&|| false).outcome,
         ToolCacheOutcome::Busy
     );
-    assert!(fixture.bucket().join("12345678").exists());
+    assert_eq!(fs::read(fixture.bucket().join("12345678")).unwrap(), bytes);
+    assert_eq!(fs::read(fixture.bucket().join("abcdef01")).unwrap(), bytes);
+}
+
+#[test]
+fn temporary_names_do_not_exempt_unsafe_objects() {
+    for variant in ["directory", "symlink", "hardlink", "writable"] {
+        let fixture = Fixture::new();
+        fixture.seed("12345678");
+        let temporary = fixture.bucket().join("abcdef01.Abc123");
+        match variant {
+            "directory" => fs::create_dir(&temporary).unwrap(),
+            "symlink" => symlink(fixture.bucket().join("12345678"), &temporary).unwrap(),
+            "hardlink" => fs::hard_link(fixture.bucket().join("12345678"), &temporary).unwrap(),
+            "writable" => {
+                fs::write(&temporary, b"writer").unwrap();
+                fs::set_permissions(&temporary, fs::Permissions::from_mode(0o666)).unwrap();
+            }
+            _ => unreachable!(),
+        }
+        assert!(
+            matches!(fixture.adapter(), Err(ToolCacheAvailability::Unavailable)),
+            "{variant}"
+        );
+        assert!(fixture.bucket().join("12345678").exists());
+    }
 }
 
 #[test]

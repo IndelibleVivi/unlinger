@@ -10,8 +10,8 @@ pub mod tool_cache;
 pub use engine::{CycleReport, EngineConfig, EngineError, ReconciliationEngine};
 pub use ipc::{
     AttentionItem, AttentionKind, AttentionProjection, ControlError, ControlPlane, DaemonMode,
-    DaemonStatus, DiagnosticsBundle, IpcClient, IpcCommand, IpcError, IpcPayload, IpcServer,
-    RecentReclaim, StartupState, StorageRecoveryStatus,
+    DaemonStatus, DiagnosticsBundle, FirstFailure, IpcClient, IpcCommand, IpcError, IpcPayload,
+    IpcServer, RecentReclaim, StartupState, StorageRecoveryStatus,
 };
 pub use paths::{DaemonInstanceLock, DaemonLockError, LAUNCH_AGENT_LABEL, LocalPaths, PathError};
 pub use store::{

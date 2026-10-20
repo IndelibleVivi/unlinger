@@ -16,6 +16,14 @@ Rust authority：
 - internal→public projection：[`crates/unlinger-daemon/src/public_ipc.rs`](../crates/unlinger-daemon/src/public_ipc.rs)
 - shared ordinary-action policy：[`crates/unlinger-daemon/src/public_action_policy.rs`](../crates/unlinger-daemon/src/public_action_policy.rs)
 
+Operator-v1 `status` may additionally contain `first_failure`: the original
+instance failure time, bounded message and source basename/line. It is omitted
+before failure and remains unchanged after later failed cycles or Disarm. The
+same first failure is written to local stderr with generation/PID/instance
+before attempting SQLite fail-close, so store failure cannot erase the first
+log record. It grants no recovery or cleanup authority and does not alter
+frontend v5/v4/v3 DTOs.
+
 ## Socket and local-account boundary
 
 - Transport 是 per-user Unix-domain stream socket，不监听 TCP/UDP，也没有 normal-operation network traffic。
@@ -189,7 +197,7 @@ Recent settlement starts from the exact public reclaim `event_token`, loads that
 
 ## Public event identity, spans, impact, and outcomes
 
-SQLite v7 assigns every retained event a unique opaque `public_token`. V1 internal event IDs remain unchanged and frontend schemas never expose them. History uses `event_token`; recent reclaim and attention carry it when they originate from that durable event. Swift action identity adds stable action sequence and receipt namespace where required, so repeated stage/kind and artifact-only rows remain distinct.
+SQLite v7 assigns every retained event a unique opaque `public_token`. V1 internal event IDs remain unchanged and frontend schemas never expose them. History arrays are ordered by timestamp descending then durable internal event ID descending; incident-detail arrays use the ascending order. Public tokens are opaque identities and must not be compared to infer same-millisecond order. History uses `event_token`; recent reclaim and attention carry it when they originate from that durable event. Swift action identity adds stable action sequence and receipt namespace where required, so repeated stage/kind and artifact-only rows remain distinct.
 
 Equivalent consecutive observation rows coalesce under the latest event token. V5 observation events expose `observation_span { first_observed_at_unix_millis, observation_count }`; v4/v3 omit it and retain their earlier event shape. Cleanup events never become spans. Observation count/age retention cannot delete cleanup impacts or their at-least-14-day detail, while the lifetime aggregate remains after detail expiry. V6→v7 migration backfills retained terminal cleanup evidence and marks aggregate history `partial_backfill`; a fresh v7 database starts `complete`.
 

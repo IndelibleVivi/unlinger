@@ -20,13 +20,14 @@ Automatic process admission依然极窄：source与installed generation 34只允
 
 - schema-v5 `BrowserOverviewSnapshot`是phase、session compatibility、coverage、support catalog、attention/protection、exact recent settlement、independent impact与typed residue的唯一canonical product projection；daemon在一个status+roster snapshot boundary内生成它；
 - daemon先验证`healthy + ready + roster.current + no scan + equal non-null observation time`，不可信或不一致直接给`phase: unknown`；其余phase优先级在server内固定为attention → reclaiming → confirmed → verifying → active → protected → clear；
-- `BrowserOverviewMapper`只负责localized copy与display shape。Popover、ordinary window、detail和preview消费同一组presentation types；Swift不得重扫evidence、重做phase truth table或再次用history join settlement；
+- `BrowserOverviewMapper`只负责localized copy与display shape。Popover、ordinary window、detail和preview消费同一组presentation types；Swift不得重扫evidence、重做phase truth table或从history重算settlement事实；独立的bounded History索引可用exact typed recent settlement补回被prune的terminal row；
 - `BrowserHistoryMapper`是独立的bounded-history presentation path：history index只发布terminal cleanup outcome；detail消费server-owned observation span并保持cleanup receipt/state change独立。它可以用coherent current session补足当前row的product/version与状态，但不得生成compatibility、impact或cleanup authority；
+- terminal Failed提示只消费live status的`readiness == failed`，Home与唯一status item共享该presentation flag；不另建service状态机或轮询，paused/report-only/断连不冒充Failed；
 - transport unavailable、backend incompatible或stale retained snapshot在App层保持unknown，不能映射成all clear；失败后可保留上一份rows供查看，但不得恢复positive phase；
 - current row可以显示该row自身的member count/RSS；schema未提供global current totals，因此不得加总展示；
 - compatibility是typed `product + observed_version + automatic|observe_only|protected|unknown + optional reason_id`。Coverage copy只接受mixed/product/version/missing version、controller unverified、observation only、debug-peer visibility incomplete；未知ID显示generic copy且不原样展示；
 - support catalog必须来自embedded rule authority并携带`support_revision`，Swift fixture/UI不得维护另一份hard-coded eligibility matrix；
-- recent settlement由daemon用exact cleanup `event_token`与更早的event identity生成；同毫秒事件仍按durable event order处理。缺失proof返回nil，不由App猜family/process/memory/artifact facts；
+- recent settlement由daemon用exact cleanup `event_token`与更早的event identity生成；同毫秒事件仍按daemon数组中的durable event order处理，opaque token不参与先后比较；retained terminal与不同token的settlement同毫秒且没有跨来源顺序证明时保留retained terminal。缺失proof返回nil，不由App猜family/process/memory/artifact facts；
 - impact由独立durable authority提供tracking起点、历史完整度、terminal/proved counts、process count与measurement-complete memory total；UI不得从bounded history重新累计；
 - storage residue仅显示最新typed observation。Chrome code-sign clone logical bytes不是physical reclaim承诺；`automatic_cleanup_eligible`表示至少一份 candidate 已满足自己的稳定性、reference 与 lifecycle gate。它可以与 aggregate `reference_check: referenced`同时出现，表示另一份 candidate 仍在被引用。App只显示这个backend状态，没有删除入口、不能从该字段发起或授权清理；
 - `cleared_with_residue` 必须同时表达 process success与 artifact residue，不写成 process cleanup failed；

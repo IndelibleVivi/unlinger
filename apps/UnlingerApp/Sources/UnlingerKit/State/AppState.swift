@@ -455,7 +455,8 @@ public final class AppState {
     private func rebuildBrowserPresentation() {
         let overview = BrowserOverviewMapper.make(
             connection: connection,
-            snapshot: browserSnapshot
+            snapshot: browserSnapshot,
+            readiness: status?.readiness
         )
         if browserOverview != overview {
             browserOverview = overview

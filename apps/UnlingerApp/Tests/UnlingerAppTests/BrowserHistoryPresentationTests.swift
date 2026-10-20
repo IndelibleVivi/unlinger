@@ -96,8 +96,8 @@ struct BrowserHistoryPresentationTests {
         #expect(timeline[1].latestEvent.eventToken == "timeline-cleanup-1")
     }
 
-    @Test("terminal rows use the last observation at or before cleanup")
-    func terminalRowUsesObservationAtCleanupTime() async throws {
+    @Test("terminal rows use the last observation at or before cleanup", arguments: [UInt64(0), 1_000])
+    func terminalRowUsesObservationAtCleanupTime(afterGap: UInt64) async throws {
         let detail = try await FixtureClient(
             statusFixture: "status-report-only",
             incidentFixture: "incident-protected"
@@ -125,7 +125,7 @@ struct BrowserHistoryPresentationTests {
             return
         }
         after.eventToken = "observation-after-cleanup"
-        after.occurredAtUnixMillis = cleanup.occurredAtUnixMillis + 1_000
+        after.occurredAtUnixMillis = cleanup.occurredAtUnixMillis + afterGap
         afterObservation.family = "puppeteer"
         afterObservation.memberCount = 99
         afterObservation.residentMemoryBytes = 999_000_000
@@ -360,6 +360,96 @@ struct BrowserHistoryPresentationTests {
         #expect(entry.state == .failed)
         #expect(entry.reasonKey == "browser.session.reason.failed")
         #expect(entry.latestAt == Date(unixMillis: later.occurredAtUnixMillis))
+    }
+
+    @Test("history array order, not same-millisecond token order, picks the latest terminal")
+    func historyArrayOrderBreaksSameMillisecondTies() async throws {
+        let history = try await FixtureClient(
+            statusFixture: "status-recently-reclaimed",
+            historyFixture: "history-cleared"
+        ).history(limit: 10)
+        let source = try #require(history.first)
+        var older = source
+        older.eventToken = "00000000000000000000000000000000"
+        older.occurredAtUnixMillis = 2_000
+        older.state = .cleared
+        guard case .cleanup(var olderReceipt) = older.payload else {
+            Issue.record("expected cleanup fixture")
+            return
+        }
+        olderReceipt.state = .cleared
+        olderReceipt.overallOutcome = .cleared
+        olderReceipt.processOutcome = .cleared
+        older.payload = .cleanup(olderReceipt)
+
+        var newer = older
+        newer.eventToken = "ffffffffffffffffffffffffffffffff"
+        newer.state = .failed
+        guard case .cleanup(var newerReceipt) = newer.payload else {
+            Issue.record("expected cleanup fixture")
+            return
+        }
+        newerReceipt.state = .failed
+        newerReceipt.overallOutcome = .failed
+        newerReceipt.processOutcome = .failed
+        newer.payload = .cleanup(newerReceipt)
+
+        let newestFirst = try #require(
+            BrowserHistoryMapper.entries(
+                events: [newer, older],
+                currentSessions: [],
+                recentSettlement: nil,
+                mode: .enforce
+            ).first
+        )
+        let oldestFirst = try #require(
+            BrowserHistoryMapper.entries(
+                events: [older, newer],
+                currentSessions: [],
+                recentSettlement: nil,
+                mode: .enforce
+            ).first
+        )
+
+        #expect(newestFirst.state == .failed)
+        #expect(oldestFirst.state == .cleared)
+        #expect(newestFirst.eventCount == 2)
+        #expect(oldestFirst.eventCount == 2)
+    }
+
+    @Test("an equal-time retained terminal wins over an unorderable settlement token")
+    func equalTimeSettlementDoesNotGuessFromToken() async throws {
+        let history = try await FixtureClient(
+            statusFixture: "status-recently-reclaimed",
+            historyFixture: "history-cleared"
+        ).history(limit: 10)
+        var terminal = try #require(history.first)
+        terminal.eventToken = "ffffffffffffffffffffffffffffffff"
+        let settlement = RecentBrowserSettlement(
+            incidentID: terminal.incidentId,
+            eventToken: "00000000000000000000000000000000",
+            familyKey: "browser.family.playwright",
+            occurredAt: Date(unixMillis: terminal.occurredAtUnixMillis),
+            processCount: 3,
+            estimatedReclaimedMemoryBytes: 300,
+            revivalChecksCompleted: 2,
+            artifactOutcome: .reconciled,
+            overallOutcome: .revived,
+            isFallback: false
+        )
+
+        let entry = try #require(
+            BrowserHistoryMapper.entries(
+                events: [terminal],
+                currentSessions: [],
+                recentSettlement: settlement,
+                mode: .enforce
+            ).first
+        )
+
+        #expect(entry.state == terminal.state)
+        #expect(entry.latestAt == Date(unixMillis: terminal.occurredAtUnixMillis))
+        #expect(entry.eventCount == 1)
     }
 
     @Test("settlement outcomes remain truthful without invented active metrics")

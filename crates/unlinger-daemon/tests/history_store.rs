@@ -82,14 +82,79 @@ fn make_private(path: &PathBuf) {
 
 #[test]
 fn sqlite_failure_display_preserves_primary_and_extended_codes() {
-    let error = StoreError::Sqlite(rusqlite::Error::SqliteFailure(
+    let error = StoreError::from(rusqlite::Error::SqliteFailure(
         ffi::Error::new(ffi::SQLITE_IOERR_FSTAT),
         Some("disk I/O error".to_owned()),
     ));
 
-    assert_eq!(
-        error.to_string(),
-        "history SQLite failed [code=SystemIoFailure, extended_code=1802]: disk I/O error"
+    let message = error.to_string();
+    assert!(message.starts_with(
+        "history SQLite failed [code=SystemIoFailure, extended_code=1802] [source=history_store.rs:"
+    ));
+    assert!(message.ends_with("]: disk I/O error"));
+}
+
+#[test]
+fn concurrent_observation_and_cache_readers_keep_store_available() {
+    use std::sync::{Arc, Barrier};
+    use unlinger_protocol::ToolCacheAvailability;
+
+    let database = TempDatabase::new();
+    let store = HistoryStore::open(&database.0).expect("open store");
+    let barrier = Arc::new(Barrier::new(6));
+    std::thread::scope(|scope| {
+        let mut workers = Vec::new();
+        for lane in 0..6 {
+            let store = store.clone();
+            let barrier = barrier.clone();
+            workers.push(scope.spawn(move || {
+                let report = confirmed_report(&format!("inc-concurrent-{lane}"));
+                barrier.wait();
+                for cycle in 0..200 {
+                    let now = 1_700_000_000_000 + cycle;
+                    match lane {
+                        0 => {
+                            store.record_observation(now, &report)?;
+                        }
+                        1 => store
+                            .record_tool_cache_observation(now, ToolCacheAvailability::Available)?,
+                        2 => store.record_node_compile_cache_observation(
+                            now,
+                            ToolCacheAvailability::Available,
+                        )?,
+                        3 => {
+                            store.history(50)?;
+                        }
+                        4 => {
+                            store.latest_tool_cache_maintenance()?;
+                        }
+                        _ => {
+                            store.latest_node_compile_cache_maintenance()?;
+                        }
+                    }
+                }
+                Ok::<_, StoreError>(())
+            }));
+        }
+        for worker in workers {
+            worker
+                .join()
+                .expect("worker must not panic")
+                .expect("ordinary process/cache/IPC concurrency must not make SQLite unavailable");
+        }
+    });
+    assert!(
+        !store
+            .history(50)
+            .expect("read committed history")
+            .is_empty()
+    );
+    assert!(store.latest_tool_cache_maintenance().unwrap().is_some());
+    assert!(
+        store
+            .latest_node_compile_cache_maintenance()
+            .unwrap()
+            .is_some()
     );
 }
 

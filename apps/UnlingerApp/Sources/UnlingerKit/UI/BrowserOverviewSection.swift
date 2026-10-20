@@ -27,7 +27,7 @@ public struct BrowserOverviewSection: View {
             if let detailKey = overview.detailKey {
                 Text(L10n.text(detailKey))
                     .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(overview.requiresServiceAttention ? .primary : .secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
@@ -58,7 +58,8 @@ public struct BrowserOverviewSection: View {
     }
 
     private var symbolName: String {
-        switch overview.phase {
+        if overview.requiresServiceAttention { return "exclamationmark.octagon" }
+        return switch overview.phase {
         case .unknown: "questionmark.circle"
         case .clear: "checkmark.circle"
         case .active: "play.circle"
@@ -71,7 +72,8 @@ public struct BrowserOverviewSection: View {
     }
 
     private var symbolColor: Color {
-        switch overview.tone {
+        if overview.requiresServiceAttention { return .red }
+        return switch overview.tone {
         case .quiet: .secondary
         case .activity: .accentColor
         case .attention: .orange

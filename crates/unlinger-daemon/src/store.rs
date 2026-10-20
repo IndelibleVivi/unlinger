@@ -527,7 +527,12 @@ pub struct RetryBlockReconciliation {
 #[derive(Debug)]
 pub enum StoreError {
     Io(std::io::Error),
-    Sqlite(rusqlite::Error),
+    /// A source location, never the database pathname or an OS pathname.
+    Sqlite {
+        error: rusqlite::Error,
+        source_file: &'static str,
+        source_line: u32,
+    },
     Json(serde_json::Error),
     Corrupt(String),
     Range(String),
@@ -544,19 +549,11 @@ impl Display for StoreError {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Io(error) => write!(formatter, "history I/O failed: {error}"),
-            Self::Sqlite(rusqlite::Error::SqliteFailure(failure, detail)) => {
-                write!(
-                    formatter,
-                    "history SQLite failed [code={:?}, extended_code={}]",
-                    failure.code, failure.extended_code
-                )?;
-                if let Some(detail) = detail {
-                    write!(formatter, ": {detail}")
-                } else {
-                    write!(formatter, ": {failure}")
-                }
-            }
-            Self::Sqlite(error) => write!(formatter, "history SQLite failed: {error}"),
+            Self::Sqlite {
+                error,
+                source_file,
+                source_line,
+            } => display_sqlite_error(formatter, error, (source_file, *source_line)),
             Self::Json(error) => write!(formatter, "history JSON failed: {error}"),
             Self::Corrupt(message) => write!(formatter, "history data is corrupt: {message}"),
             Self::Range(message) => write!(formatter, "history value is out of range: {message}"),
@@ -577,6 +574,35 @@ impl Display for StoreError {
     }
 }
 
+fn display_sqlite_error(
+    formatter: &mut Formatter<'_>,
+    error: &rusqlite::Error,
+    source: (&str, u32),
+) -> std::fmt::Result {
+    match error {
+        rusqlite::Error::SqliteFailure(failure, detail) => {
+            write!(
+                formatter,
+                "history SQLite failed [code={:?}, extended_code={}]",
+                failure.code, failure.extended_code
+            )?;
+            let (file, line) = source;
+            write!(formatter, " [source={file}:{line}]")?;
+            if let Some(detail) = detail {
+                write!(formatter, ": {detail}")
+            } else {
+                write!(formatter, ": {failure}")
+            }
+        }
+        _ => {
+            write!(formatter, "history SQLite failed")?;
+            let (file, line) = source;
+            write!(formatter, " [source={file}:{line}]")?;
+            write!(formatter, ": {error}")
+        }
+    }
+}
+
 impl Error for StoreError {}
 
 impl From<std::io::Error> for StoreError {
@@ -586,8 +612,18 @@ impl From<std::io::Error> for StoreError {
 }
 
 impl From<rusqlite::Error> for StoreError {
+    #[track_caller]
     fn from(value: rusqlite::Error) -> Self {
-        Self::Sqlite(value)
+        let location = std::panic::Location::caller();
+        Self::Sqlite {
+            error: value,
+            source_file: location
+                .file()
+                .rsplit(['/', '\\'])
+                .next()
+                .unwrap_or("store"),
+            source_line: location.line(),
+        }
     }
 }
 
@@ -4028,7 +4064,10 @@ fn validate_required_schema(connection: &Connection) -> Result<(), StoreError> {
 fn is_recoverable_corruption(error: &StoreError) -> bool {
     match error {
         StoreError::Corrupt(_) => true,
-        StoreError::Sqlite(rusqlite::Error::SqliteFailure(failure, _)) => matches!(
+        StoreError::Sqlite {
+            error: rusqlite::Error::SqliteFailure(failure, _),
+            ..
+        } => matches!(
             failure.code,
             rusqlite::ErrorCode::DatabaseCorrupt | rusqlite::ErrorCode::NotADatabase
         ),

@@ -213,8 +213,9 @@ impl NodeCompileCacheMaintenance {
         if cancelled() || !self.bindings_current() {
             return NodeCompileCacheResult::unsuccessful(ToolCacheOutcome::Failed);
         }
-        // A second full shape check rejects an already-active writer or any
-        // foreign content before the first effect. Only this frozen set is used.
+        // Recheck all final files before the first effect. Safe producer
+        // temporary files stay outside the plan; newly published final files
+        // still change the frozen set and defer this attempt.
         let current = match scan_entries(&self.bucket, deadline, cancelled) {
             Ok(entries) => entries,
             Err(ScanError::Busy) => {
@@ -311,7 +312,13 @@ fn scan_entries(
                 && value[8] == b'.'
                 && value[9..].iter().all(u8::is_ascii_alphanumeric)
             {
-                return Err(ScanError::Busy);
+                // A temporary name does not grant deletion authority. Retain
+                // only safe regular producer entries without reading their
+                // changing payload; unsafe/foreign shapes still block all work.
+                if !safe_file(&entry_metadata(bucket, &name)?) {
+                    return Err(ScanError::Unsafe);
+                }
+                continue;
             }
             return Err(ScanError::Unsafe);
         }

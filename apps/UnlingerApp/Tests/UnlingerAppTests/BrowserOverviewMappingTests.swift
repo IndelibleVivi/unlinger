@@ -19,6 +19,99 @@ struct BrowserOverviewMappingTests {
         #expect(!overview.requiresTrailingRefresh)
     }
 
+    @Test("terminal daemon readiness is visible even without notification permission")
+    func terminalFailureIsLocallyVisible() async throws {
+        let snapshot = try await BrowserFixtureClient(scenario: .clear).browserOverview()
+
+        let overview = BrowserOverviewMapper.make(
+            connection: .live,
+            snapshot: snapshot,
+            readiness: .failed
+        )
+
+        #expect(overview.requiresServiceAttention)
+        #expect(overview.headlineKey == "browser.overview.failed")
+        #expect(overview.detailKey == "browser.overview.failed.detail")
+        #expect(overview.tone == .attention)
+        #expect(!overview.snapshotTrusted)
+    }
+
+    @Test("the service-failed fixture reaches the real App refresh path")
+    @MainActor
+    func failedServiceFixture() async {
+        let state = AppState(
+            client: FixtureClient.scenario("service-failed"),
+            mutationLedger: TestMutationJournal()
+        )
+        await state.refresh()
+        #expect(state.connection == .live)
+        #expect(state.status?.readiness == .failed)
+        #expect(state.browserOverview.requiresServiceAttention)
+    }
+
+    @Test(
+        "paused, report-only, starting, stale, and unavailable are not terminal failure",
+        arguments: [
+            (Readiness.ready, ObservationFreshness.current, EffectiveMode.reportOnly, true),
+            (Readiness.ready, ObservationFreshness.scanInProgress, .enforce, true),
+            (Readiness.ready, ObservationFreshness.staleAfterFailure, .enforce, true),
+            (Readiness.ready, ObservationFreshness.current, .enforce, true),
+            (Readiness.starting, ObservationFreshness.current, .enforce, false),
+        ]
+    )
+    func nonFailureServiceStatesStayDistinct(
+        readiness: Readiness,
+        freshness: ObservationFreshness,
+        mode: EffectiveMode,
+        healthy: Bool
+    ) async throws {
+        var snapshot = try await BrowserFixtureClient(scenario: .clear).browserOverview()
+        snapshot.freshness = freshness
+        snapshot.effectiveMode = mode
+        snapshot.healthy = healthy
+        if freshness == .current, readiness == .ready, mode == .enforce {
+            snapshot.pausedUntilUnixMillis = 99_000
+        }
+
+        let overview = BrowserOverviewMapper.make(
+            connection: .live,
+            snapshot: snapshot,
+            readiness: readiness
+        )
+
+        #expect(!overview.requiresServiceAttention)
+        #expect(overview.headlineKey != "browser.overview.failed")
+    }
+
+    @Test("transport loss remains unavailable rather than terminal service failure")
+    func transportLossIsNotFailure() async throws {
+        let snapshot = try await BrowserFixtureClient(scenario: .clear).browserOverview()
+
+        let overview = BrowserOverviewMapper.make(
+            connection: .unavailable,
+            snapshot: snapshot,
+            readiness: .failed
+        )
+
+        #expect(!overview.requiresServiceAttention)
+        #expect(overview.headlineKey == "browser.overview.unavailable")
+    }
+
+    @Test("an unhealthy snapshot alone does not invent terminal readiness")
+    func unhealthySnapshotIsNotTerminalReadiness() async throws {
+        var snapshot = try await BrowserFixtureClient(scenario: .attention).browserOverview()
+        snapshot.healthy = false
+
+        let overview = BrowserOverviewMapper.make(
+            connection: .live,
+            snapshot: snapshot,
+            readiness: .ready
+        )
+
+        #expect(!overview.requiresServiceAttention)
+        #expect(!overview.snapshotTrusted)
+    }
+
     @Test("transport loss stays App-local unknown while retaining last rows")
     func transportLossOverridesPhase() async throws {
         let snapshot = try await BrowserFixtureClient(scenario: .active).browserOverview()

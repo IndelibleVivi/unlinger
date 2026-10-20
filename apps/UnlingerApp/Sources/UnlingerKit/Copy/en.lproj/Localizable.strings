@@ -18,6 +18,9 @@
 "browser.overview.updating.detail" = "A current browser result is not ready yet.";
 "browser.overview.unavailable" = "Browser cleanup status unavailable";
 "browser.overview.unavailable.detail" = "Unlinger cannot make a current browser claim from the available facts.";
+"browser.overview.failed" = "Automatic maintenance has stopped";
+"browser.overview.failed.detail" = "The background service needs repair. Unlinger can still show status, but process cleanup and cache maintenance are stopped.";
+"status_item.hint" = "Open Unlinger for current browser and maintenance status.";
 "browser.overview.verified_at" = "Verified %@";
 "browser.overview.last_known_at" = "Last completed observation %@";
 
@@ -95,9 +98,9 @@
 "cache.maintenance.unsupported" = "This npm installation is not supported for automatic maintenance.";
 "cache.maintenance.unavailable" = "The cache could not be checked safely.";
 "cache.maintenance.observed" = "Last checked: %@";
-"cache.maintenance.running" = "Native maintenance is running.";
-"cache.maintenance.no_op" = "Native maintenance completed";
-"cache.maintenance.completed" = "Native maintenance completed.";
+"cache.maintenance.running" = "Cache maintenance is running.";
+"cache.maintenance.no_op" = "Cache maintenance completed";
+"cache.maintenance.completed" = "Cache maintenance completed.";
 "cache.maintenance.failed" = "Maintenance failed; partial changes may have occurred.";
 "cache.maintenance.delivery_unknown" = "The maintenance result is unknown.";
 "cache.maintenance.estimate" = "Native accounting is not measured physical disk-space savings. Zero counters do not prove no side effects.";
