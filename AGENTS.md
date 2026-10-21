@@ -65,9 +65,12 @@ inode-atomic unlink guarantee. The last pathname-check-to-unlink interval can
 race normal Node publication; the admitted name is disposable compile cache.
 The October-9 generation 45 installed this authority after its actual v13
 rollback/open proof. Generation 47 retains v14 with the approved temporary-entry
-change; current-state owns activation and automatic-result evidence. Acceptance
-readbacks proved both producers available; a later normal observation returned
-unsupported, so current-generation normal maintenance completion is unverified.
+change; current-state owns activation and automatic-result evidence. Generation
+47 completed normal Node maintenance on October 21 while retaining the safe
+native temporary entry. A later kernel-confirmed ENOSPC event failed
+SQLite shared-memory setup and closed enforcement; transactional exact-instance
+recovery restored the existing policy. Current-state owns the result and ongoing
+startup-volume space constraint; older SQLite failure causes remain unproved.
 
 Current source also moves Chrome clone storage reconciliation to one
 single-flight background worker. PREPARED and one exact token/epoch activity

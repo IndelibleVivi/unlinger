@@ -11,6 +11,16 @@ This runbook advances only acceptance level 3. It installs the exact source cand
 - Build candidate binaries with `cargo build --release --workspace`; build the App with `apps/UnlingerApp/scripts/bundle.sh`.
 - Stage a byte-identical candidate CLI in a private directory on the macOS startup volume and run the complete install/restart/rollback/reinstall transaction from that copy. A prior installed daemon may still derive process identity by reopening the transaction CLI pathname; executing that CLI from a removable build volume can deadlock first-scan readiness and rollback. Verify the copy with `cmp` and strict `codesign` before use, retain it through the mandatory rollback proof, and remove only that exact task-owned staging directory after the transaction is accepted or rolled back.
 
+For SQLite I/O failure, preserve the instance's first-failure timestamp and
+extended code, then compare the corresponding kernel/filesystem error window.
+`SQLITE_IOERR_SHMOPEN` (4618) or `SQLITE_IOERR_SHMSIZE` (4874) alone does not prove
+disk exhaustion; the October-21 incident has matching kernel ENOSPC evidence for
+the same daemon and `-shm` sidecar. Restored free space or a healthy generic SQLite
+reader does not rehabilitate a terminal Failed instance. After the underlying
+host condition permits writes, use the exact installed CLI's transactional
+`service set-mode report-only` recovery, verify healthy/quiescent readiness, then restore
+an enforce policy only within the existing owner authorization.
+
 ## Candidate install
 
 Run the startup-volume copy of the candidate CLI so the copied CLI and daemon

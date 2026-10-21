@@ -2,7 +2,38 @@
 
 **Updated:** 2026-10-21. **Programme:** 0.1. **Reader posture:** experimental developer source preview; not a signed/notarized App release or multi-day reliability claim.
 
-## Reliability repair (2026-10-20; installed and activated)
+## Normal Node result and disk-full recovery (2026-10-21)
+
+Generation 47 completed normal automatic Node compile-cache maintenance at
+2026-10-21 01:05:30 +08: **3,833 successful final-file unlinks / 26,612,788
+validated logical bytes** (about 25.4 MiB). The SQLite-v14 terminal result and
+CLI/browser projection agree, and the PREPARED token is settled. The native
+temporary entry dated October 19 remains present after that result. No manual
+prune, timer override or live-cache injection was used. This closes the
+previous checkpoint's missing current-generation normal Node result; logical
+bytes are not physical APFS reclaim or browser impact.
+
+At 11:48:56 +08, that same daemon instance entered terminal `Failed` with
+`SystemIoFailure`, extended code 4618 (`SQLITE_IOERR_SHMOPEN`), at the connection's
+`journal_mode=WAL` setup. The first-failure record and retained stderr identify
+this event. At 11:48:50, the macOS kernel explicitly recorded `unlingerd: ENOSPC`
+and `No space left on device (28)` while trying to write the same SQLite `-shm`
+sidecar. Other processes also received ENOSPC in that window. This is direct
+host evidence of storage exhaustion for this incident; it does not establish
+the causes of earlier generation-45 or generation-36 errors. A consistent
+read-only backup still passes `quick_check`.
+
+The exact Failed generation-47 instance was transactionally replaced in
+report-only mode, checked healthy/quiescent, then restored to its existing
+enforce policy. It is again healthy `ReadyEnforce`, armed to generation 47 with
+a fresh instance/epoch, zero service problems and no rollback lease. uv and Node
+are available again, and the successful Node result is retained. The source
+artifact remains `e8faf7a`; no store, retry, WAL-lifecycle or schema change was
+needed. Startup-volume free space remains small and variable, so recovery is
+not a claim that storage pressure has been resolved. Unknown cleanup delivery
+and terminal fail-close retain their existing safety meaning.
+
+## Historical reliability-repair checkpoint (2026-10-20; installed and activated)
 
 Fresh service readback found generation 45 loaded with exact generation/binary
 identity but terminal `Failed`, unhealthy/not ready and effective report-only.
@@ -54,9 +85,10 @@ problems and no rollback lease. Both installed binaries match the startup-volume
 candidate; PATH resolves to the exact generation-47 CLI. Both uv and Node were
 available in the candidate/restart acceptance readbacks. The following normal
 observation returned `unsupported` for both producer-discovery lanes, with no new
-maintenance attempt. The daemon remains healthy, but a successful generation-47
-normal Node maintenance result is unverified. No manual cache operation, timer
-override or live-cache injection is used; the native temporary entry is retained.
+maintenance attempt. At that checkpoint the daemon remained healthy, but a
+successful generation-47 normal Node maintenance result had not yet been
+observed. No manual cache operation, timer override or live-cache injection was
+used; the native temporary entry was retained.
 
 A bounded observer on 2026-10-20/21 completed 76 readbacks across 19m47s:
 all retained the same exact healthy/ready/enforce generation-47 instance, with
@@ -64,8 +96,10 @@ zero read errors. The same exact App process remained present in all 76 sparse
 identity/resource samples, maximum RSS 42,496 KiB and sampled CPU 10.0%. These
 are bounded polling measurements, not a repeated AX stress gate or multi-day
 acceptance. The safe temporary entry retained its identity and metadata; no new
-Node automatic deletion result was observed. The producer-discovery refusal is
-unexplained and must not be reported as a successful maintenance attempt.
+Node automatic deletion result was observed during that bounded window. Its
+transient producer-discovery refusal remains unexplained; it is distinct from
+the later normal completion and must not itself be reported as successful
+maintenance.
 
 The matching App is installed, with strict signature/resource verification and
 the displaced bundle preserved. Ordinary-window Home/History/Settings, current
