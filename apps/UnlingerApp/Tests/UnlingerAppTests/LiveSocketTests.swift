@@ -2,9 +2,10 @@ import Foundation
 import Testing
 @testable import UnlingerKit
 
-/// Opt-in live smoke test against an isolated source report-only daemon.
-/// Runs only when UNLINGER_LIVE_SOCKET points at such a daemon's socket;
-/// skipped silently otherwise. Never touches the installed generation.
+/// Opt-in live smoke test against an explicitly selected report-only daemon.
+/// Ordinary source QA uses an isolated socket. An installed-generation run
+/// requires the owner-authorized INSTALLED_DOGFOOD transaction boundary.
+/// UNLINGER_LIVE_SOCKET selects the endpoint; these tests include mutations.
 @Suite("Live socket smoke (opt-in)")
 struct LiveSocketTests {
     private var socketPath: String? {

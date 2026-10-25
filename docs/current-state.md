@@ -5,9 +5,11 @@
 ## Programme continuation: observation, execution and native coverage (2026-10-25)
 
 Candidate [`5fc355b`](https://github.com/IndelibleVivi/unlinger/commit/5fc355b26ed470c28cbd2de6eb2f5b1de5137d1e)
-is pushed, source-complete and isolated report-only verified. Its
+is pushed, source-complete, isolated report-only verified and now installed as
+accepted generation 49 / SQLite v14. Its
 [exact-source macOS CI](https://github.com/IndelibleVivi/unlinger/actions/runs/40158626156)
-passed. No installed service, installed App, live browser or cache was changed.
+passed. The backend was transactionally replaced; the unchanged schema-v5 App
+was retained. No controlled browser or manual cache operation was started.
 The preceding WAL-lifetime
 candidate [`3fdb694`](https://github.com/IndelibleVivi/unlinger/commit/3fdb6941188fa956593872780271943c0180d29e)
 and its [exact-source CI](https://github.com/IndelibleVivi/unlinger/actions/runs/40147673014)
@@ -22,6 +24,64 @@ the optional primitive is not an automatic Codex adapter. Browser/controller
 compatibility remains narrow, and Phase-2 ordinary ambient/multi-day exit remains
 open. The [programme](IMPLEMENTATION_PLAN.md) continues reliability, native
 coverage, admitted controllerless use and real ordinary-use evidence together.
+
+### Installed transaction and current acceptance boundary
+
+The previous accepted generation 47 was found terminal Failed with the distinct
+October-21 18:40:20 +08 SQLite SHMSIZE/4874 first-failure record. Its cause remains
+unproved; it must not inherit the earlier 11:48 kernel-confirmed ENOSPC cause.
+The existing exact-generation CLI transactionally recovered that instance in
+report-only mode after preserving first-failure evidence and a SQLite-consistent
+v14 backup. A startup-volume, byte-identical and strictly code-signed copy of
+the pushed candidate then performed the complete installation transaction:
+
+- Generation 48 passed **7 schema-v5 socket checks + report-only restart + 7**.
+- Its real rollback restored generation 47; the old generation's own daemon and
+  CLI reopened the restored v14 database healthy/quiescent, report-only and
+  unarmed. A generic SQLite reader was not used as the old-binary proof.
+- The unchanged candidate freshly installed as generation 49 and repeated
+  **7 + restart + 7**. Two contiguous healthy/quiescent report-only readbacks
+  preceded acceptance. Earlier busy preflight refusals did not bypass that gate.
+- Generation 49 is durably accepted with no rollback lease. PATH selects its
+  exact installed CLI. The pre-existing enforce policy was separately restored
+  after another pair of quiescent readbacks: healthy `ReadyEnforce`, zero service
+  problems and a fresh generation-bound epoch.
+
+A bounded post-activation observer completed **35 readbacks spanning 9m41s**,
+all the same healthy, ready, enforce instance, with zero read errors and no
+first-failure record. Final service/operator readback was quiescent. The same
+App process remained present in all 35 sparse samples: maximum RSS **26,736 KiB**
+and maximum sampled CPU 12.4%. These are bounded runtime samples, not GUI
+navigation, Accessibility stress, an eligible cleanup or multi-day acceptance.
+
+Browser impact and the latest storage-cleanup result were unchanged across that
+window. uv/Node retained their earlier terminal maintenance results. Node
+availability changed from available to unsupported without a new attempt; a
+subsequent read-only builtin query still identified exact Node v26.7.0/arm64 in
+117 ms. The daemon discovery failure is unexplained. Neither that query nor
+the historical successful result proves current automatic-maintenance readiness.
+
+The installed store's WAL/SHM identities remained stable across repeated reads.
+This is bounded installed evidence for the retained-connection lifetime, not a
+diagnosis of old SQLite failures or a guarantee under disk exhaustion.
+
+The retained App passes strict signature and packaged-resource verification,
+and its ordinary Home was observed against generation 49. Fresh History and
+Settings navigation remains **unverified**: the UI automation transport returned
+empty/no-window states. A bounded native sample showed the main thread waiting
+in AppKit and a background overview decode; it did not prove an App hang or a
+repeat of the historical memory runaway. Installed socket tests establish the
+v5 client/read/mutation/restart path, not complete GUI acceptance.
+
+The production-timing managed CfT lane has **not started**. Startup-volume free
+space fell from about 4.5 GiB to 704 MiB and then 291 MiB during this transaction,
+with 10 GiB of swap allocated; the later observer reached a **150 MiB** minimum
+before space returned to roughly 1.6 GiB. No new profile or signal harness was launched
+under that changing constraint. Later spare capacity does not explain the
+pressure or establish a stable test window. The field lane needs a stable host
+before its exact-owned browser/profile workload is added; no version, timing,
+quiescence or cleanup-proof gate was relaxed. The prior controlled receipts,
+Node/uv results and clone results retain their original generations and dates.
 
 ### Continuous observation and exact process activity
 
@@ -113,13 +173,11 @@ The last verified producer versions remain uv 0.11.20 and Node 26.7.0. The
 earlier transient uv `unsupported` observation has no proved cause and must not
 be attributed to a version upgrade.
 
-Fresh read-only inspection still finds accepted generation 47 loaded with
-matching generation/binary identity, but **terminal Failed, unhealthy/not ready
-and effective report-only**. Its first-failure record identifies the distinct
-2026-10-21 18:40:20 +08 SQLite SHMSIZE/4874 event, whose cause is unproved. It
-must not be conflated with the earlier 11:48 kernel-confirmed ENOSPC event.
-Installation, activation, current-generation cleanup and multi-day acceptance
-are not claimed. Older healthy/enforce records below retain their dated scope.
+The October-25 recovery/48→47→49 transaction above supersedes the earlier
+generation-47 live-health record. Installation and restoration of the existing
+enforcement policy are verified; current-generation controlled/ambient cleanup
+and multi-day acceptance are not claimed. Older healthy/enforce records below
+retain their dated scope.
 
 ## Normal Node result and disk-full recovery (2026-10-21)
 

@@ -9,13 +9,22 @@
 
 ## Current source and installed candidate
 
-Fresh read-only observation on 2026-10-25 found the accepted generation-47
-installation terminal `Failed`, unhealthy/not ready and effective report-only.
-Its first-failure record identifies a distinct October-21 18:40 SQLite
-SHMSIZE/4874 event; the cause is unproved and must not be conflated with the
-earlier kernel-confirmed ENOSPC incident. Healthy/enforce descriptions below
-retain their dated historical scope. `docs/current-state.md` owns current truth.
-The source-only October-25 repair gives `HistoryStore` and its clones one shared
+The accepted reference installation is generation 49 / SQLite v14 from source
+candidate `5fc355b`. The October-25 transaction recovered terminal-Failed 47,
+installed/restarted 48, actually rolled back to the exact old 47 daemon reopening
+its restored v14 database, then freshly installed the unchanged artifact as 49.
+Both candidates passed 7 + report-only restart + 7 schema-v5 socket checks.
+Generation 49 was accepted after healthy/quiescent readback; PATH points at its
+exact installed CLI, and the existing enforce policy was separately restored.
+The unchanged schema-v5 App is retained. Current-generation controlled cleanup,
+complete GUI navigation and multi-day acceptance remain separate evidence.
+`docs/current-state.md` owns live health, host constraints and exact field scope.
+
+The pre-upgrade generation-47 first-failure record identifies a distinct
+October-21 18:40 SQLite SHMSIZE/4874 event; its cause is unproved and must not be
+conflated with the earlier kernel-confirmed ENOSPC incident. Generation-47
+healthy/enforce descriptions below retain their dated historical scope.
+The installed October-25 repair gives `HistoryStore` and its clones one shared
 idle WAL connection lifetime, retaining independent operation transactions,
 FULL durability, per-operation path validation and terminal fail-close. It is
 not a pool or automatic recovery mechanism. Final store close releases the
@@ -32,7 +41,7 @@ callers remain synchronous through the same execute/settle routine. Never queue
 stale plans, open concurrent process attempts, recover a still-running worker,
 detach it at shutdown, or let a replacement scan clear its cleanup activity.
 Frozen epoch/policy revision gates still apply before every signal, so a quick
-Resume cannot revive a cancelled plan. Installed generation 47 is unchanged.
+Resume cannot revive a cancelled plan. This path is installed in generation 49.
 
 Source cache maintenance uses SQLite v14 and exact uv `0.11.20` native
 `cache prune` at the default `~/.cache/uv`. The owner explicitly admitted
@@ -52,7 +61,7 @@ preserves old v12 npm evidence in `retired_npm_cache_latest`, and the active
 `tool_cache_latest` table belongs only to uv. Frontend v5 uses additive optional
 `uv_cache_maintenance`; the old `tool_cache_maintenance` field is retired npm
 evidence only. Native zero counters mean completed maintenance, not no effects.
-The current installed generation is 47 / SQLite v14 from source candidate
+The historical October-20 installation was 47 / SQLite v14 from source candidate
 `e8faf7a`, accepted and healthy `ReadyEnforce` on 2026-10-20. Generation 46 passed
 7 + report-only restart + 7 schema-v5 socket checks, actually rolled back to
 healthy/quiescent generation 45 reopening v14, and the unchanged artifact was
@@ -190,14 +199,14 @@ quiescent readback before the candidate upgrade. The cause remains unproved.
 
 ## Current hard boundary
 
-The ordinary daemon default remains report-only. Reference generation 47 uses
+The ordinary daemon default remains report-only. Reference generation 49 uses
 SQLite v14, Playwright `0.6.0`, other packs `0.4.0`, frontend v5/v4/v3 and
 operator v1. It retains mapped-vnode identity, exact per-candidate Chrome-clone
 cleanup and durable clone results, bounded native uv maintenance and the exact
 Node compile-cache exception.
-It remains accepted with no rollback lease. It was healthy `ReadyEnforce` after
-the October-20 candidate rollback/reinstall and October-21 recovery; the fresh
-October-25 observation above supersedes that live-health claim. PATH points at its
+It is accepted with no rollback lease. It was healthy/quiescent `ReadyEnforce`
+after the October-25 transaction and restoration of its existing policy;
+`docs/current-state.md` owns subsequent health and host-space constraints. PATH points at its
 exact generation binary. These installed facts do not turn older
 controlled process/clone receipts into current-generation or multi-day evidence.
 The generation-36 SQLite failure and an earlier App lazy-layout hang have
@@ -213,9 +222,9 @@ unresolved causes; `docs/current-state.md` owns their observed scope.
 - The dormant artifact path still has two known P2 residuals: a crash after canonical-to-quarantine rename may strand the exact quarantine entry, and the final pathname revalidation-to-`unlinkat` interval retains a same-UID swap TOCTOU. Historical generation-9 and generation-13 controlled runs removed the admitted DAP; do not turn those point results into current artifact acceptance or re-enable any pack flag without a separate owner decision after the residuals are resolved or explicitly accepted.
 - Managed `Failed` is terminal for that daemon instance. `Disarm` may durably remove any stale signal authority but must not rehabilitate it; replacement proceeds only through exact generation/instance validation, `BeginDrain`, captured-process bootout, and a fresh report-only restart. A ready report-only service acceptance also requires a stable quiescent projection: no scan or cleanup in progress.
 - IPC clients make one bounded attempt. The ordinary/default and service clients use a 15-second I/O timeout; each accepted server connection uses 3 seconds and the daemon serves at most eight connections concurrently. Never automatically resend a timed-out mutation or lifecycle command, because its delivery may already have committed; read back exact state instead. The managed field harness is the narrow exception only for read-only exact-incident `Explain`: it polls on a separate worker and may retry `not_found`, unavailable, or transient local I/O within its overall deadline while native identity sampling continues.
-- Installed generation 47 and the native App use frontend schema v5 with strict v4 and v3 compatibility endpoints, operator schema v1, and SQLite v14. The App emits v5 only and requires the daemon-owned atomic `browser_overview`, including impact/residue, optional storage-cleanup-result and observation-span facts. Frontend schemas expose only `unlinger-protocol` ordinary commands/public DTOs and contain no lifecycle command. Schema v2 is historical and must receive typed `unsupported_schema`; never silently downgrade the App to v4, v3 or v1.
+- Installed generation 49 and the native App use frontend schema v5 with strict v4 and v3 compatibility endpoints, operator schema v1, and SQLite v14. The App emits v5 only and requires the daemon-owned atomic `browser_overview`, including impact/residue, optional storage-cleanup-result and observation-span facts. Frontend schemas expose only `unlinger-protocol` ordinary commands/public DTOs and contain no lifecycle command. Schema v2 is historical and must receive typed `unsupported_schema`; never silently downgrade the App to v4, v3 or v1.
 - Independent cleanup-impact authority, observation spans, exact CfT `152.0.7977.42` eligibility and gated Chrome clone cleanup remain installed. Task release supplies lifetime evidence only; it is never storage-deletion authority.
-- Generation 47 is accepted and has no rollback lease. Its PATH CLI symlink points to the exact generation-47 binary. Future replacements must perform their applicable transaction proof. A successful scan must never rehabilitate a terminal Failed instance. Rollback persists `RollbackInProgress` before physical mutation and replays only transaction-owned selection states until the prior report-only generation is healthy. Only rollback of the exact transaction-owned selection may disarm and drain an unhealthy, non-ready `FirstScanReportOnly` instance; ordinary install and uninstall still require a stable ready or terminal-failed projection.
+- Generation 49 is accepted and has no rollback lease. Its PATH CLI symlink points to the exact generation-49 binary. Future replacements must perform their applicable transaction proof. A successful scan must never rehabilitate a terminal Failed instance. Rollback persists `RollbackInProgress` before physical mutation and replays only transaction-owned selection states until the prior report-only generation is healthy. Only rollback of the exact transaction-owned selection may disarm and drain an unhealthy, non-ready `FirstScanReportOnly` instance; ordinary install and uninstall still require a stable ready or terminal-failed projection.
 - Whole-plan `FAILED` and public `cleared_with_residue` may coexist. A known no-removal artifact disposition after exact tree absence/revival proof keeps an incident attention/retry block but does not by itself fail the managed daemon closed. Any process/artifact delivery uncertainty, open PREPARED action, or unproved failure after a delivered side effect still triggers global fail-close.
 - The installed process-only policy retains all deterministic gates, durable abandonment grace, frozen-plan revalidation, exact identity signals, terminal receipts, bounded revival behavior, durable process-action journaling, restart recovery, generation-bound arming, fresh enforcement-epoch cooling, and report-only rollback. Runtime-artifact admission remains disabled. Do not describe one controlled run plus one stable ambient sweep as multi-day dogfood or an ordinary ambient eligible cleanup.
 
