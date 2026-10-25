@@ -1416,4 +1416,48 @@ mod tests {
             public::BrowserOverviewPhase::Attention
         );
     }
+
+    #[test]
+    fn fresh_observations_do_not_hide_an_independently_owned_process_cleanup() {
+        let control = ControlPlane::new(test_store("process-worker"), ready_status()).unwrap();
+        let activity = control
+            .begin_process_cleanup_activity("owned-process-attempt")
+            .unwrap();
+
+        for observed_at in [101, 102] {
+            let cycle = control.begin_observation_cycle(observed_at).unwrap();
+            assert_eq!(
+                overview(&control, public::SCHEMA_VERSION).phase,
+                public::BrowserOverviewPhase::Unknown,
+                "an in-progress replacement scan cannot claim a coherent result"
+            );
+            control
+                .publish_roster(&cycle, observed_at, Vec::new(), true)
+                .unwrap();
+            control.finish_observation_cycle(&cycle, true);
+            control
+                .update_status(|status| status.scan_in_progress = false)
+                .unwrap();
+
+            for schema in [
+                public::SCHEMA_VERSION,
+                public::PREVIOUS_SCHEMA_VERSION,
+                public::LEGACY_SCHEMA_VERSION,
+            ] {
+                assert_eq!(
+                    overview(&control, schema).phase,
+                    public::BrowserOverviewPhase::Reclaiming,
+                    "even an empty fresh roster cannot settle the worker's cleanup"
+                );
+            }
+            assert!(control.status().unwrap().cleanup_in_progress);
+        }
+
+        drop(activity);
+        assert!(!control.status().unwrap().cleanup_in_progress);
+        assert_eq!(
+            overview(&control, public::SCHEMA_VERSION).phase,
+            public::BrowserOverviewPhase::Clear
+        );
+    }
 }

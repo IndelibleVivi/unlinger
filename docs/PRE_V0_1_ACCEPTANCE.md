@@ -2,7 +2,19 @@
 
 This document separates source, runtime, field, and release truth. A higher level includes all earlier requirements; passing a source suite never silently advances installation, enforcement, dogfood, or publication.
 
-Levels 1–4 were verified for the exact historical generation-15/schema-v4/SQLite-v6/`0.3.0` CfT-151 point. Current generation 23 independently passed the corrected candidate's rollback/reinstall/App integration transaction and has a task-owned CfT-152 process-cleanup receipt with real App impact readback. Its schema-v5 App remains unchanged; SQLite is v8 and Playwright policy is `0.5.0`. This task-specific run is not the full managed restart/final-containment harness required for a new Level-4 claim, and the current fixture Accessibility/RSS check could not acquire its window. Neither omission is marked passed. Multi-day dogfood, an ordinary ambient eligible incident and owner private-v0.1 acceptance remain open. Levels 5–7 remain separate future owner decisions; [current-state](current-state.md) owns exact evidence and activation truth.
+The checkpoints here are historical evidence for their exact artifacts;
+[current-state](current-state.md) owns fresh source, candidate, installed-health
+and activation truth. Levels 1–4 were verified for the exact historical
+generation-15/schema-v4/SQLite-v6/`0.3.0` CfT-151 point. Historical generation 23
+independently passed its corrected candidate's rollback/reinstall/App integration
+transaction and has a task-owned CfT-152 process-cleanup receipt with real App
+impact readback, using schema v5, SQLite v8 and Playwright policy `0.5.0`.
+That task-specific run is not the full managed restart/final-containment harness
+required for a new Level-4 claim, and that checkpoint's fixture Accessibility/RSS
+check could not acquire its window. Neither historical omission is marked passed
+by a later source-only check. Multi-day dogfood, an ordinary ambient eligible
+incident and owner private-v0.1 acceptance remain open. Levels 5–7 remain separate
+future owner decisions.
 
 ## Claim levels
 

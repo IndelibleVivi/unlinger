@@ -2,6 +2,7 @@ use std::collections::VecDeque;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use unlinger_core::{
     AppBundleVersion, ArtifactFreeze, CleanupReceipt, CleanupResources, CleanupRuntime,
@@ -46,6 +47,8 @@ impl Drop for TempDatabase {
     }
 }
 
+type SharedSignals = Arc<Mutex<Vec<(u32, CleanupSignal)>>>;
+
 #[derive(Default)]
 struct FakeRuntime {
     snapshots: VecDeque<Snapshot>,
@@ -57,6 +60,50 @@ struct FakeRuntime {
     drain_trigger: Option<(usize, ControlPlane, u64, String)>,
     owner_policy_trigger: Option<(usize, ControlPlane, OwnerPolicyMutation)>,
     delivery_unknown_on_signal: bool,
+    snapshot_seam: Option<(usize, Arc<WorkerSeam>)>,
+    wait_seam: Option<Arc<WorkerSeam>>,
+    shared_signals: Option<SharedSignals>,
+    dropped: Option<mpsc::Sender<()>>,
+    panic_on_snapshot: Option<usize>,
+    panic_on_signal: bool,
+    snapshot_error_on: Option<usize>,
+}
+
+struct WorkerSeam {
+    entered: mpsc::Sender<()>,
+    release: Mutex<mpsc::Receiver<()>>,
+}
+
+impl WorkerSeam {
+    fn hold(&self) {
+        self.entered.send(()).expect("notify worker entered seam");
+        self.release
+            .lock()
+            .unwrap()
+            .recv_timeout(Duration::from_secs(10))
+            .expect("release worker seam within test deadline");
+    }
+}
+
+fn worker_seam() -> (Arc<WorkerSeam>, mpsc::Receiver<()>, mpsc::Sender<()>) {
+    let (entered_tx, entered_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    (
+        Arc::new(WorkerSeam {
+            entered: entered_tx,
+            release: Mutex::new(release_rx),
+        }),
+        entered_rx,
+        release_tx,
+    )
+}
+
+impl Drop for FakeRuntime {
+    fn drop(&mut self) {
+        if let Some(dropped) = &self.dropped {
+            let _ = dropped.send(());
+        }
+    }
 }
 
 enum OwnerPolicyMutation {
@@ -70,11 +117,9 @@ enum OwnerPolicyMutation {
 
 impl FakeRuntime {
     fn with_snapshots(snapshots: Vec<Snapshot>) -> Self {
-        Self {
-            snapshots: snapshots.into(),
-            now_unix_millis: 0,
-            ..Self::default()
-        }
+        let mut runtime = Self::default();
+        runtime.snapshots = snapshots.into();
+        runtime
     }
 
     fn drain_on_snapshot(
@@ -106,6 +151,10 @@ impl FakeRuntime {
 
 impl CleanupRuntime for FakeRuntime {
     fn snapshot(&mut self) -> Result<Snapshot, RuntimeFailure> {
+        if self.snapshot_error_on == Some(self.snapshots_taken + 1) {
+            self.snapshot_error_on = None;
+            return Err(RuntimeFailure::new("injected observer snapshot failure"));
+        }
         let snapshot = self
             .snapshots
             .pop_front()
@@ -113,6 +162,19 @@ impl CleanupRuntime for FakeRuntime {
         self.now_unix_millis = snapshot.observed_at_unix_millis;
         self.last_snapshot = Some(snapshot.clone());
         self.snapshots_taken += 1;
+        if self
+            .snapshot_seam
+            .as_ref()
+            .is_some_and(|(number, _)| *number == self.snapshots_taken)
+        {
+            let (_, seam) = self.snapshot_seam.take().unwrap();
+            seam.hold();
+        }
+        assert_ne!(
+            self.panic_on_snapshot,
+            Some(self.snapshots_taken),
+            "injected worker snapshot panic"
+        );
         if self
             .drain_trigger
             .as_ref()
@@ -199,6 +261,10 @@ impl CleanupRuntime for FakeRuntime {
         signal: CleanupSignal,
     ) -> SignalDisposition {
         self.signals.push((identity.pid, signal));
+        if let Some(signals) = &self.shared_signals {
+            signals.lock().unwrap().push((identity.pid, signal));
+        }
+        assert!(!self.panic_on_signal, "injected native signal panic");
         if self.delivery_unknown_on_signal {
             SignalDisposition::DeliveryUnknown
         } else {
@@ -212,6 +278,9 @@ impl CleanupRuntime for FakeRuntime {
         should_stop: &mut dyn FnMut() -> bool,
     ) -> Result<WaitOutcome, RuntimeFailure> {
         self.waits.push(duration);
+        if let Some(seam) = self.wait_seam.take() {
+            seam.hold();
+        }
         Ok(if should_stop() {
             WaitOutcome::Interrupted
         } else {
@@ -1265,4 +1334,358 @@ fn cache_activity_survives_process_observation_cleanup_and_sticky_pause() {
     assert!(!control.tool_cache_action_may_continue(&next, &next_epoch));
     assert!(control.status().unwrap().cleanup_in_progress);
     control.finish_tool_cache_action(&next).unwrap();
+}
+
+fn wait_for_background_completion(
+    engine: &ReconciliationEngine<FakeRuntime>,
+    dropped: &mpsc::Receiver<()>,
+) {
+    dropped
+        .recv_timeout(Duration::from_secs(5))
+        .expect("worker runtime dropped");
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while !engine.background_cleanup_finished() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "worker must complete after runtime drop"
+        );
+        std::thread::yield_now();
+    }
+}
+
+fn abandoned_other_snapshot(at: u64, pid: u32) -> Snapshot {
+    let mut snapshot = abandoned_snapshot(at);
+    let process = &mut snapshot.processes[0];
+    process.identity.pid = pid;
+    process.identity.executable_inode = Some(u64::from(pid));
+    process.executable.inode = Some(u64::from(pid));
+    process.process_group_id = pid;
+    snapshot
+}
+
+fn successful_worker(at: u64, pid: u32) -> FakeRuntime {
+    FakeRuntime::with_snapshots(vec![
+        abandoned_other_snapshot(at, pid),
+        abandoned_other_snapshot(at + 1, pid),
+        empty_snapshot(at + 2),
+        empty_snapshot(at + 3),
+        empty_snapshot(at + 4),
+        empty_snapshot(at + 5),
+    ])
+}
+
+#[test]
+fn background_cleanup_observes_during_wait_and_dispatches_only_fresh_plans() {
+    let observer = FakeRuntime::with_snapshots(vec![
+        abandoned_snapshot(1_000),
+        abandoned_snapshot(1_015),
+        abandoned_other_snapshot(3_000, 701),
+        abandoned_other_snapshot(3_015, 701),
+        abandoned_other_snapshot(4_000, 702),
+        abandoned_other_snapshot(4_015, 702),
+        empty_snapshot(6_000),
+        empty_snapshot(7_000),
+    ]);
+    let (engine, control, _database) = engine(DaemonMode::Enforce, observer);
+    let (seam, entered, release) = worker_seam();
+    let (dropped_tx, dropped_rx) = mpsc::channel();
+    let signals = Arc::new(Mutex::new(Vec::new()));
+    let mut first = successful_worker(2_016, 700);
+    first.wait_seam = Some(seam);
+    first.shared_signals = Some(Arc::clone(&signals));
+    first.dropped = Some(dropped_tx.clone());
+    let mut second = successful_worker(5_016, 702);
+    second.shared_signals = Some(Arc::clone(&signals));
+    second.dropped = Some(dropped_tx);
+    let workers = Arc::new(Mutex::new(VecDeque::from([first, second])));
+    let factory_workers = Arc::clone(&workers);
+    let mut engine = engine.with_background_cleanup(move || {
+        factory_workers
+            .lock()
+            .unwrap()
+            .pop_front()
+            .expect("one runtime per fresh dispatch")
+    });
+
+    let dispatched = engine.run_cycle_at(2_000).unwrap();
+    assert!(dispatched.cleanup_receipts.is_empty());
+    entered.recv_timeout(Duration::from_secs(5)).unwrap();
+    let status = control.status().unwrap();
+    assert!(!status.scan_in_progress);
+    assert!(
+        status.cleanup_in_progress,
+        "worker owns Reclaiming/quiescence after scan ends"
+    );
+    assert_eq!(
+        signals.lock().unwrap().as_slice(),
+        &[(700, CleanupSignal::Term)]
+    );
+
+    let concurrent = engine
+        .run_cycle_at(3_100)
+        .expect("second observation completes while cleanup waits");
+    assert_eq!(concurrent.incidents[0].root.pid, 701);
+    assert!(concurrent.cleanup_receipts.is_empty());
+    assert_eq!(engine.runtime().snapshots_taken, 4);
+    assert_eq!(
+        control.status().unwrap().latest_observation_at_unix_millis,
+        Some(test_wall(3_015))
+    );
+    assert!(control.status().unwrap().cleanup_in_progress);
+    assert_eq!(
+        workers.lock().unwrap().len(),
+        1,
+        "no second attempt or queued runtime during active cleanup"
+    );
+    let open_attempts: i64 = rusqlite::Connection::open(&_database.0)
+        .unwrap()
+        .query_row(
+            "SELECT COUNT(*) FROM cleanup_attempts WHERE completed_at_ms IS NULL",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        open_attempts, 1,
+        "exactly one durable cleanup attempt remains open"
+    );
+    release.send(()).unwrap();
+    wait_for_background_completion(&engine, &dropped_rx);
+    assert!(
+        control.status().unwrap().most_recent_reclaim.is_some(),
+        "terminal impact is visible before collection"
+    );
+    assert_eq!(
+        workers.lock().unwrap().len(),
+        1,
+        "finished but uncollected worker cannot dispatch"
+    );
+
+    let collected = engine.run_cycle_at(4_100).unwrap();
+    assert_eq!(collected.cleanup_receipts.len(), 1);
+    assert_eq!(collected.cleanup_receipts[0].state, IncidentState::Cleared);
+    assert_eq!(collected.incidents[0].root.pid, 702);
+    wait_for_background_completion(&engine, &dropped_rx);
+    assert_eq!(
+        signals.lock().unwrap().as_slice(),
+        &[(700, CleanupSignal::Term), (702, CleanupSignal::Term)],
+        "no stale queued plan for pid 701"
+    );
+    let second_result = engine.run_cycle_at(6_100).unwrap();
+    assert_eq!(second_result.cleanup_receipts.len(), 1);
+    assert_eq!(control.status().unwrap().confirmed_incidents, 0);
+    assert!(!control.status().unwrap().cleanup_in_progress);
+    assert!(
+        engine
+            .run_cycle_at(7_100)
+            .unwrap()
+            .cleanup_receipts
+            .is_empty(),
+        "each receipt is collected once"
+    );
+    engine.shutdown_background_cleanup().unwrap();
+}
+
+#[test]
+fn background_pause_then_resume_cancels_frozen_delivery_and_shutdown_joins() {
+    let observer =
+        FakeRuntime::with_snapshots(vec![abandoned_snapshot(1_000), abandoned_snapshot(1_015)]);
+    let (engine, control, _database) = engine(DaemonMode::Enforce, observer);
+    let (seam, entered, release) = worker_seam();
+    let (dropped_tx, dropped_rx) = mpsc::channel();
+    let signals = Arc::new(Mutex::new(Vec::new()));
+    let mut worker = successful_worker(2_016, 700);
+    worker.snapshot_seam = Some((1, seam));
+    worker.shared_signals = Some(Arc::clone(&signals));
+    worker.dropped = Some(dropped_tx);
+    let worker = Mutex::new(Some(worker));
+    let mut engine = engine.with_background_cleanup(move || worker.lock().unwrap().take().unwrap());
+    engine.run_cycle_at(2_000).unwrap();
+    entered.recv_timeout(Duration::from_secs(5)).unwrap();
+    control
+        .handle_at(
+            IpcCommand::Pause {
+                duration_millis: 60_000,
+            },
+            2_100,
+        )
+        .unwrap();
+    control.handle_at(IpcCommand::Resume, 2_101).unwrap();
+    release.send(()).unwrap();
+    wait_for_background_completion(&engine, &dropped_rx);
+    assert!(
+        signals.lock().unwrap().is_empty(),
+        "Resume cannot resurrect frozen revision"
+    );
+    engine.shutdown_background_cleanup().unwrap();
+    assert!(!engine.background_cleanup_finished());
+    assert!(!control.status().unwrap().cleanup_in_progress);
+    assert!(
+        control
+            .store()
+            .recover_incomplete_attempts(3_000)
+            .unwrap()
+            .is_empty(),
+        "shutdown settled the attempt exactly once"
+    );
+}
+
+#[test]
+fn observer_failure_cancels_background_grace_and_never_rehabilitates_failed() {
+    let mut observer = FakeRuntime::with_snapshots(vec![
+        abandoned_snapshot(1_000),
+        abandoned_snapshot(1_015),
+        abandoned_snapshot(4_000),
+        abandoned_snapshot(4_015),
+    ]);
+    observer.snapshot_error_on = Some(3);
+    let (engine, control, _database) = engine(DaemonMode::Enforce, observer);
+    let (seam, entered, release) = worker_seam();
+    let (dropped_tx, dropped_rx) = mpsc::channel();
+    let signals = Arc::new(Mutex::new(Vec::new()));
+    let mut worker = successful_worker(2_016, 700);
+    worker.wait_seam = Some(seam);
+    worker.shared_signals = Some(Arc::clone(&signals));
+    worker.dropped = Some(dropped_tx);
+    let worker = Mutex::new(Some(worker));
+    let mut engine = engine.with_background_cleanup(move || worker.lock().unwrap().take().unwrap());
+    engine.run_cycle_at(2_000).unwrap();
+    entered.recv_timeout(Duration::from_secs(5)).unwrap();
+    assert!(
+        engine.run_cycle_at(3_000).is_err(),
+        "observer failure closes shared delivery gate"
+    );
+    assert_eq!(
+        control.status().unwrap().startup_state,
+        StartupState::Failed
+    );
+    engine.run_cycle_at(4_100).expect_err(
+        "fresh successful observation cannot rehabilitate Failed while cleanup is pending",
+    );
+    assert_eq!(engine.runtime().snapshots_taken, 4);
+    assert_eq!(
+        control.status().unwrap().startup_state,
+        StartupState::Failed
+    );
+    release.send(()).unwrap();
+    wait_for_background_completion(&engine, &dropped_rx);
+    let _ = engine.shutdown_background_cleanup();
+    assert_eq!(
+        signals.lock().unwrap().as_slice(),
+        &[(700, CleanupSignal::Term)],
+        "no delivery after observer failure"
+    );
+    assert_eq!(
+        control.status().unwrap().startup_state,
+        StartupState::Failed
+    );
+    assert!(!control.status().unwrap().cleanup_in_progress);
+}
+
+#[test]
+fn background_unknown_and_panic_fail_closed_before_collection_and_recover_after_join() {
+    for mode in ["unknown", "snapshot_panic", "signal_panic"] {
+        let observer =
+            FakeRuntime::with_snapshots(vec![abandoned_snapshot(1_000), abandoned_snapshot(1_015)]);
+        let (engine, control, _database) = engine(DaemonMode::Enforce, observer);
+        let (dropped_tx, dropped_rx) = mpsc::channel();
+        let (seam, entered, release) = worker_seam();
+        let mut worker = successful_worker(2_016, 700);
+        match mode {
+            "snapshot_panic" => worker.panic_on_snapshot = Some(3),
+            "signal_panic" => worker.panic_on_signal = true,
+            _ => worker.delivery_unknown_on_signal = true,
+        }
+        worker.snapshot_seam = Some((1, seam));
+        worker.dropped = Some(dropped_tx);
+        let worker = Mutex::new(Some(worker));
+        let mut engine =
+            engine.with_background_cleanup(move || worker.lock().unwrap().take().unwrap());
+        engine.run_cycle_at(2_000).unwrap();
+        entered.recv_timeout(Duration::from_secs(5)).unwrap();
+        release.send(()).unwrap();
+        wait_for_background_completion(&engine, &dropped_rx);
+        assert_eq!(
+            control.status().unwrap().startup_state,
+            StartupState::Failed
+        );
+        assert!(control.status().unwrap().most_recent_reclaim.is_none());
+        assert!(
+            control
+                .status()
+                .unwrap()
+                .first_failure
+                .unwrap()
+                .occurred_at_unix_millis
+                >= test_wall(2_017),
+            "failure time follows the worker observation rather than dispatch time"
+        );
+        engine
+            .shutdown_background_cleanup()
+            .expect_err("unknown or panic cannot report success");
+        assert!(control.store().automatic_enforcement_blocked().unwrap());
+        assert!(!control.status().unwrap().cleanup_in_progress);
+        assert!(
+            control
+                .store()
+                .recover_incomplete_attempts(4_000)
+                .unwrap()
+                .is_empty(),
+            "joined recovery leaves no open attempt"
+        );
+    }
+}
+
+#[test]
+fn shutdown_and_drop_cancel_and_join_worker_before_releasing_engine() {
+    for explicit_shutdown in [false, true] {
+        let observer =
+            FakeRuntime::with_snapshots(vec![abandoned_snapshot(1_000), abandoned_snapshot(1_015)]);
+        let (engine, control, _database) = engine(DaemonMode::Enforce, observer);
+        let (seam, entered, release) = worker_seam();
+        let (dropped_tx, dropped_rx) = mpsc::channel();
+        let signals = Arc::new(Mutex::new(Vec::new()));
+        let mut worker = successful_worker(2_016, 700);
+        worker.snapshot_seam = Some((1, seam));
+        worker.shared_signals = Some(Arc::clone(&signals));
+        worker.dropped = Some(dropped_tx);
+        let worker = Mutex::new(Some(worker));
+        let mut engine =
+            engine.with_background_cleanup(move || worker.lock().unwrap().take().unwrap());
+        engine.run_cycle_at(2_000).unwrap();
+        entered.recv_timeout(Duration::from_secs(5)).unwrap();
+        let (drop_started_tx, drop_started_rx) = mpsc::channel();
+        let (drop_done_tx, drop_done_rx) = mpsc::channel();
+        let owner = std::thread::spawn(move || {
+            drop_started_tx.send(()).unwrap();
+            if explicit_shutdown {
+                engine.shutdown_background_cleanup().unwrap();
+            }
+            drop(engine);
+            drop_done_tx.send(()).unwrap();
+        });
+        drop_started_rx
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap();
+        assert!(
+            matches!(
+                drop_done_rx.recv_timeout(Duration::from_millis(50)),
+                Err(mpsc::RecvTimeoutError::Timeout)
+            ),
+            "Drop must wait for its exact blocked worker"
+        );
+        release.send(()).unwrap();
+        drop_done_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        owner.join().unwrap();
+        dropped_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert!(signals.lock().unwrap().is_empty());
+        assert!(!control.status().unwrap().cleanup_in_progress);
+        assert!(
+            control
+                .store()
+                .recover_incomplete_attempts(4_000)
+                .unwrap()
+                .is_empty()
+        );
+    }
 }

@@ -17,6 +17,19 @@ The preview runs one real native observation with a private temporary database/s
 
 预览只观察一次，退出后移除自己的临时状态；不会安装服务或发送浏览器信号。全部会话为 protected 可能是正常结果。doctor 失败或快照不完整不能解释为“没有需要清理的东西”。
 
+Doctor coverage separates `executable_path_unavailable` from
+`executable_vnode_unavailable`: a missing/invalid native path is different from a
+returned path whose mapped executable identity could not be proved.
+`executable_path_missing_without_errno` counts the narrower native zero-return,
+zero-errno case. These facts also appear in `doctor --source-only --json`
+and dry-run coverage. An incomplete executable still contributes to
+`executable_identity_unavailable` and remains protected; a successful snapshot
+or healthy source doctor does not prove complete classification coverage.
+
+doctor 现在区分 native path 不可读与 mapped vnode 身份不完整，并单独保留“零返回且
+没有 errno”的计数。这些是无路径的诊断事实，不是清理许可；不会用另一个映射、
+进程名称或一次成功扫描来补造缺失身份。
+
 ## 2. Keep an isolated daemon open / 交互式临时 daemon
 
 In terminal A, retain the printed directory for terminal B. `pwd -P` resolves macOS temporary-directory symlinks, because lock validation requires a real private path.

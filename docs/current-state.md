@@ -2,101 +2,122 @@
 
 **Updated:** 2026-10-25. **Programme:** 0.1. **Reader posture:** experimental developer source preview; not a signed/notarized App release or multi-day reliability claim.
 
-## Vision calibration and source reliability work (2026-10-25)
+## Programme continuation: observation, execution and native coverage (2026-10-25)
 
-Implementation candidate [`3fdb694`](https://github.com/IndelibleVivi/unlinger/commit/3fdb6941188fa956593872780271943c0180d29e)
-is pushed. Its [exact-source macOS CI](https://github.com/IndelibleVivi/unlinger/actions/runs/40147673014)
-passed for that exact implementation commit. Required local source verification is now
-complete, including the unlocked-console fixture Accessibility/RSS gate below.
-This is a source-complete candidate; installation, activation and field acceptance
-remain separate.
+The next source candidate is locally source-complete and isolated report-only
+verified. Remote CI for this next candidate is pending. No installed service,
+installed App, live browser or cache was changed. The preceding WAL-lifetime
+candidate [`3fdb694`](https://github.com/IndelibleVivi/unlinger/commit/3fdb6941188fa956593872780271943c0180d29e)
+and its [exact-source CI](https://github.com/IndelibleVivi/unlinger/actions/runs/40147673014)
+remain evidence for that earlier artifact rather than this new implementation.
 
 The product remains ambient maintenance of abandoned local automation, with
 integration-independent core cleanup and optional stronger lifetime evidence.
-Current source has connected process classification/execution/receipts/impact,
-Chrome clone maintenance and separate uv/Node maintenance. The common
-controller-bearing browser case still requires exact owner lifetime evidence;
-the optional primitive is not an automatic Codex adapter. Exact browser and
-controller compatibility also remains narrow. Phase-2 ambient/multi-day exit
-has not been achieved. The [implementation programme](IMPLEMENTATION_PLAN.md)
-now makes sustained daemon reliability, admitted controllerless usage,
-compatibility maintenance and real ordinary-use evidence one continuous line;
-cache results and frontend completion are not substitutes for that exit gate.
+Current source connects process classification/execution/receipts/impact,
+Chrome clone maintenance and independent uv/Node maintenance. The common
+controller-bearing browser case still needs exact owner lifetime evidence;
+the optional primitive is not an automatic Codex adapter. Browser/controller
+compatibility remains narrow, and Phase-2 ordinary ambient/multi-day exit remains
+open. The [programme](IMPLEMENTATION_PLAN.md) continues reliability, native
+coverage, admitted controllerless use and real ordinary-use evidence together.
 
-Fresh read-only service inspection found accepted generation 47 loaded with
-matching generation/binary identity, but **terminal `Failed`, unhealthy/not ready
-and effective report-only**. Its first-failure record is dated
-2026-10-21 18:40:20 +08 and identifies SQLite `SystemIoFailure`, extended code
-4874 (`SQLITE_IOERR_SHMSIZE`) during WAL connection setup. This is a distinct
-event from the earlier 11:48 failure with direct kernel ENOSPC evidence. The
-narrow retained kernel-log query for the later window returned no matching
-events; its cause remains unproved. Current free space or a successful later
-SQLite read cannot establish that cause or rehabilitate the instance.
-No installed service, installed App or live cache/browser was changed by this source work.
-Earlier healthy/enforce records below apply only to their dated observations.
+### Continuous observation and exact process activity
 
-The source store now retains one idle WAL connection for a `HistoryStore` and
-all its clones. Per-operation connections/transactions, FULL durability and
-path validation remain; the idle owner holds no read transaction and is not a
-pool. This prevents repeated last-close checkpoint/sidecar recreation between
-operations, while the final store close retains SQLite's ordinary checkpoint
-and cleanup behavior. Connection setup captures a nonzero OS errno from the
-failed SQLite handle when available, without recording a path or guessing from
-a later thread errno. Schema v14, public protocols, admission gates,
-PREPARED-before-effect, unknown-delivery containment and terminal Failed are
-unchanged. This is a reduction in known lifecycle churn and better fault
-evidence, **not a proven repair of the historical SHMSIZE/SHMOPEN causes**.
+The long-running daemon now runs process cleanup on one single-flight worker.
+TERM/KILL grace and revival waits no longer stop ordinary owner reconciliation,
+native observation and fresh roster publication. Each dispatch still starts
+from a fresh confirmed plan and durable PREPARED attempt; there is no queue of
+old plans or second process attempt. The existing two-observation gap remains
+within the observation cycle. `--once` and direct engine/field-harness callers
+retain synchronous behavior through the same execute/settle routine.
 
-The strict machine-readable support matrix also now describes the existing
-Chrome clone enforce capability and required per-candidate/global reference
-proof, replacing stale `observe_only`/`incomplete` constants. It does not claim
-that a current runtime observation is complete. No new browser version, family,
-controller lane or runtime artifact has been admitted.
+The exact worker owns process activity through terminal settlement and unwind;
+a replacement scan or empty roster cannot clear it. Every signal retains the
+frozen epoch/revision gate. Pause followed by immediate Resume cannot restore
+that plan. Worker completion wakes a fresh cycle through the bounded scheduler
+wait even when native event hints are unavailable. Shutdown cancels and joins;
+Drop never detaches. A panic or error closes authority, and surviving PREPARED
+recovery happens only after the exact worker has joined.
 
-Fresh formatting, strict workspace clippy, **442 Rust tests** (16 explicit
-opt-in cases ignored), release workspace build and source-only doctor/dry-run
-pass. The focused lifetime witness rejected the prior per-operation last-close
-behavior; the 73 store integration cases include checkpointing and unsafe-path
-refusal, and a service test proves a consistent backup includes committed WAL
-while the store remains alive. An owned invalid WAL fixture produces
-`CannotOpen` plus SQLite-reported `os_errno=21`, without a path. Independent
-static review found no actionable regression and explicitly bounded errno
-coverage to configuration/initialization. App validation passes 131 Swift
-tests /19 suites, 11 bundle-verifier tests, two owned-demo tests and relocated
-release bundling. The isolated v5 report-only socket lane passes
-**7 + restart + 7**, retaining independent cache observations without a maintenance attempt.
+The integration exposed an existing unmanaged-lifecycle gap: successful
+observation completion could overwrite terminal Failed. `ControlPlane` now
+rejects that transition under the same status lock that publishes readiness;
+managed durable fail-close retry is preserved. Tests cover observation during a
+held cleanup wait, one open attempt, no dispatch of an intervening stale plan,
+exactly-once receipt delivery, sticky cancellation, observer failure,
+unknown/panicked delivery, shutdown/join and v5/v4/v3 Reclaiming projection.
+Independent static review found no actionable issue, including observation /
+retry-block / prune transactions concurrent with terminal receipt and impact.
 
-The first full Rust command reached passing unit/integration suites but
-doctest temporary-directory creation failed with host `ENOSPC`. Moving only
-source-test temporary state to X9 then exposed Unix socket path-length limits;
-a short private X9 temporary root passed the focused shutdown suite and the
-complete workspace gate without changing an assertion. The socket smoke still
-stages its exact daemon on the startup volume as required. Source doctor took
-144 ms for 548 processes, with 15 incomplete executable identities; dry-run
-reports two protected controller-only incidents and performs no cleanup.
+### Native coverage remains conservative and is now diagnosable
 
-**The required fixture GUI gate now passes.** After the console was unlocked,
-the unchanged default history Accessibility/RSS script completed its full
-120-second window: **464 successful tree probes, zero transient probe failures**,
-78,368 KiB initial/maximum RSS and 21,424 KiB final RSS. Release bundling and
-relocated resource verification also passed. No fixture, duration, threshold or
-assertion was changed. The earlier failed run lost its retained window reference
-with `AXError -25202` after 129 successful probes, and the next attempt was refused
-on a locked console; those remain failed observations. The relation between
-locking and that earlier invalid reference is still unproved. This bounded source
-fixture pass is not installed-App or multi-day acceptance. Installation,
-activation and current-generation cleanup are not claimed.
+Native path reads now retain the API return/errno distinction instead of losing
+it inside the old string-error wrapper. The decoder checks the native byte count,
+complete absolute UTF-8 pathname and mapped-vnode match. Additive serde-defaulted
+coverage counters distinguish unavailable paths, zero-return-without-errno and
+unproved mapped vnodes in doctor/dry-run output. No path, argv or PID is added to
+the diagnostic counters; identity/classification/clone gates are unchanged.
+Unpathed processes remain identity-incomplete, and no region-walk fallback or
+alternative path authority was introduced.
 
-A bounded read-only native coverage probe found 15 live BSD-running processes
-whose `proc_pidpath` returned ENOENT. All 542 processes with a returned path had
-a matching first mapped vnode; there was no path-mismatch case requiring the
-probe's bounded region-walk fallback. A missing expected path cannot be repaired
-by searching more regions for that same path. This identifies the current native-path input boundary,
-not the reason those paths are unavailable. The existing global clone proof
-therefore remains incomplete. A region-walk rewrite is not justified by this
-observation, and no identity/protection condition was relaxed. Current uv and
-Node executable versions are still the admitted 0.11.20 and 26.7.0; uv's earlier
-transient `unsupported` observation must not be attributed to a version upgrade.
+The fresh main-session source doctor is healthy and takes **149 ms for 513
+inspected processes**: 15 executable identities are incomplete, all 15 due to
+unavailable native paths; mapped-vnode-only failures and zero-without-errno
+counts are both zero. A separate earlier worker probe reported zero-without-
+errno, while the preceding C probe recorded ENOENT. Those observations cannot
+be combined into a kernel-cause claim. The pathname omission remains unresolved;
+this source change makes the boundary visible rather than declaring coverage
+complete. Fresh dry-run finds five protected Playwright incidents and performs
+no cleanup.
+
+### Source and isolated verification
+
+Formatting, strict workspace clippy, **457 Rust tests** (16 explicit opt-in
+cases ignored), release workspace build, source doctor and dry-run pass.
+The full main-session macOS suite passes, including the native clock and
+loopback cases unavailable in the worker environment. App validation passes
+**131 Swift tests /19 suites**, 11 bundle-verifier tests, two owned-demo tests
+and relocated release bundling. The isolated v5 report-only socket lane passes
+**7 + restart + 7**, with independent uv/Node observations and no maintenance
+attempt or IP listener.
+
+The unchanged default history Accessibility/RSS gate completes its full
+**120 seconds with 468 probes and zero transient failures**: 84,720 KiB
+initial/maximum RSS and 20,368 KiB final RSS. The earlier retained-window
+`AXError -25202` after 129 successful probes remains an unexplained failed
+observation; a passing source fixture does not retroactively establish its
+cause, installed-App health or multi-day acceptance. No fixture, duration,
+threshold or assertion was weakened.
+
+The preceding source cycle encountered startup-volume ENOSPC and then an
+external temporary-root Unix-socket path-length limit. This cycle uses the
+already established short source-test temporary root; App bundle validation
+and the exact staged socket-smoke daemon retain their startup-volume boundary.
+Host storage pressure has not been solved by the source changes.
+
+### Retained store and installed boundary
+
+The source retains the prior shared idle WAL connection lifetime for a
+`HistoryStore` and its clones. Operation transactions, FULL durability,
+per-operation path validation, available checkpointing and SQLite-consistent
+backup remain independent. Connection setup captures SQLite's nonzero handle
+OS errno when available. This reduces last-close/sidecar churn; it is not a
+proven repair of the historical SHMSIZE/SHMOPEN causes. SQLite v14 and all public
+protocol/admission/artifact boundaries are unchanged. The support matrix still
+describes the existing Chrome clone enforce capability and required proof,
+rather than stale observe-only or runtime-completeness constants.
+
+The last verified producer versions remain uv 0.11.20 and Node 26.7.0. The
+earlier transient uv `unsupported` observation has no proved cause and must not
+be attributed to a version upgrade.
+
+Fresh read-only inspection still finds accepted generation 47 loaded with
+matching generation/binary identity, but **terminal Failed, unhealthy/not ready
+and effective report-only**. Its first-failure record identifies the distinct
+2026-10-21 18:40:20 +08 SQLite SHMSIZE/4874 event, whose cause is unproved. It
+must not be conflated with the earlier 11:48 kernel-confirmed ENOSPC event.
+Installation, activation, current-generation cleanup and multi-day acceptance
+are not claimed. Older healthy/enforce records below retain their dated scope.
 
 ## Normal Node result and disk-full recovery (2026-10-21)
 

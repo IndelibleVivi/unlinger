@@ -6,6 +6,9 @@ use serde::Serialize;
 use std::collections::BTreeSet;
 use std::error::Error;
 use std::fmt::{Display, Formatter};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::thread::{self, JoinHandle};
 use std::time::Duration;
 use unlinger_core::{
     ArtifactDisposition, ArtifactFreeze, CleanupError, CleanupExecutor, CleanupPlan,
@@ -58,6 +61,7 @@ pub enum EngineError {
     Cleanup(CleanupError),
     PostDeliveryFailure(String),
     Config(String),
+    Worker(String),
 }
 
 impl Display for EngineError {
@@ -75,6 +79,7 @@ impl Display for EngineError {
                 "cleanup {incident_id} ended with an uncertain or incomplete delivered side effect"
             ),
             Self::Config(error) => write!(formatter, "engine configuration failed: {error}"),
+            Self::Worker(error) => write!(formatter, "cleanup worker failed: {error}"),
         }
     }
 }
@@ -123,6 +128,83 @@ pub struct ReconciliationEngine<R> {
     control: ControlPlane,
     config: EngineConfig,
     self_pid: Option<u32>,
+    cleanup_runtime_factory: Option<Arc<dyn Fn() -> R + Send + Sync>>,
+    background_cleanup: Option<BackgroundCleanup>,
+}
+
+struct BackgroundCleanup {
+    handle: JoinHandle<CleanupCompletion>,
+    cancelled: Arc<AtomicBool>,
+    started_at_unix_millis: u64,
+}
+
+struct CleanupCompletion {
+    completed_at_unix_millis: u64,
+    result: Result<CleanupReceipt, EngineError>,
+}
+
+struct FrozenCleanup {
+    analyzer: Analyzer,
+    attempt: crate::CleanupAttemptHandle,
+    plan: CleanupPlan,
+    policy: CleanupPolicy,
+    enforcement_epoch: String,
+    cleanup_policy_revision: u64,
+    started_at_unix_millis: u64,
+}
+
+// The worker owns activity through terminal commit. Its handle remains owned
+// until join; recovery must never convert a journal while delivery is possible.
+impl<R> ReconciliationEngine<R> {
+    #[must_use]
+    pub fn background_cleanup_finished(&self) -> bool {
+        self.background_cleanup
+            .as_ref()
+            .is_some_and(|worker| worker.handle.is_finished())
+    }
+
+    pub fn shutdown_background_cleanup(&mut self) -> Result<(), EngineError> {
+        if let Some(worker) = &self.background_cleanup {
+            worker.cancelled.store(true, Ordering::Release);
+        }
+        self.collect_background_cleanup(true).map(|_| ())
+    }
+
+    fn collect_background_cleanup(
+        &mut self,
+        wait: bool,
+    ) -> Result<Option<CleanupReceipt>, EngineError> {
+        if !wait && !self.background_cleanup_finished() {
+            return Ok(None);
+        }
+        let Some(worker) = self.background_cleanup.take() else {
+            return Ok(None);
+        };
+        let completion = worker.handle.join().unwrap_or_else(|_| CleanupCompletion {
+            completed_at_unix_millis: worker.started_at_unix_millis,
+            result: Err(EngineError::Worker("thread panicked".to_owned())),
+        });
+        match completion.result {
+            Ok(receipt) => Ok(Some(receipt)),
+            Err(error) => {
+                // The worker is gone: converting a surviving PREPARED journal
+                // to delivery_unknown can no longer race its native delivery.
+                let _ = self
+                    .control
+                    .fail_closed(completion.completed_at_unix_millis, error.to_string());
+                self.control
+                    .store()
+                    .recover_incomplete_attempts(completion.completed_at_unix_millis)?;
+                Err(error)
+            }
+        }
+    }
+}
+
+impl<R> Drop for ReconciliationEngine<R> {
+    fn drop(&mut self) {
+        let _ = self.shutdown_background_cleanup();
+    }
 }
 
 struct GatedRuntime<'a, R> {
@@ -130,6 +212,7 @@ struct GatedRuntime<'a, R> {
     control: ControlPlane,
     enforcement_epoch: String,
     cleanup_policy_revision: u64,
+    cancelled: &'a AtomicBool,
 }
 
 impl<R: CleanupRuntime> CleanupRuntime for GatedRuntime<'_, R> {
@@ -153,7 +236,14 @@ impl<R: CleanupRuntime> CleanupRuntime for GatedRuntime<'_, R> {
         let control = self.control.clone();
         let epoch = self.enforcement_epoch.clone();
         control.deliver_signal_if_armed(&epoch, self.cleanup_policy_revision, || {
-            self.inner.signal_exact(identity, signal)
+            if self.cancelled.load(Ordering::Acquire) {
+                SignalDisposition::CancelledBeforeDelivery
+            } else {
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    self.inner.signal_exact(identity, signal)
+                }))
+                .unwrap_or(SignalDisposition::DeliveryUnknown)
+            }
         })
     }
 
@@ -178,8 +268,16 @@ impl<R: CleanupRuntime> CleanupRuntime for GatedRuntime<'_, R> {
             &self.enforcement_epoch,
             self.cleanup_policy_revision,
             || {
-                artifact_disposition = self.inner.remove_artifact_exact(artifact);
-                SignalDisposition::Delivered
+                if self.cancelled.load(Ordering::Acquire) {
+                    SignalDisposition::CancelledBeforeDelivery
+                } else {
+                    artifact_disposition =
+                        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                            self.inner.remove_artifact_exact(artifact)
+                        }))
+                        .unwrap_or(ArtifactDisposition::DeliveryUnknown);
+                    SignalDisposition::Delivered
+                }
             },
         );
         if gate == SignalDisposition::CancelledBeforeDelivery {
@@ -190,7 +288,7 @@ impl<R: CleanupRuntime> CleanupRuntime for GatedRuntime<'_, R> {
     }
 }
 
-impl<R: CleanupRuntime> ReconciliationEngine<R> {
+impl<R: CleanupRuntime + Send + 'static> ReconciliationEngine<R> {
     #[must_use]
     pub fn new(
         runtime: R,
@@ -205,7 +303,20 @@ impl<R: CleanupRuntime> ReconciliationEngine<R> {
             control,
             config,
             self_pid,
+            cleanup_runtime_factory: None,
+            background_cleanup: None,
         }
+    }
+
+    /// Opts live service callers into one background cleanup, with a separate
+    /// runtime. One-shot and field-harness callers keep synchronous semantics.
+    #[must_use]
+    pub fn with_background_cleanup(
+        mut self,
+        runtime_factory: impl Fn() -> R + Send + Sync + 'static,
+    ) -> Self {
+        self.cleanup_runtime_factory = Some(Arc::new(runtime_factory));
+        self
     }
 
     #[must_use]
@@ -263,6 +374,10 @@ impl<R: CleanupRuntime> ReconciliationEngine<R> {
         cycle_token: &str,
         should_stop: &mut impl FnMut() -> bool,
     ) -> Result<CycleReport, EngineError> {
+        let mut cleanup_receipts = self
+            .collect_background_cleanup(false)?
+            .into_iter()
+            .collect::<Vec<_>>();
         let lifecycle = self.control.status_at(now_unix_millis)?;
         let cleanup_policy_revision = self.control.cleanup_policy_revision();
         let enforcement_epoch = lifecycle
@@ -394,8 +509,11 @@ impl<R: CleanupRuntime> ReconciliationEngine<R> {
             && status.effective_mode() == DaemonMode::Enforce
             && status.enforcement_epoch.as_deref() == Some(enforcement_epoch.as_str())
             && self.control.cleanup_policy_revision() == cleanup_policy_revision;
-        let mut cleanup_receipts = Vec::new();
-        if lifecycle_still_authorizes_cleanup && !paused && !should_stop() {
+        if lifecycle_still_authorizes_cleanup
+            && !paused
+            && !should_stop()
+            && self.background_cleanup.is_none()
+        {
             for report in incidents
                 .iter()
                 .filter(|report| report.state == IncidentState::Confirmed)
@@ -417,75 +535,90 @@ impl<R: CleanupRuntime> ReconciliationEngine<R> {
                     break;
                 };
                 let process_activity = self.control.begin_process_cleanup_activity(cycle_token)?;
-                let mut journal = self.control.store().journal_for(&attempt);
-                let signal_control = self.control.clone();
-                let stop_control = self.control.clone();
-                let epoch_for_stop = enforcement_epoch.clone();
-                let mut cleanup_should_stop = || {
-                    should_stop()
-                        || stop_control.action_gate_closed(&epoch_for_stop, cleanup_policy_revision)
-                };
-                let mut gated_runtime = GatedRuntime {
-                    inner: &mut self.runtime,
-                    control: signal_control,
+                let frozen = FrozenCleanup {
+                    analyzer: analyzer.clone(),
+                    attempt,
+                    plan,
+                    policy: self.config.cleanup_policy.clone(),
                     enforcement_epoch: enforcement_epoch.clone(),
                     cleanup_policy_revision,
+                    started_at_unix_millis: now_unix_millis,
                 };
-                let execution = CleanupExecutor::execute(
-                    &mut gated_runtime,
-                    &analyzer,
-                    &mut journal,
-                    &mut cleanup_should_stop,
-                    &plan,
-                    &self.config.cleanup_policy,
-                );
-                drop(gated_runtime);
-                let (receipt, _) = match execution {
-                    Ok(receipt) => {
-                        let completed_at = terminal_timestamp(&self.runtime, now_unix_millis);
-                        (
-                            self.control.store().complete_cleanup_attempt(
-                                &attempt,
-                                completed_at,
-                                &receipt,
-                            )?,
-                            completed_at,
-                        )
-                    }
-                    Err(error) => {
-                        if let Some(terminal_receipt) = error.terminal_receipt().cloned() {
-                            let completed_at = terminal_timestamp(&self.runtime, now_unix_millis);
-                            self.control.store().complete_cleanup_attempt(
-                                &attempt,
-                                completed_at,
-                                &terminal_receipt,
-                            )?;
-                        } else {
-                            self.control.fail_closed(
-                                terminal_timestamp(&self.runtime, now_unix_millis),
-                                error.to_string(),
-                            )?;
+                if let Some(factory) = &self.cleanup_runtime_factory {
+                    let factory = Arc::clone(factory);
+                    let control = self.control.clone();
+                    let cancelled = Arc::new(AtomicBool::new(false));
+                    let worker_cancelled = Arc::clone(&cancelled);
+                    let spawned = thread::Builder::new()
+                        .name("unlinger-process-cleanup".to_owned())
+                        .spawn(move || {
+                            // Keep exact activity ownership through terminal commit,
+                            // including unwinding runtime factories and adapters.
+                            let _activity = process_activity;
+                            let mut completed_at_unix_millis = now_unix_millis;
+                            let result =
+                                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                                    let mut runtime = factory();
+                                    let result = std::panic::catch_unwind(
+                                        std::panic::AssertUnwindSafe(|| {
+                                            execute_cleanup(
+                                                &mut runtime,
+                                                &control,
+                                                &frozen,
+                                                &worker_cancelled,
+                                                &mut || false,
+                                            )
+                                        }),
+                                    )
+                                    .unwrap_or_else(|_| {
+                                        Err(EngineError::Worker("thread panicked".to_owned()))
+                                    });
+                                    completed_at_unix_millis =
+                                        terminal_timestamp(&runtime, now_unix_millis);
+                                    result
+                                }))
+                                .unwrap_or_else(|_| {
+                                    Err(EngineError::Worker("thread panicked".to_owned()))
+                                });
+                            if let Err(error) = &result {
+                                let _ = control
+                                    .fail_closed(completed_at_unix_millis, error.to_string());
+                            }
+                            CleanupCompletion {
+                                completed_at_unix_millis,
+                                result,
+                            }
+                        });
+                    match spawned {
+                        Ok(handle) => {
+                            self.background_cleanup = Some(BackgroundCleanup {
+                                handle,
+                                cancelled,
+                                started_at_unix_millis: now_unix_millis,
+                            })
                         }
-                        return Err(EngineError::Cleanup(error));
+                        Err(error) => {
+                            self.control
+                                .fail_closed(now_unix_millis, error.to_string())?;
+                            self.control
+                                .store()
+                                .recover_incomplete_attempts(now_unix_millis)?;
+                            return Err(EngineError::Worker(error.to_string()));
+                        }
                     }
-                };
+                    // No queued plans: after collection the next dispatch must
+                    // be derived from a new complete protected observation.
+                    break;
+                }
+                let receipt = execute_cleanup(
+                    &mut self.runtime,
+                    &self.control,
+                    &frozen,
+                    &AtomicBool::new(false),
+                    should_stop,
+                );
                 drop(process_activity);
-                if receipt_requires_global_fail_close(&receipt) {
-                    return Err(EngineError::PostDeliveryFailure(
-                        receipt.incident_id.clone(),
-                    ));
-                }
-                if receipt.outcome().process == unlinger_core::ProcessOutcome::Cleared {
-                    let latest_reclaim = self
-                        .control
-                        .store()
-                        .most_recent_reclaim()?
-                        .map(RecentReclaim::from);
-                    self.control.update_status(|status| {
-                        status.most_recent_reclaim = latest_reclaim;
-                    })?;
-                }
-                cleanup_receipts.push(receipt);
+                cleanup_receipts.push(receipt?);
             }
         }
 
@@ -605,6 +738,70 @@ impl<R: CleanupRuntime> ReconciliationEngine<R> {
             Err(_) => false,
         })
     }
+}
+
+fn execute_cleanup<R: CleanupRuntime>(
+    runtime: &mut R,
+    control: &ControlPlane,
+    frozen: &FrozenCleanup,
+    cancelled: &AtomicBool,
+    should_stop: &mut dyn FnMut() -> bool,
+) -> Result<CleanupReceipt, EngineError> {
+    let mut journal = control.store().journal_for(&frozen.attempt);
+    let mut cleanup_should_stop = || {
+        should_stop()
+            || cancelled.load(Ordering::Acquire)
+            || control.action_gate_closed(&frozen.enforcement_epoch, frozen.cleanup_policy_revision)
+    };
+    let mut gated_runtime = GatedRuntime {
+        inner: runtime,
+        control: control.clone(),
+        enforcement_epoch: frozen.enforcement_epoch.clone(),
+        cleanup_policy_revision: frozen.cleanup_policy_revision,
+        cancelled,
+    };
+    let execution = CleanupExecutor::execute(
+        &mut gated_runtime,
+        &frozen.analyzer,
+        &mut journal,
+        &mut cleanup_should_stop,
+        &frozen.plan,
+        &frozen.policy,
+    );
+    drop(gated_runtime);
+    let completed_at = terminal_timestamp(runtime, frozen.started_at_unix_millis);
+    let receipt = match execution {
+        Ok(receipt) => {
+            control
+                .store()
+                .complete_cleanup_attempt(&frozen.attempt, completed_at, &receipt)?
+        }
+        Err(error) => {
+            if let Some(terminal_receipt) = error.terminal_receipt() {
+                control.store().complete_cleanup_attempt(
+                    &frozen.attempt,
+                    completed_at,
+                    terminal_receipt,
+                )?;
+            } else {
+                control.fail_closed(completed_at, error.to_string())?;
+            }
+            return Err(EngineError::Cleanup(error));
+        }
+    };
+    if receipt_requires_global_fail_close(&receipt) {
+        return Err(EngineError::PostDeliveryFailure(
+            receipt.incident_id.clone(),
+        ));
+    }
+    if receipt.outcome().process == unlinger_core::ProcessOutcome::Cleared {
+        let latest_reclaim = control
+            .store()
+            .most_recent_reclaim()?
+            .map(RecentReclaim::from);
+        control.update_status(|status| status.most_recent_reclaim = latest_reclaim)?;
+    }
+    Ok(receipt)
 }
 
 fn duration_millis(duration: Duration) -> Result<u64, EngineError> {

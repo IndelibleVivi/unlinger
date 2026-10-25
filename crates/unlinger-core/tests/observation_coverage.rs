@@ -69,3 +69,30 @@ fn a_complete_empty_table_and_an_unreadable_empty_table_are_distinct() {
     empty.coverage.unreadable_processes = 1;
     assert!(!empty.proves_complete_classification_coverage());
 }
+
+#[test]
+fn coverage_categories_are_additive_without_strengthening_or_weakening_proofs() {
+    let complete = snapshot();
+    assert!(complete.proves_complete_exact_identity_coverage());
+    assert!(complete.proves_complete_classification_coverage());
+
+    let mut missing_path = complete;
+    missing_path.processes[0].executable_path = None;
+    missing_path.processes[0].executable = ExecutableIdentity::default();
+    missing_path.processes[0].identity.executable_device = None;
+    missing_path.processes[0].identity.executable_inode = None;
+    missing_path.coverage.executable_path_unavailable = 1;
+    missing_path.coverage.executable_path_missing_without_errno = 1;
+    missing_path.coverage.executable_identity_unavailable = 1;
+
+    assert!(!missing_path.proves_complete_exact_identity_coverage());
+    assert!(!missing_path.proves_complete_classification_coverage());
+
+    let fixture: SnapshotCoverage = serde_json::from_str(
+        r#"{"listed_processes":1,"inspected_processes":1,"unreadable_processes":0,"arguments_unavailable":0,"executable_identity_unavailable":0,"descriptor_facts_unavailable":0}"#,
+    )
+    .expect("missing additive counters default to zero");
+    assert_eq!(fixture.executable_path_unavailable, 0);
+    assert_eq!(fixture.executable_path_missing_without_errno, 0);
+    assert_eq!(fixture.executable_vnode_unavailable, 0);
+}

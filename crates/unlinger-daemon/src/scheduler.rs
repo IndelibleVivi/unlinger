@@ -10,6 +10,7 @@ const STOP_POLL_INTERVAL: Duration = Duration::from_millis(100);
 pub(crate) enum ReconcileTrigger {
     Periodic,
     Runtime(RuntimeEvent),
+    ProcessCleanupCompleted,
     SourceFailed,
     StopRequested,
 }
@@ -73,10 +74,14 @@ impl<S: RuntimeEventSource> ReconciliationScheduler<S> {
     pub(crate) fn wait_for_trigger(
         &mut self,
         mut should_stop: impl FnMut() -> bool,
+        mut process_cleanup_finished: impl FnMut() -> bool,
     ) -> ReconcileTrigger {
         loop {
             if should_stop() {
                 return ReconcileTrigger::StopRequested;
+            }
+            if process_cleanup_finished() {
+                return ReconcileTrigger::ProcessCleanupCompleted;
             }
             let now = Instant::now();
             if now >= self.periodic_deadline {
@@ -157,7 +162,7 @@ mod tests {
             ReconciliationScheduler::new(Some(source), Duration::from_secs(60), None);
 
         assert_eq!(
-            scheduler.wait_for_trigger(|| false),
+            scheduler.wait_for_trigger(|| false, || false),
             ReconcileTrigger::Runtime(RuntimeEvent::ProcessExited { pid: 91 })
         );
     }
@@ -169,7 +174,7 @@ mod tests {
             ReconciliationScheduler::new(Some(source), Duration::from_secs(60), None);
 
         assert_eq!(
-            scheduler.wait_for_trigger(|| false),
+            scheduler.wait_for_trigger(|| false, || false),
             ReconcileTrigger::Runtime(RuntimeEvent::SystemWake)
         );
     }
@@ -184,7 +189,7 @@ mod tests {
             ReconciliationScheduler::new(Some(source), Duration::from_secs(60), None);
 
         assert_eq!(
-            scheduler.wait_for_trigger(|| false),
+            scheduler.wait_for_trigger(|| false, || false),
             ReconcileTrigger::Runtime(event)
         );
         assert_eq!(scheduler.periodic_interval, Duration::from_secs(60));
@@ -197,7 +202,7 @@ mod tests {
             ReconciliationScheduler::new(Some(source), Duration::from_millis(2), None);
 
         assert_eq!(
-            scheduler.wait_for_trigger(|| false),
+            scheduler.wait_for_trigger(|| false, || false),
             ReconcileTrigger::SourceFailed
         );
         assert!(scheduler.source.is_none());
@@ -207,7 +212,7 @@ mod tests {
                 .is_some_and(|error| error.contains("stopped"))
         );
         assert_eq!(
-            scheduler.wait_for_trigger(|| false),
+            scheduler.wait_for_trigger(|| false, || false),
             ReconcileTrigger::Periodic
         );
     }
@@ -219,7 +224,7 @@ mod tests {
             ReconciliationScheduler::new(Some(source), Duration::from_secs(60), None);
 
         assert_eq!(
-            scheduler.wait_for_trigger(|| true),
+            scheduler.wait_for_trigger(|| true, || false),
             ReconcileTrigger::StopRequested
         );
     }
@@ -256,5 +261,41 @@ mod tests {
         scheduler.cycle_failed();
 
         assert!(scheduler.periodic_deadline > Instant::now());
+    }
+
+    #[test]
+    fn completed_process_cleanup_wakes_without_waiting_for_the_periodic_scan() {
+        let source = FakeSource::with_replies([]);
+        let mut scheduler =
+            ReconciliationScheduler::new(Some(source), Duration::from_secs(60), None);
+
+        assert_eq!(
+            scheduler.wait_for_trigger(|| false, || true),
+            ReconcileTrigger::ProcessCleanupCompleted
+        );
+        assert!(scheduler.periodic_deadline > Instant::now());
+    }
+
+    #[test]
+    fn process_completion_also_wakes_when_the_native_event_source_is_unavailable() {
+        let mut scheduler =
+            ReconciliationScheduler::<FakeSource>::new(None, Duration::from_secs(60), None);
+
+        assert_eq!(
+            scheduler.wait_for_trigger(|| false, || true),
+            ReconcileTrigger::ProcessCleanupCompleted
+        );
+    }
+
+    #[test]
+    fn shutdown_takes_precedence_over_a_completed_process_worker() {
+        let source = FakeSource::with_replies([]);
+        let mut scheduler =
+            ReconciliationScheduler::new(Some(source), Duration::from_secs(60), None);
+
+        assert_eq!(
+            scheduler.wait_for_trigger(|| true, || true),
+            ReconcileTrigger::StopRequested
+        );
     }
 }

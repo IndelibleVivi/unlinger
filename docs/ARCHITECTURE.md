@@ -40,6 +40,55 @@ Chrome clone 的磁盘状态单独进入状态库；源码逐个保留 candidate
 | App presentation only | [browser mapper](../apps/UnlingerApp/Sources/UnlingerKit/State/BrowserOverviewMapper.swift), [history mapper](../apps/UnlingerApp/Sources/UnlingerKit/State/BrowserHistoryMapper.swift) |
 | Installed lifecycle | [service CLI](../crates/unlinger-cli/src/service.rs), [operator runbook](INSTALLED_DOGFOOD.md) |
 
+Native path decoding follows [Apple's libproc implementation](https://github.com/apple-oss-distributions/xnu/blob/main/libsyscall/wrappers/libproc/libproc.c),
+which returns the pathname byte count without its NUL terminator. Source checks
+that complete absolute path before matching its mapped vnode. Path-free coverage
+counters distinguish unavailable paths, zero return without errno and unproved
+mapped vnodes; these diagnostics do not create identity or cleanup authority.
+
+## Continuous observation during process cleanup / 清理期间持续观测
+
+The long-running daemon uses one process-cleanup worker. The observation owner
+continues native snapshots, exact task/host-owner reconciliation, cooling,
+protection and roster publication while the worker waits for TERM/KILL grace
+and revival checks. It dispatches only a fresh confirmed plan when that worker
+is idle; it neither queues old plans nor starts a second process attempt.
+The ordinary two-observation gap remains in the observation cycle.
+
+```mermaid
+flowchart LR
+  observe["Native snapshot + owner reconciliation"] -->|fresh confirmed plan; worker idle| prepared["ControlPlane + durable PREPARED attempt"]
+  prepared --> worker["One process worker / canonical CleanupExecutor"]
+  worker -->|each exact signal| gate["Identity revalidation + epoch / policy revision gate"]
+  gate --> process["Exact owned process TERM / KILL"]
+  worker -->|action journal + terminal receipt / impact| db[("SQLite result authority")]
+  worker -->|completion wakes a fresh cycle| observe
+  observe -->|fresh roster| overview["Daemon-owned atomic overview"]
+  db --> overview
+```
+
+The worker uses the same execution and terminal-settlement routine as one-shot
+and direct synchronous engine callers. It holds no lifecycle lock across grace
+or revival waits. Every signal still needs the frozen enforcement epoch and
+cleanup-policy revision. Pause followed immediately by Resume cannot revive
+the old plan. Observation failure, Disarm, Drain and terminal failure close the
+same delivery gate. Worker completion requests another fresh cycle through the
+existing bounded scheduler wait, including when native event hints are unavailable.
+
+Process activity belongs to the exact attempt rather than the scan that launched
+it. A replacement scan cannot clear it or turn an empty roster into a completed
+cleanup. Successful terminal settlement updates durable receipt/impact once;
+only the joined worker can be recovered as uncertain after failure or panic.
+Shutdown cancels and joins this exact worker; engine destruction never detaches
+it. The existing process-only artifact policy and single open attempt remain.
+
+长期 daemon 的 process cleanup 与观测各有 owner；新的 native snapshot、owner
+退出、保护和 roster 更新不再等待整段 signal grace 与 revival。只有 fresh confirmed
+plan 能在 worker 空闲时进入 PREPARED，没有后台队列，也没有并发 process attempts。
+暂停、撤权或失败仍在每次 signal 前生效，快速 Resume 不复活旧 plan。worker 的
+terminal receipt 是结果 authority；新的空快照不能替它提前宣布成功。当前安装与
+实机证据仍由 [current-state](current-state.md) 单独维护。
+
 ## Durable boundaries
 
 The current source gives each `HistoryStore` and its clones one shared idle WAL

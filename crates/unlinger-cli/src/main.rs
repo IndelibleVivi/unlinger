@@ -1146,11 +1146,14 @@ fn doctor(socket: &std::path::Path, arguments: DoctorArgs) -> Result<(), Box<dyn
         );
         if let Some(coverage) = &report.coverage {
             println!(
-                "coverage: {}/{} inspected; {} unreadable; {} argv unavailable",
+                "coverage: {}/{} inspected; {} unreadable; {} argv unavailable; {} executable paths unavailable; {} paths missing without errno; {} mapped executable vnodes unavailable",
                 coverage.inspected_processes,
                 coverage.listed_processes,
                 coverage.unreadable_processes,
-                coverage.arguments_unavailable
+                coverage.arguments_unavailable,
+                coverage.executable_path_unavailable,
+                coverage.executable_path_missing_without_errno,
+                coverage.executable_vnode_unavailable,
             );
         }
         println!("signature packs: {}", report.signature_packs.len());
@@ -1822,6 +1825,45 @@ mod tests {
         assert_eq!(json["daemon_ready"], false);
         assert_eq!(json["overall_healthy"], false);
         assert!(doctor_result(&report).is_err());
+    }
+
+    #[test]
+    fn doctor_json_keeps_native_path_and_vnode_coverage_distinct() {
+        let report = DoctorReport {
+            schema_version: 2,
+            healthy: true,
+            source_healthy: true,
+            daemon_required: false,
+            daemon_reachable: false,
+            daemon_healthy: false,
+            daemon_ready: false,
+            overall_healthy: true,
+            platform: "macOS",
+            product_version: Some("15.0".to_owned()),
+            supported_platform: true,
+            current_uid: 501,
+            non_root_user: true,
+            native_snapshot_ok: true,
+            snapshot_elapsed_millis: 5,
+            coverage: Some(unlinger_core::SnapshotCoverage {
+                listed_processes: 4,
+                inspected_processes: 4,
+                executable_identity_unavailable: 3,
+                executable_path_unavailable: 2,
+                executable_path_missing_without_errno: 1,
+                executable_vnode_unavailable: 1,
+                ..unlinger_core::SnapshotCoverage::default()
+            }),
+            signature_packs: Vec::new(),
+            daemon_status: None,
+            errors: Vec::new(),
+        };
+
+        let json = serde_json::to_value(&report).expect("doctor JSON");
+        assert_eq!(json["coverage"]["executable_path_unavailable"], 2);
+        assert_eq!(json["coverage"]["executable_path_missing_without_errno"], 1);
+        assert_eq!(json["coverage"]["executable_vnode_unavailable"], 1);
+        assert_eq!(json["coverage"]["executable_identity_unavailable"], 3);
     }
 
     #[test]

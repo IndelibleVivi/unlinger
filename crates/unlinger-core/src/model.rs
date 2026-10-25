@@ -134,6 +134,12 @@ pub struct SnapshotCoverage {
     pub unreadable_processes: usize,
     pub arguments_unavailable: usize,
     pub executable_identity_unavailable: usize,
+    #[serde(default)]
+    pub executable_path_unavailable: usize,
+    #[serde(default)]
+    pub executable_path_missing_without_errno: usize,
+    #[serde(default)]
+    pub executable_vnode_unavailable: usize,
     pub descriptor_facts_unavailable: usize,
 }
 

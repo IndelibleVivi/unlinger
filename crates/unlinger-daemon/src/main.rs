@@ -168,6 +168,9 @@ fn run(arguments: Arguments) -> Result<(), Box<dyn Error>> {
         },
         Some(std::process::id()),
     );
+    if !arguments.once {
+        engine = engine.with_background_cleanup(MacosRuntime::new);
+    }
     let mut last_cycle_error = None;
     let mut last_storage_residue_attempt_at = None;
     let mut last_tool_cache_observation_attempt_at = None;
@@ -264,17 +267,22 @@ fn run(arguments: Arguments) -> Result<(), Box<dyn Error>> {
         }
         if let Some(scheduler) = scheduler.as_mut() {
             loop {
-                let trigger =
-                    scheduler.wait_for_trigger(|| shutdown_requested() || control.is_draining());
+                let trigger = scheduler.wait_for_trigger(
+                    || shutdown_requested() || control.is_draining(),
+                    || engine.background_cleanup_finished(),
+                );
                 report_event_source_error(scheduler, &control);
                 match trigger {
                     ReconcileTrigger::SourceFailed => continue,
                     ReconcileTrigger::StopRequested => break 'daemon,
-                    ReconcileTrigger::Periodic | ReconcileTrigger::Runtime(_) => break,
+                    ReconcileTrigger::Periodic
+                    | ReconcileTrigger::Runtime(_)
+                    | ReconcileTrigger::ProcessCleanupCompleted => break,
                 }
             }
         }
     }
+    engine.shutdown_background_cleanup()?;
     if let Some(startup) = managed_startup.as_mut() {
         if shutdown_requested() && !control.is_draining() && !startup.first_cycle_complete {
             control.preserve_managed_pre_ready_restart_intent(now_unix_millis()?)?;

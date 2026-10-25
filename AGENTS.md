@@ -23,6 +23,17 @@ SQLite-owned WAL/sidecars; backup/rollback must still use the existing service
 transaction and SQLite-consistent snapshot. Configuration errors may include
 SQLite's own nonzero OS errno, never a later sampled thread errno or path.
 
+The long-running source daemon also uses one single-flight process-cleanup
+worker while the observation owner continues native/owner reconciliation and
+fresh roster publication. `engine.rs` owns that worker, its exact attempt
+activity, shared execute/settle routine and cancel/join shutdown; `main.rs` and
+`scheduler.rs` wire completion into a fresh cycle. `--once` and direct engine
+callers remain synchronous through the same execute/settle routine. Never queue
+stale plans, open concurrent process attempts, recover a still-running worker,
+detach it at shutdown, or let a replacement scan clear its cleanup activity.
+Frozen epoch/policy revision gates still apply before every signal, so a quick
+Resume cannot revive a cancelled plan. Installed generation 47 is unchanged.
+
 Source cache maintenance uses SQLite v14 and exact uv `0.11.20` native
 `cache prune` at the default `~/.cache/uv`. The owner explicitly admitted
 uv-owned cached execution environments under the native lock; project `.venv`

@@ -71,7 +71,7 @@ mod platform {
     use crate::parse_procargs2_task;
     use libproc::libproc::file_info::{ListFDs, ProcFDType, pidfdinfo};
     use libproc::libproc::net_info::{SocketFDInfo, SocketInfoKind, TcpSIState};
-    use libproc::libproc::proc_pid::{listpidinfo, pidinfo, pidpath};
+    use libproc::libproc::proc_pid::{listpidinfo, pidinfo};
     use libproc::libproc::task_info::TaskAllInfo;
     use libproc::processes::{ProcFilter, pids_by_type};
     use std::error::Error;
@@ -92,6 +92,7 @@ mod platform {
     const CTL_KERN: libc::c_int = 1;
     const KERN_ARGMAX: libc::c_int = 8;
     const KERN_PROCARGS2: libc::c_int = 49;
+    const PROC_PIDPATHINFO_MAXSIZE: usize = 4 * libc::MAXPATHLEN as usize;
     const PROC_PIDREGIONPATHINFO: libc::c_int = 8;
     const VNODE_TYPE_REGULAR: libc::c_int = 1;
     const STATUS_RUN: u32 = 2;
@@ -141,19 +142,11 @@ mod platform {
 
             for pid in pids {
                 match read_live_process(pid, argmax) {
-                    Ok(process) => {
+                    Ok(observation) => {
                         coverage.listed_processes += 1;
                         coverage.inspected_processes += 1;
-                        if process.arguments.is_none() {
-                            coverage.arguments_unavailable += 1;
-                        }
-                        if !process.executable.is_complete() {
-                            coverage.executable_identity_unavailable += 1;
-                        }
-                        if !process.runtime.descriptor_facts_complete {
-                            coverage.descriptor_facts_unavailable += 1;
-                        }
-                        processes.push(process);
+                        record_process_coverage(&mut coverage, &observation);
+                        processes.push(observation.process);
                     }
                     Err(ProcessReadFailure::GoneOrZombie) => {}
                     Err(ProcessReadFailure::Unreadable) => {
@@ -177,7 +170,7 @@ mod platform {
         pub fn lookup(&self, pid: u32) -> Result<Option<ProcessRecord>, SnapshotError> {
             let argmax = kernel_argmax()?;
             match read_live_process(pid, argmax) {
-                Ok(process) => Ok(Some(process)),
+                Ok(observation) => Ok(Some(observation.process)),
                 Err(ProcessReadFailure::GoneOrZombie) => Ok(None),
                 Err(ProcessReadFailure::Unreadable) => Err(SnapshotError::ProcessLookup(format!(
                     "native metadata unavailable for live pid {pid}"
@@ -434,12 +427,117 @@ mod platform {
         Unreadable,
     }
 
-    fn read_live_process(pid: u32, argmax: usize) -> Result<ProcessRecord, ProcessReadFailure> {
+    struct ProcessObservation {
+        process: ProcessRecord,
+        executable_path_missing_without_errno: bool,
+    }
+
+    fn record_process_coverage(coverage: &mut SnapshotCoverage, observation: &ProcessObservation) {
+        let process = &observation.process;
+        if process.arguments.is_none() {
+            coverage.arguments_unavailable += 1;
+        }
+        if process.executable_path.is_none() {
+            coverage.executable_path_unavailable += 1;
+        }
+        if observation.executable_path_missing_without_errno {
+            coverage.executable_path_missing_without_errno += 1;
+        }
+        if !process.executable.is_complete() {
+            coverage.executable_identity_unavailable += 1;
+            if process.executable_path.is_some() {
+                coverage.executable_vnode_unavailable += 1;
+            }
+        }
+        if !process.runtime.descriptor_facts_complete {
+            coverage.descriptor_facts_unavailable += 1;
+        }
+    }
+
+    #[derive(Clone, Debug, Eq, PartialEq)]
+    enum ExecutablePathObservation {
+        Returned(String),
+        MissingWithoutErrno,
+        Failed,
+        InvalidEncoding,
+    }
+
+    impl ExecutablePathObservation {
+        fn path(&self) -> Option<&str> {
+            match self {
+                Self::Returned(path) => Some(path),
+                Self::MissingWithoutErrno | Self::Failed | Self::InvalidEncoding => None,
+            }
+        }
+
+        fn missing_without_errno(&self) -> bool {
+            matches!(self, Self::MissingWithoutErrno)
+        }
+    }
+
+    fn errno_location() -> *mut libc::c_int {
+        unsafe { libc::__error() }
+    }
+
+    fn classify_executable_path(
+        returned: libc::c_int,
+        errno: libc::c_int,
+        bytes: &[u8],
+    ) -> ExecutablePathObservation {
+        if returned == 0 {
+            return if errno == 0 {
+                ExecutablePathObservation::MissingWithoutErrno
+            } else {
+                ExecutablePathObservation::Failed
+            };
+        }
+        if returned < 0 || errno != 0 {
+            return ExecutablePathObservation::Failed;
+        }
+        let length = usize::try_from(returned)
+            .ok()
+            .filter(|length| bytes.get(*length) == Some(&0));
+        let Some(length) = length else {
+            return ExecutablePathObservation::Failed;
+        };
+        let bytes = &bytes[..length];
+        // libproc returns strlen(buffer), excluding the trailing NUL. Accept
+        // only the complete absolute pathname described by that byte count.
+        if !bytes.starts_with(b"/") || bytes.contains(&0) {
+            return ExecutablePathObservation::Failed;
+        }
+        match std::str::from_utf8(bytes) {
+            Ok(path) => ExecutablePathObservation::Returned(path.to_owned()),
+            Err(_) => ExecutablePathObservation::InvalidEncoding,
+        }
+    }
+
+    fn read_executable_path(pid: libc::c_int) -> ExecutablePathObservation {
+        let mut buffer = vec![0_u8; PROC_PIDPATHINFO_MAXSIZE];
+        let Ok(buffer_size) = u32::try_from(buffer.len()) else {
+            return ExecutablePathObservation::Failed;
+        };
+        // `proc_pidpath` communicates failure through both its return value and
+        // errno. Reset immediately before the API so an earlier native call
+        // cannot turn a zero-without-errno observation into a fabricated error.
+        unsafe {
+            *errno_location() = 0;
+        }
+        let returned =
+            unsafe { libc::proc_pidpath(pid, buffer.as_mut_ptr().cast::<c_void>(), buffer_size) };
+        let errno = unsafe { *errno_location() };
+        classify_executable_path(returned, errno, &buffer)
+    }
+
+    fn read_live_process(
+        pid: u32,
+        argmax: usize,
+    ) -> Result<ProcessObservation, ProcessReadFailure> {
         match read_process(pid, argmax) {
-            Ok(process) if process.status == ProcessStatus::Zombie => {
+            Ok(observation) if observation.process.status == ProcessStatus::Zombie => {
                 Err(ProcessReadFailure::GoneOrZombie)
             }
-            Ok(process) => Ok(process),
+            Ok(observation) => Ok(observation),
             Err(()) => match kern_process_status(pid) {
                 Some(STATUS_ZOMBIE) => Err(ProcessReadFailure::GoneOrZombie),
                 Some(_) => Err(ProcessReadFailure::Unreadable),
@@ -603,10 +701,12 @@ mod platform {
         identity_from_mapped_region(&region, expected_path)
     }
 
-    fn read_process(pid: u32, argmax: usize) -> Result<ProcessRecord, ()> {
+    fn read_process(pid: u32, argmax: usize) -> Result<ProcessObservation, ()> {
         let pid_i32 = i32::try_from(pid).map_err(|_| ())?;
         let info = pidinfo::<TaskAllInfo>(pid_i32, 0).map_err(|_| ())?;
-        let path = pidpath(pid_i32).ok().filter(|path| !path.is_empty());
+        let path_observation = read_executable_path(pid_i32);
+        let executable_path_missing_without_errno = path_observation.missing_without_errno();
+        let path = path_observation.path().map(str::to_owned);
         let executable = path
             .as_deref()
             .map_or_else(ExecutableIdentity::default, |path| {
@@ -642,36 +742,39 @@ mod platform {
             .filter(|path| path.ends_with("/chrome_crashpad_handler"))
             .and_then(|path| crate::version::collect_crashpad_bundle_version(Path::new(path)));
 
-        Ok(ProcessRecord {
-            identity: ProcessIdentity {
-                pid,
-                started_at_unix_micros,
-                executable_device: executable.device,
-                executable_inode: executable.inode,
+        Ok(ProcessObservation {
+            process: ProcessRecord {
+                identity: ProcessIdentity {
+                    pid,
+                    started_at_unix_micros,
+                    executable_device: executable.device,
+                    executable_inode: executable.inode,
+                },
+                parent_pid: info.pbsd.pbi_ppid,
+                process_group_id: info.pbsd.pbi_pgid,
+                uid: info.pbsd.pbi_uid,
+                tty_device,
+                name,
+                executable_path: path,
+                executable,
+                arguments,
+                resident_memory_bytes: info.ptinfo.pti_resident_size,
+                status: match info.pbsd.pbi_status {
+                    STATUS_RUN => ProcessStatus::Running,
+                    STATUS_SLEEP => ProcessStatus::Sleeping,
+                    STATUS_STOP => ProcessStatus::Stopped,
+                    STATUS_ZOMBIE => ProcessStatus::Zombie,
+                    other => ProcessStatus::Other(other),
+                },
+                runtime: ProcessRuntimeFacts {
+                    cpu_total_nanos: info
+                        .ptinfo
+                        .pti_total_user
+                        .saturating_add(info.ptinfo.pti_total_system),
+                    ..runtime
+                },
             },
-            parent_pid: info.pbsd.pbi_ppid,
-            process_group_id: info.pbsd.pbi_pgid,
-            uid: info.pbsd.pbi_uid,
-            tty_device,
-            name,
-            executable_path: path,
-            executable,
-            arguments,
-            resident_memory_bytes: info.ptinfo.pti_resident_size,
-            status: match info.pbsd.pbi_status {
-                STATUS_RUN => ProcessStatus::Running,
-                STATUS_SLEEP => ProcessStatus::Sleeping,
-                STATUS_STOP => ProcessStatus::Stopped,
-                STATUS_ZOMBIE => ProcessStatus::Zombie,
-                other => ProcessStatus::Other(other),
-            },
-            runtime: ProcessRuntimeFacts {
-                cpu_total_nanos: info
-                    .ptinfo
-                    .pti_total_user
-                    .saturating_add(info.ptinfo.pti_total_system),
-                ..runtime
-            },
+            executable_path_missing_without_errno,
         })
     }
 
@@ -1182,6 +1285,148 @@ mod platform {
         }
 
         #[test]
+        fn proc_pidpath_observations_preserve_zero_and_errno_distinctions() {
+            assert_eq!(
+                classify_executable_path(0, 0, b""),
+                ExecutablePathObservation::MissingWithoutErrno
+            );
+            assert_eq!(
+                classify_executable_path(0, libc::ENOENT, b""),
+                ExecutablePathObservation::Failed
+            );
+            assert_eq!(
+                classify_executable_path(-1, libc::EPERM, b""),
+                ExecutablePathObservation::Failed
+            );
+            assert_eq!(
+                classify_executable_path(1, 0, b"\0"),
+                ExecutablePathObservation::Failed
+            );
+            assert_eq!(
+                classify_executable_path(6, 0, b"/bin/s\0"),
+                ExecutablePathObservation::Returned("/bin/s".to_owned())
+            );
+            assert_eq!(
+                classify_executable_path(0, 0, b"ignored"),
+                ExecutablePathObservation::MissingWithoutErrno
+            );
+            assert_eq!(
+                classify_executable_path(1, 0, b""),
+                ExecutablePathObservation::Failed
+            );
+            assert_eq!(
+                classify_executable_path(1, 0, b"/\0"),
+                ExecutablePathObservation::Returned("/".to_owned())
+            );
+            assert_eq!(
+                classify_executable_path(2, 0, b"/\xff\0"),
+                ExecutablePathObservation::InvalidEncoding
+            );
+            assert_eq!(
+                classify_executable_path(1, libc::EIO, b"/"),
+                ExecutablePathObservation::Failed
+            );
+            for (returned, bytes) in [
+                (4, b"tool\0".as_slice()),
+                (4, b"/bin".as_slice()),
+                (4, b"/a\0b\0".as_slice()),
+                (7, b"/bin/s\0".as_slice()),
+            ] {
+                assert_eq!(
+                    classify_executable_path(returned, 0, bytes),
+                    ExecutablePathObservation::Failed,
+                    "relative, truncated, embedded-NUL or invalid-length results must stay incomplete"
+                );
+            }
+        }
+
+        #[test]
+        fn owned_child_path_and_mapped_vnode_are_complete() {
+            struct OwnedSleep(std::process::Child);
+
+            impl Drop for OwnedSleep {
+                fn drop(&mut self) {
+                    let _ = self.0.kill();
+                    let _ = self.0.wait();
+                }
+            }
+
+            let child = OwnedSleep(
+                std::process::Command::new("/bin/sleep")
+                    .arg("30")
+                    .spawn()
+                    .expect("launch owned sleep child"),
+            );
+            let process = MacosSnapshotter::new()
+                .lookup(child.0.id())
+                .expect("lookup owned child")
+                .expect("owned child is live");
+
+            assert_eq!(process.executable_path.as_deref(), Some("/bin/sleep"));
+            assert!(process.executable.is_complete());
+            assert_eq!(
+                process.identity.executable_device,
+                process.executable.device
+            );
+            assert_eq!(process.identity.executable_inode, process.executable.inode);
+
+            let mut coverage = SnapshotCoverage::default();
+            record_process_coverage(
+                &mut coverage,
+                &ProcessObservation {
+                    process,
+                    executable_path_missing_without_errno: false,
+                },
+            );
+            assert_eq!(coverage.executable_path_unavailable, 0);
+            assert_eq!(coverage.executable_path_missing_without_errno, 0);
+            assert_eq!(coverage.executable_vnode_unavailable, 0);
+            assert_eq!(coverage.executable_identity_unavailable, 0);
+        }
+
+        #[test]
+        fn path_and_vnode_coverage_counters_remain_fail_closed() {
+            let mut process = MacosSnapshotter::new()
+                .lookup(std::process::id())
+                .expect("lookup current process")
+                .expect("current process exists");
+
+            process.executable_path = None;
+            process.executable = ExecutableIdentity::default();
+            process.identity.executable_device = None;
+            process.identity.executable_inode = None;
+
+            let mut coverage = SnapshotCoverage::default();
+            record_process_coverage(
+                &mut coverage,
+                &ProcessObservation {
+                    process: process.clone(),
+                    executable_path_missing_without_errno: true,
+                },
+            );
+            assert_eq!(coverage.executable_path_unavailable, 1);
+            assert_eq!(coverage.executable_path_missing_without_errno, 1);
+            assert_eq!(coverage.executable_identity_unavailable, 1);
+            assert_eq!(coverage.executable_vnode_unavailable, 0);
+
+            let mut coverage = SnapshotCoverage::default();
+            record_process_coverage(
+                &mut coverage,
+                &ProcessObservation {
+                    process: ProcessRecord {
+                        executable_path: Some("/synthetic/tool".to_owned()),
+                        ..process
+                    },
+                    executable_path_missing_without_errno: false,
+                },
+            );
+            assert_eq!(coverage.executable_path_unavailable, 0);
+            assert_eq!(coverage.executable_path_missing_without_errno, 0);
+            assert_eq!(coverage.executable_identity_unavailable, 1);
+            assert_eq!(coverage.executable_vnode_unavailable, 1);
+        }
+
+        #[test]
         fn mapped_executable_identity_does_not_require_path_read_access() {
             struct OwnedChild(std::process::Child);
 
@@ -1218,7 +1463,10 @@ mod platform {
                 .expect("launch fixture executable");
             let child = OwnedChild(child);
             let pid = i32::try_from(child.0.id()).expect("fixture PID fits i32");
-            let reported_path = pidpath(pid).expect("fixture executable path");
+            let reported_path = match read_executable_path(pid) {
+                ExecutablePathObservation::Returned(path) => path,
+                other => panic!("fixture executable path unavailable: {other:?}"),
+            };
 
             std::fs::set_permissions(&executable_path, std::fs::Permissions::from_mode(0o100))
                 .expect("remove fixture read access");

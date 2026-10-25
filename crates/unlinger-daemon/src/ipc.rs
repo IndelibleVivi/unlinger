@@ -913,6 +913,14 @@ impl ControlPlane {
 
     pub fn complete_successful_cycle(&self, now_unix_millis: u64) -> Result<(), ControlError> {
         let mut status = self.lock_status()?;
+        // A worker can fail concurrently with observation completion. Check
+        // terminal state under the same lock that publishes readiness, even
+        // for an isolated/unmanaged daemon without a durable service lifecycle.
+        if !status.managed && status.startup_state == StartupState::Failed {
+            return Err(ControlError::Unavailable(
+                "daemon instance remains terminal Failed; restart is required".to_owned(),
+            ));
+        }
         if status.managed && status.startup_state == StartupState::Failed {
             let primary_error = status.last_error.clone();
             let (generation, instance_id) = managed_identity(&status)?;
@@ -1951,6 +1959,29 @@ mod control_plane_tests {
         let client = IpcClient::new("/tmp/unlinger-timeout-contract.sock");
         assert_eq!(client.io_timeout, Duration::from_secs(15));
         assert_eq!(IPC_SERVER_IO_TIMEOUT, Duration::from_secs(3));
+    }
+
+    #[test]
+    fn an_unmanaged_failed_instance_cannot_be_rehabilitated_by_observation_completion() {
+        let temp = TempState::new();
+        let store = HistoryStore::open(temp.0.join("worker-failure.sqlite3")).unwrap();
+        let control = ControlPlane::new(store, DaemonStatus::new(DaemonMode::Enforce, 42)).unwrap();
+        control.complete_successful_cycle(10).unwrap();
+        control
+            .fail_closed(11, "owned process worker failed")
+            .unwrap();
+        let before = control.status_at(11).unwrap();
+        assert_eq!(before.startup_state, StartupState::Failed);
+        assert!(!before.healthy && !before.ready);
+        assert_eq!(before.effective_mode(), DaemonMode::ReportOnly);
+
+        assert!(control.complete_successful_cycle(12).is_err());
+        let after = control.status_at(12).unwrap();
+        assert_eq!(
+            serde_json::to_value(&after).unwrap(),
+            serde_json::to_value(&before).unwrap(),
+            "a later successful observation must preserve the terminal state and first failure"
+        );
     }
 
     #[test]
