@@ -46,6 +46,33 @@ use std::time::{Duration, Instant};
 
 use unlinger_protocol::{ToolCacheAvailability, ToolCacheOutcome};
 
+/// A path-free discovery result that retains why an observation failed.
+///
+/// The protocol still owns only [`ToolCacheAvailability`]. This internal type
+/// lets the daemon log a bounded reason without persisting paths or output.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CacheDiscoveryError {
+    availability: ToolCacheAvailability,
+    reason: &'static str,
+}
+
+impl CacheDiscoveryError {
+    pub fn availability(self) -> ToolCacheAvailability {
+        self.availability
+    }
+
+    pub fn reason(self) -> &'static str {
+        self.reason
+    }
+
+    pub(crate) fn new(availability: ToolCacheAvailability, reason: &'static str) -> Self {
+        Self {
+            availability,
+            reason,
+        }
+    }
+}
+
 /// Exact producer version this adapter has been verified against. A mismatch is
 /// `Unsupported`, never a silent best-effort run: the native removal semantics,
 /// the human summary, and the containment assumptions are version-specific.
@@ -70,6 +97,13 @@ const STDOUT_CAP_BYTES: usize = 16 * 1024;
 /// producer's summary is a handful of lines; anything larger is treated as a
 /// protocol violation and the run is not parsed.
 const STDERR_CAP_BYTES: usize = 64 * 1024;
+
+/// Producer discovery queries emit one tiny line.
+const PRODUCER_OUTPUT_CAP_BYTES: usize = 4 * 1024;
+
+/// A present producer must answer one fixed built-in query within this bound.
+/// A slow or wedged producer is unproved, not a different supported format.
+pub(crate) const PRODUCER_QUERY_BUDGET: Duration = Duration::from_secs(10);
 
 /// Total wall-clock budget for one native maintenance run. `uv cache prune`
 /// walks the cache buckets; larger caches may exceed the bound. Timeout is
@@ -200,14 +234,20 @@ impl UvCacheMaintenance {
     /// Discover the current user's supported uv producer and its default cache.
     /// Never consults PATH, a shell, or ambient uv config. The version proof
     /// (`uv --version`) runs here, outside any daemon lock.
-    pub fn discover(should_cancel: impl Fn() -> bool) -> Result<Self, ToolCacheAvailability> {
+    pub fn discover(should_cancel: impl Fn() -> bool) -> Result<Self, CacheDiscoveryError> {
         let home = PathBuf::from(
-            crate::paths::effective_user_home(unsafe { libc::geteuid() })
-                .map_err(|_| ToolCacheAvailability::Unavailable)?,
+            crate::paths::effective_user_home(unsafe { libc::geteuid() }).map_err(|_| {
+                CacheDiscoveryError::new(
+                    ToolCacheAvailability::Unavailable,
+                    "user home could not be resolved",
+                )
+            })?,
         );
         let cache_root = home.join(HOME_CACHE_UV);
+        let prefixes = producer_prefixes(&home);
 
-        let (uv_binary, proved_binding) = discover_producer(&home, &should_cancel)?;
+        let (uv_binary, proved_binding) =
+            discover_producer(&prefixes, &should_cancel, PRODUCER_QUERY_BUDGET)?;
 
         let maintenance = Self::from_paths(
             uv_binary,
@@ -216,11 +256,25 @@ impl UvCacheMaintenance {
             &should_cancel,
         );
         if maintenance.binding.as_ref() != Some(&proved_binding) {
-            return Err(ToolCacheAvailability::Unavailable);
+            return Err(CacheDiscoveryError::new(
+                ToolCacheAvailability::Unavailable,
+                "producer binding changed before cache open",
+            ));
         }
         match maintenance.initial_availability {
             ToolCacheAvailability::Available => Ok(maintenance),
-            other => Err(other),
+            ToolCacheAvailability::Absent => Err(CacheDiscoveryError::new(
+                ToolCacheAvailability::Absent,
+                "uv cache root is absent",
+            )),
+            ToolCacheAvailability::Unsupported => Err(CacheDiscoveryError::new(
+                ToolCacheAvailability::Unsupported,
+                "uv cache root format is unsupported",
+            )),
+            ToolCacheAvailability::Unavailable => Err(CacheDiscoveryError::new(
+                ToolCacheAvailability::Unavailable,
+                "uv producer or cache root could not be proved",
+            )),
         }
     }
 
@@ -1270,48 +1324,108 @@ fn preflight_cache_root(
     Ok(CacheRootState::Present)
 }
 
-/// Locate a real uv binary under the fixed prefixes, using symlink resolution
-/// against known shapes only, and require the exact reviewed version.
-fn discover_producer(
-    home: &Path,
-    should_cancel: &impl Fn() -> bool,
-) -> Result<(PathBuf, ProducerBinding), ToolCacheAvailability> {
+fn producer_prefixes(home: &Path) -> Vec<PathBuf> {
     let mut prefixes: Vec<PathBuf> = FIXED_PREFIXES.iter().map(PathBuf::from).collect();
     let home_prefix = home.join(HOME_PREFIX_BIN);
     if home_prefix.is_dir() {
         prefixes.push(home_prefix);
     }
+    prefixes
+}
 
-    let mut saw_any_producer = false;
+/// Locate a real uv binary under the fixed prefixes, using symlink resolution
+/// against known shapes only, and require the exact reviewed version.
+fn discover_producer(
+    prefixes: &[PathBuf],
+    should_cancel: &impl Fn() -> bool,
+    query_budget: Duration,
+) -> Result<(PathBuf, ProducerBinding), CacheDiscoveryError> {
+    let mut present = false;
+    let mut unsupported = false;
+    let mut transient_reason = None;
     for prefix in prefixes {
         if should_cancel() {
-            return Err(ToolCacheAvailability::Unavailable);
+            return Err(CacheDiscoveryError::new(
+                ToolCacheAvailability::Unavailable,
+                "producer discovery was cancelled",
+            ));
         }
         let candidate = prefix.join("uv");
+        if let Err(error) = std::fs::symlink_metadata(&candidate)
+            && error.kind() == io::ErrorKind::NotFound
+        {
+            continue;
+        }
+        present = true;
         let Some(uv_real) = resolve_regular_file(&candidate) else {
+            transient_reason = Some("producer path could not be proved");
             continue;
         };
-        saw_any_producer = true;
         let Ok(binding) = ProducerBinding::capture(&uv_real) else {
+            transient_reason = Some("producer metadata is not safely bound");
             continue;
         };
-        match producer_version(&uv_real, should_cancel) {
-            Some(version)
-                if version == EXPECTED_UV_VERSION
-                    && ProducerBinding::capture(&uv_real).ok().as_ref() == Some(&binding) =>
-            {
-                return Ok((uv_real, binding));
+        match producer_version(&uv_real, should_cancel, query_budget) {
+            ProducerQuery::Output(version) => {
+                if ProducerBinding::capture(&uv_real).ok().as_ref() != Some(&binding) {
+                    transient_reason = Some("producer binding changed during query");
+                } else if version == EXPECTED_UV_VERSION {
+                    return Ok((uv_real, binding));
+                } else {
+                    unsupported = true;
+                }
             }
-            Some(_) => continue,
-            None => continue,
+            ProducerQuery::Cancelled => {
+                return Err(CacheDiscoveryError::new(
+                    ToolCacheAvailability::Unavailable,
+                    "producer query was cancelled",
+                ));
+            }
+            ProducerQuery::BindingChanged => {
+                transient_reason = Some("producer binding changed");
+            }
+            ProducerQuery::SpawnFailed => {
+                transient_reason = Some("producer query could not start");
+            }
+            ProducerQuery::Exited => {
+                transient_reason = Some("producer query exited unsuccessfully");
+            }
+            ProducerQuery::TimedOut => {
+                transient_reason = Some("producer query timed out");
+            }
+            ProducerQuery::OutputOverflow => {
+                transient_reason = Some("producer query output exceeded its cap");
+            }
+            ProducerQuery::OutputReadFailed => {
+                transient_reason = Some("producer query output could not be read");
+            }
+            ProducerQuery::MalformedBytes => {
+                transient_reason = Some("producer query output was malformed");
+            }
         }
     }
-
-    Err(if saw_any_producer {
-        ToolCacheAvailability::Unsupported
+    if !present {
+        return Err(CacheDiscoveryError::new(
+            ToolCacheAvailability::Absent,
+            "uv producer is absent from fixed prefixes",
+        ));
+    }
+    if let Some(reason) = transient_reason {
+        Err(CacheDiscoveryError::new(
+            ToolCacheAvailability::Unavailable,
+            reason,
+        ))
+    } else if unsupported {
+        Err(CacheDiscoveryError::new(
+            ToolCacheAvailability::Unsupported,
+            "producer version is unsupported",
+        ))
     } else {
-        ToolCacheAvailability::Absent
-    })
+        Err(CacheDiscoveryError::new(
+            ToolCacheAvailability::Unavailable,
+            "producer could not be proved",
+        ))
+    }
 }
 
 /// Resolve a path through symlinks and require the final target to be a real
@@ -1326,71 +1440,110 @@ fn resolve_regular_file(path: &Path) -> Option<PathBuf> {
 }
 
 /// Run `<uv> --version` for the discovered binary and return the exact version.
-/// No network, no config, no mutation. Bounded: the child is spawned and reaped
-/// with a deadline and a capped output read; on overrun or spawn failure the
-/// child is killed and the version is `None`.
-fn producer_version(binary: &Path, should_cancel: &impl Fn() -> bool) -> Option<String> {
-    let text = read_producer_output(binary, &["--version"], should_cancel)?;
+/// No network, no config, no mutation. A successfully parsed version proves the
+/// producer format; every execution or parsing failure remains unproved.
+fn producer_version(
+    binary: &Path,
+    should_cancel: &impl Fn() -> bool,
+    query_budget: Duration,
+) -> ProducerQuery {
+    let text = match read_producer_output(binary, &["--version"], should_cancel, query_budget) {
+        ProducerQuery::Output(text) => text,
+        other => return other,
+    };
     let mut words = text.split_whitespace();
-    (words.next()? == "uv")
-        .then(|| words.next().map(str::to_owned))
-        .flatten()
+    if words.next() != Some("uv") {
+        return ProducerQuery::MalformedBytes;
+    }
+    match words.next() {
+        Some(version) if words.next().is_none() => ProducerQuery::Output(version.to_owned()),
+        _ => ProducerQuery::MalformedBytes,
+    }
+}
+
+/// Path-free outcome of one bounded read-only producer query.
+///
+/// Only `Output` proves that the producer answered. Transient categories are
+/// retained until discovery aggregates them; no query output is persisted.
+#[derive(Debug)]
+pub(crate) enum ProducerQuery {
+    Output(String),
+    BindingChanged,
+    SpawnFailed,
+    Exited,
+    TimedOut,
+    OutputOverflow,
+    OutputReadFailed,
+    MalformedBytes,
+    Cancelled,
 }
 
 pub(crate) fn read_producer_output(
     binary: &Path,
     arguments: &[&str],
     should_cancel: &impl Fn() -> bool,
-) -> Option<String> {
+    query_budget: Duration,
+) -> ProducerQuery {
     // Bind safety before executing even the read-only version command.
-    ProducerBinding::capture(binary).ok()?;
+    let binding = match ProducerBinding::capture(binary) {
+        Ok(binding) => binding,
+        Err(_) => return ProducerQuery::SpawnFailed,
+    };
     // The fixed version/builtin queries load no project input. Keep the
     // established inherited-cwd spawn path used by the managed uv service.
-    let mut child = OwnedChild(
-        Command::new(binary)
-            .args(arguments)
-            .env_clear()
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
-            .ok()?,
-    );
-    let stdout = child.0.stdout.take()?;
-    let mut reader = NonblockingPipe::new(stdout)?;
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let child = Command::new(binary)
+        .args(arguments)
+        .env_clear()
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn();
+    let mut child = match child {
+        Ok(child) => OwnedChild(child),
+        Err(_) => return ProducerQuery::SpawnFailed,
+    };
+    let Some(stdout) = child.0.stdout.take() else {
+        return ProducerQuery::SpawnFailed;
+    };
+    let Some(mut reader) = NonblockingPipe::new(stdout) else {
+        return ProducerQuery::OutputReadFailed;
+    };
+    let deadline = Instant::now() + query_budget;
     let mut captured = Vec::new();
     loop {
         if reader.drain(&mut captured).is_err() {
-            let _ = child.0.kill();
-            let _ = child.0.wait();
-            return None;
+            return ProducerQuery::OutputReadFailed;
         }
         match child.0.try_wait() {
             Ok(Some(status)) if status.success() => break,
-            Ok(Some(_)) => {
-                let _ = child.0.wait();
-                return None;
-            }
+            Ok(Some(_)) => return ProducerQuery::Exited,
             Ok(None) => {}
-            Err(_) => {
-                let _ = child.0.kill();
-                let _ = child.0.wait();
-                return None;
-            }
+            Err(_) => return ProducerQuery::SpawnFailed,
         }
-        if should_cancel() || Instant::now() >= deadline || captured.len() > 4096 {
-            let _ = child.0.kill();
-            let _ = child.0.wait();
-            return None;
+        if should_cancel() {
+            return ProducerQuery::Cancelled;
+        }
+        if Instant::now() >= deadline {
+            return ProducerQuery::TimedOut;
+        }
+        if captured.len() > PRODUCER_OUTPUT_CAP_BYTES {
+            return ProducerQuery::OutputOverflow;
         }
         std::thread::sleep(POLL_INTERVAL);
     }
-    reader.drain(&mut captured).ok()?;
-    if captured.len() > 4096 {
-        return None;
+    if reader.drain(&mut captured).is_err() {
+        return ProducerQuery::OutputReadFailed;
     }
-    String::from_utf8(captured).ok()
+    if captured.len() > PRODUCER_OUTPUT_CAP_BYTES {
+        return ProducerQuery::OutputOverflow;
+    }
+    if ProducerBinding::capture(binary).ok().as_ref() != Some(&binding) {
+        return ProducerQuery::BindingChanged;
+    }
+    match String::from_utf8(captured) {
+        Ok(output) => ProducerQuery::Output(output),
+        Err(_) => ProducerQuery::MalformedBytes,
+    }
 }
 
 #[cfg(test)]

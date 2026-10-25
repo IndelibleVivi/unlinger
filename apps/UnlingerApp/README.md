@@ -33,7 +33,7 @@ On macOS 26, the system-level **System Settings → Menu Bar → Allow in the Me
 
 ## Layout
 
-- `Sources/UnlingerKit/IPC` — strict current-v5 plus compatibility-v4/v3 envelope/DTOs and single-attempt cancellable Unix-socket transport;
+- `Sources/UnlingerKit/IPC` — strict current-v5 envelope/DTOs and single-attempt cancellable Unix-socket transport;
 - `Sources/UnlingerKit/Persistence` — owner-private `0700` directory / `0600` crash-durable atomic files;
 - `Sources/UnlingerKit/State` — coalesced polling, separate browser-snapshot and bounded-history presentation mapping, stale-snapshot handling, durable mutation reconciliation;
 - `Sources/UnlingerKit/Notifications` — modes, ledger, coordinator and system scheduler;
@@ -52,7 +52,7 @@ swift test
 scripts/bundle.sh
 ```
 
-`scripts/bundle.sh` builds `build/Unlinger.app` in a temporary internal SwiftPM scratch path, copies the current v5 fixtures plus compatibility v4/v3 fixtures, rejects packaged resource fallbacks or loader paths that still point at a removable volume, verifies both localizations and Info.plist, then applies a private ad-hoc signature. The final gate relocates the assembled App and runs `--verify-bundle-resources`, which checks the same localization/fixture owners as ordinary execution before starting AppKit, IPC or notifications. Missing packaged resources fail instead of borrowing a build-tree copy. That is not Developer ID signing or notarization.
+`scripts/bundle.sh` builds `build/Unlinger.app` in a temporary internal SwiftPM scratch path, copies the sole current v5 fixtures, rejects packaged resource fallbacks or loader paths that still point at a removable volume, verifies both localizations and Info.plist, then applies a private ad-hoc signature. The final gate relocates the assembled App and runs `--verify-bundle-resources`, which checks the same localization/fixture owners as ordinary execution before starting AppKit, IPC or notifications. Missing packaged resources fail instead of borrowing a build-tree copy. That is not Developer ID signing or notarization.
 
 The repeatable pre-v0.1 integration gate stages a byte-identical source daemon on the startup volume, owns a unique temporary database/socket/lock, remains report-only, runs the live Swift suite before and after daemon restart, checks private file modes, absence of IP listeners and persisted cache observations with no maintenance attempt, and deletes only its own temp root:
 

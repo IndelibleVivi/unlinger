@@ -91,32 +91,36 @@ terminal receipt 是结果 authority；新的空快照不能替它提前宣布�
 
 ## Durable boundaries
 
-The current source gives each `HistoryStore` and its clones one shared idle WAL
-connection lifetime. Individual operations still validate the database/sidecars,
-open independent connections and commit their own transactions with
-`synchronous=FULL`; this is not a shared transaction or a connection pool.
-The idle connection holds no read transaction, so checkpoints remain available.
-Its final close checkpoints and retires the sidecars after the last store clone
-is released. This avoids repeated last-close checkpoint/unlink/recreate work
-between ordinary daemon operations, following SQLite's documented
-[WAL lifecycle](https://www.sqlite.org/wal.html). SQLite continues to own WAL checkpointing;
-no retry or automatic Failed recovery is introduced. Connection-configuration
-errors retain a nonzero OS errno only when SQLite's live handle supplies one
-through [`sqlite3_system_errno`](https://www.sqlite.org/c3ref/system_errno.html),
-alongside the path-free primary/extended code and source basename/line. These
-source changes are not a diagnosis of historical field failures or proof of
-installation; [current state](current-state.md) owns both boundaries.
+Each `HistoryStore` and its clones share **one active SQLite connection behind a
+mutex**. A short store operation owns that connection until its statements or
+transaction finish; native observation, signals and grace/revival waits run
+outside that ownership. This removes competing in-process SQLite writers while
+retaining independent operation transactions, `synchronous=FULL`, WAL and the
+original two-second bound for an external writer. There is no mutation replay,
+connection pool or automatic rehabilitation of terminal Failed.
 
-源码将 WAL connection 的生命周期绑定到 store 及其 clones；每个 operation 的事务
-仍独立，路径检查与 FULL durability 不变。空闲连接不持有 read transaction，既避免
-反复重建 sidecars，也允许正常 checkpoint。数据库不可用时仍拒绝未获持久化授权的
-副作用，terminal Failed 仍须通过精确 service transaction 替换实例。
+Every operation still validates the database and sidecars. On Unix it also
+requires the original database device/inode: retaining a live handle must not
+follow a replacement pathname or keep operating after its canonical file was
+removed. Nested store queries explicitly release their guard first. The final
+clone releases SQLite's connection and WAL lifetime; normal checkpoints remain
+available. Backup/rollback continues to require a SQLite-consistent snapshot and
+an exact drained-instance boundary. Configuration errors retain the live handle's
+nonzero [`sqlite3_system_errno`](https://www.sqlite.org/c3ref/system_errno.html)
+when available; primary/extended code and source basename/line remain path-free.
 
-Managed installs use immutable generations and a candidate acceptance transaction. Each new generation first reaches a healthy, quiescent report-only state. A pending lease retains prior generation/database material until explicit acceptance or rollback. `RollbackInProgress` is durable before physical restoration; only durable `Accepted` retires rollback material. Same-generation restarts recover signal-free, require a fresh first scan and create a new enforcement epoch before restoring applicable intent. `Failed` is terminal for that daemon instance. [Current state](current-state.md) owns the exact installed generation and evidence; no generation number is a permanent architecture rule.
+This boundary follows an actual generation-49 field failure: action PREPARED
+could not obtain `BEGIN IMMEDIATE` and returned `SQLITE_BUSY`. The old idle-WAL
+keeper reduced sidecar churn but left independent operation connections competing
+for writes. Source/installed/field repair evidence stays separate in
+[current state](current-state.md).
 
-安装、接受与启用分别拥有持久状态。失败实例不会因后来一次成功扫描自动恢复执行权；回滚恢复的是精确旧 generation 和数据库。当前运行事实以 current-state 为准。
+源码以一个明确的 connection owner 串行化短数据库操作；各自 transaction 仍独立，
+不会跨 native 调用、signal 或长等待持锁。路径和原始文件 identity 每次重验；外部
+writer 仍受原有 SQLite timeout 约束，I/O/unknown delivery 仍 fail closed。旧 migration
+梯子已移除，新库直接创建 v14，已有 v14 的数据与历史 provenance 保留。
 
-The owner-private Unix socket serves frontend schema v5, transitional v4, legacy-compatible v3 and operator v1; historical v2 is rejected. The App emits v5 only and cannot encode lifecycle operations. Ordinary mutations are journalled before send and reconciled after uncertain delivery without automatic resend. The daemon commits mutation state and receipt atomically. Each IPC request makes one bounded attempt.
+The owner-private Unix socket serves only frontend schema v5 and operator v1; retired v2/v3/v4 and unknown versions are rejected before dispatch. The App emits v5 only and cannot encode lifecycle operations. Ordinary mutations are journalled before send and reconciled after uncertain delivery without automatic resend. The daemon commits mutation state and receipt atomically. Each IPC request makes one bounded attempt.
 
 Raw arguments, executable/profile paths and frozen signal targets stay transient. Public persistence and UI use typed redacted records. Task and host-session capabilities remain private operator authority, excluded from ordinary App DTOs and diagnostic exports. There is no normal-operation network service. See [IPC](IPC.md) and [privacy](PRIVACY.md) for exact schema and data boundaries.
 
@@ -127,6 +131,11 @@ Source SQLite v14 keeps independent Node and uv latest-attempt authority, plus
 retired npm evidence.
 A single cache worker runs independently of process observation; exact activity
 owners project lifecycle quiescence and preserve sticky cancellation.
+Discovery queries share one bounded, read-only exact-child path. A missing
+producer/default bucket is absent; timeout, unsuccessful execution, malformed
+output or changed binding is unavailable. Unsupported requires a successfully
+proved unadmitted version/format. The existing daemon log records a path-free
+reason for unavailable observations; no extra persisted status machine is added.
 
 ```mermaid
 flowchart LR

@@ -60,7 +60,7 @@ impl Fixture {
         fs::set_permissions(path, fs::Permissions::from_mode(0o600)).unwrap();
         length
     }
-    fn adapter(&self) -> Result<NodeCompileCacheMaintenance, ToolCacheAvailability> {
+    fn adapter(&self) -> Result<NodeCompileCacheMaintenance, CacheDiscoveryError> {
         let producer = std::env::current_exe().unwrap();
         let binding = ProducerBinding::capture(&producer).unwrap();
         NodeCompileCacheMaintenance::open_at(
@@ -99,6 +99,135 @@ impl Drop for Fixture {
 }
 
 #[test]
+fn node_discovery_distinguishes_supported_unsupported_absent_and_transient() {
+    let fixture = Fixture::new();
+    let bin = fixture.temp.join("fixed-bin");
+    fs::create_dir(&bin).unwrap();
+    fs::set_permissions(&bin, fs::Permissions::from_mode(0o700)).unwrap();
+    let producer = bin.join("node");
+    fs::write(&producer, "#!/bin/sh\n").unwrap();
+    fs::set_permissions(&producer, fs::Permissions::from_mode(0o600)).unwrap();
+    fs::set_permissions(&producer, fs::Permissions::from_mode(0o700)).unwrap();
+    let info = format!(
+        "{{\"version\":\"{SUPPORTED_NODE_VERSION}\",\"arch\":\"{}\",\"tag\":\"12345678\",\"uid\":{}}}",
+        std::env::consts::ARCH.replace("aarch64", "arm64"),
+        unsafe { libc::geteuid() }
+    );
+    fs::write(
+        &producer,
+        format!(
+            "#!/bin/sh\nprintf '%s\\n' '{}'\n",
+            info.replace('\'', "'\\''")
+        ),
+    )
+    .unwrap();
+    fs::set_permissions(&producer, fs::Permissions::from_mode(0o700)).unwrap();
+    let meta = fs::metadata(&producer).unwrap();
+    assert!(meta.uid() == unsafe { libc::geteuid() });
+    assert!(meta.mode() & 0o022 == 0);
+    let producer = fs::canonicalize(&producer).unwrap();
+    let (path, binding, found) = discover_producer_at(
+        std::slice::from_ref(&producer),
+        &|| false,
+        PRODUCER_QUERY_BUDGET,
+    )
+    .unwrap();
+    assert_eq!(path, producer);
+    assert_eq!(binding, ProducerBinding::capture(&producer).unwrap());
+    assert_eq!(found.version, SUPPORTED_NODE_VERSION);
+
+    let wrong = format!(
+        "{{\"version\":\"v26.7.1\",\"arch\":\"{}\",\"tag\":\"12345678\",\"uid\":{}}}",
+        std::env::consts::ARCH.replace("aarch64", "arm64"),
+        unsafe { libc::geteuid() }
+    );
+    fs::write(
+        &producer,
+        format!(
+            "#!/bin/sh\nprintf '%s\\n' '{}'\n",
+            wrong.replace('\'', "'\\''")
+        ),
+    )
+    .unwrap();
+    let error = discover_producer_at(
+        std::slice::from_ref(&producer),
+        &|| false,
+        PRODUCER_QUERY_BUDGET,
+    )
+    .unwrap_err();
+    assert_eq!(error.availability(), ToolCacheAvailability::Unsupported);
+
+    let missing = fixture.temp.join("missing-bin");
+    let error = discover_producer_at(
+        std::slice::from_ref(&missing),
+        &|| false,
+        PRODUCER_QUERY_BUDGET,
+    )
+    .unwrap_err();
+    assert_eq!(error.availability(), ToolCacheAvailability::Absent);
+
+    for script in ["exit 7", "printf malformed"] {
+        fs::write(&producer, format!("#!/bin/sh\n{script}\n")).unwrap();
+        let error = discover_producer_at(
+            std::slice::from_ref(&producer),
+            &|| false,
+            PRODUCER_QUERY_BUDGET,
+        )
+        .unwrap_err();
+        assert_eq!(error.availability(), ToolCacheAvailability::Unavailable);
+    }
+    fs::remove_file(&producer).unwrap();
+    std::os::unix::fs::symlink(&missing, &producer).unwrap();
+    let error = discover_producer_at(&[producer], &|| false, PRODUCER_QUERY_BUDGET).unwrap_err();
+    assert_eq!(error.availability(), ToolCacheAvailability::Unavailable);
+}
+
+#[test]
+fn node_discovery_keeps_timeout_transient() {
+    let fixture = Fixture::new();
+    let producer = fixture.temp.join("node");
+    fs::write(&producer, "#!/bin/sh\nexec /bin/sleep 30\n").unwrap();
+    fs::set_permissions(&producer, fs::Permissions::from_mode(0o700)).unwrap();
+    let started = std::time::Instant::now();
+    let error = discover_producer_at(&[producer], &|| false, Duration::from_secs(1)).unwrap_err();
+    assert_eq!(error.availability(), ToolCacheAvailability::Unavailable);
+    assert_eq!(error.reason(), "Node producer query timed out");
+    assert!(started.elapsed() < Duration::from_secs(5));
+}
+
+#[test]
+fn node_missing_root_and_supported_bucket_have_distinct_semantics() {
+    let fixture = Fixture::new();
+    let producer = fs::canonicalize(std::env::current_exe().unwrap()).unwrap();
+    let binding = ProducerBinding::capture(&producer).unwrap();
+    let bucket_name = fixture.bucket_name.clone();
+    fs::remove_dir_all(fixture.root()).unwrap();
+    let error = NodeCompileCacheMaintenance::open_at(
+        &fixture.temp,
+        producer.clone(),
+        binding.clone(),
+        bucket_name.clone(),
+        &|| false,
+    )
+    .unwrap_err();
+    assert_eq!(error.availability(), ToolCacheAvailability::Absent);
+    assert_eq!(error.reason(), "Node compile-cache root is absent");
+
+    fs::create_dir(fixture.root()).unwrap();
+    fs::set_permissions(fixture.root(), fs::Permissions::from_mode(0o700)).unwrap();
+    let error = NodeCompileCacheMaintenance::open_at(
+        &fixture.temp,
+        producer,
+        binding,
+        bucket_name,
+        &|| false,
+    )
+    .unwrap_err();
+    assert_eq!(error.availability(), ToolCacheAvailability::Absent);
+    assert_eq!(error.reason(), "Node cache bucket is absent");
+}
+
+#[test]
 fn large_validated_native_shape_uses_the_shared_scan_budget() {
     let fixture = Fixture::new();
     // Independent zlib vector for 64 MiB + 1 zero bytes; sparse storage avoids
@@ -127,10 +256,10 @@ fn crc_validation_does_not_stop_after_one_buffer() {
     // This is the independent CRC of only the first 65,536 zero bytes. A
     // validator that ignores the last payload byte would incorrectly admit it.
     fixture.seed_sparse("12345678", 65_537, 0xd797_8eeb);
-    assert!(matches!(
-        fixture.adapter(),
-        Err(ToolCacheAvailability::Unavailable)
-    ));
+    assert_eq!(
+        fixture.adapter().unwrap_err().availability(),
+        ToolCacheAvailability::Unavailable
+    );
     assert!(fixture.bucket().join("12345678").exists());
 }
 
@@ -139,10 +268,10 @@ fn aggregate_scan_budget_still_rejects_large_entries_before_effects() {
     let fixture = Fixture::new();
     fixture.seed("12345678");
     fixture.seed_sparse("abcdef01", MAX_SCAN_BYTES - 20, 0);
-    assert!(matches!(
-        fixture.adapter(),
-        Err(ToolCacheAvailability::Unavailable)
-    ));
+    assert_eq!(
+        fixture.adapter().unwrap_err().availability(),
+        ToolCacheAvailability::Unavailable
+    );
     assert_eq!(fs::read_dir(fixture.bucket()).unwrap().count(), 2);
 }
 
@@ -228,31 +357,26 @@ fn prepared_failure_never_transfers_a_plan() {
 }
 
 #[test]
-fn v13_migration_preserves_uv_and_retired_evidence_without_adopting_node_results() {
+fn current_store_reopens_uv_authority_without_adopting_node_results() {
     let fixture = Fixture::new();
-    let store = HistoryStore::open(fixture.temp.join("migration.sqlite3")).unwrap();
+    let store = HistoryStore::open(fixture.temp.join("current.sqlite3")).unwrap();
     store
         .record_tool_cache_observation(1, ToolCacheAvailability::Available)
         .unwrap();
-    let connection = rusqlite::Connection::open(store.path()).unwrap();
-    connection
-        .execute_batch("DROP TABLE node_compile_cache_latest; PRAGMA user_version=13;")
-        .unwrap();
-    drop(connection);
     let path = store.path().to_owned();
     drop(store);
-    let migrated = HistoryStore::open(path).unwrap();
+    let reopened = HistoryStore::open(path).unwrap();
     assert_eq!(HistoryStore::schema_version(), 14);
-    let uv = migrated.latest_tool_cache_maintenance().unwrap().unwrap();
+    let uv = reopened.latest_tool_cache_maintenance().unwrap().unwrap();
     assert_eq!(uv.kind, ToolCacheKind::UvCache);
     assert_eq!(uv.observed_at_unix_millis, 1);
     assert!(
-        migrated
+        reopened
             .latest_node_compile_cache_maintenance()
             .unwrap()
             .is_none()
     );
-    assert!(migrated.retired_npm_cache_maintenance().unwrap().is_none());
+    assert!(reopened.retired_npm_cache_maintenance().unwrap().is_none());
 }
 
 #[test]
@@ -303,8 +427,9 @@ fn format_integrity_and_foreign_content_block_whole_bucket() {
                 fs::write(&other, bytes).unwrap();
             }
         }
-        assert!(
-            matches!(fixture.adapter(), Err(ToolCacheAvailability::Unavailable)),
+        assert_eq!(
+            fixture.adapter().unwrap_err().availability(),
+            ToolCacheAvailability::Unavailable,
             "{variant}"
         );
         assert!(fixture.bucket().join("12345678").exists(), "{variant}");
@@ -326,10 +451,10 @@ fn default_tag_only_unknown_version_and_custom_root_are_retained() {
     assert_eq!(fs::read(unknown.join("manual")).unwrap(), b"untouched");
     assert_eq!(fs::read(custom.join("file")).unwrap(), b"custom");
     fs::rename(fixture.bucket(), fixture.root().join("unsupported-tag")).unwrap();
-    assert!(matches!(
-        fixture.adapter(),
-        Err(ToolCacheAvailability::Unsupported)
-    ));
+    assert_eq!(
+        fixture.adapter().unwrap_err().availability(),
+        ToolCacheAvailability::Absent
+    );
 }
 
 #[test]
@@ -396,8 +521,9 @@ fn temporary_names_do_not_exempt_unsafe_objects() {
             }
             _ => unreachable!(),
         }
-        assert!(
-            matches!(fixture.adapter(), Err(ToolCacheAvailability::Unavailable)),
+        assert_eq!(
+            fixture.adapter().unwrap_err().availability(),
+            ToolCacheAvailability::Unavailable,
             "{variant}"
         );
         assert!(fixture.bucket().join("12345678").exists());
@@ -590,10 +716,15 @@ fn real_node_cache_survives_concurrent_import_and_regenerates_offline() {
     let node = std::env::var_os("UNLINGER_NODE_TEST_BIN").expect("explicit exact Node binary");
     let node = PathBuf::from(node);
     let binding = ProducerBinding::capture(&node).unwrap();
-    let info: ProducerInfo = serde_json::from_str(
-        &read_producer_output(&node, &["--eval", NODE_INFO], &|| false).unwrap(),
-    )
-    .unwrap();
+    let ProducerQuery::Output(output) = read_producer_output(
+        &node,
+        &["--eval", NODE_INFO],
+        &|| false,
+        PRODUCER_QUERY_BUDGET,
+    ) else {
+        panic!("exact Node producer query must succeed");
+    };
+    let info: ProducerInfo = serde_json::from_str(&output).unwrap();
     let mut fixture = Fixture::new();
     fs::remove_dir(fixture.bucket()).unwrap();
     fixture.bucket_name = info

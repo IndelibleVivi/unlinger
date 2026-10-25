@@ -60,10 +60,12 @@ class BundleVerificationTests(unittest.TestCase):
     def test_fixture_scan_rejects_invalid_schema_generation(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            fixture = root / "v3" / "sample.json"
+            fixture = root / "v5" / "sample.json"
             fixture.parent.mkdir()
             for content in (
                 '{ "schema_version" : 2 }',
+                '{"schema_version": 3}',
+                '{"schema_version": 4}',
                 '{}',
                 '{"schema_version": "2"}',
                 '{"schema_version": true}',
@@ -78,7 +80,7 @@ class BundleVerificationTests(unittest.TestCase):
     def test_fixture_schema_must_match_its_generation_directory(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            fixture = root / "v3" / "sample.json"
+            fixture = root / "v4" / "sample.json"
             fixture.parent.mkdir()
             fixture.write_text(json.dumps({"schema_version": 5}))
             with self.assertRaises(ValueError):
@@ -87,7 +89,7 @@ class BundleVerificationTests(unittest.TestCase):
     def test_supported_fixture_generations_are_accepted(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            for generation in (3, 4, 5):
+            for generation in (5,):
                 directory = root / f"v{generation}"
                 directory.mkdir()
                 (directory / "sample.json").write_text(
@@ -95,21 +97,21 @@ class BundleVerificationTests(unittest.TestCase):
                 )
             verify_fixtures(root)
 
-    def test_v3_app_local_fixture_schema_is_accepted(self):
+    def test_v5_app_local_fixture_schema_is_accepted(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            directory = root / "v3"
+            directory = root / "v5"
             directory.mkdir()
             (directory / "app-scenario.json").write_text(
                 json.dumps({"fixture_schema_version": 1})
             )
             verify_fixtures(root)
 
-    def test_app_local_fixture_schema_is_exact_and_v3_only(self):
+    def test_app_local_fixture_schema_is_exact_and_v5_only(self):
         for generation, fixture_schema_version in (
-            (3, "1"),
-            (3, True),
-            (3, 2),
+            (5, "1"),
+            (5, True),
+            (5, 2),
             (4, 1),
         ):
             with self.subTest(

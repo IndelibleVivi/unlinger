@@ -43,7 +43,7 @@ struct SocketTransportTests {
     @Test("wrong payload after send is delivery uncertain")
     func postSendWrongPayload() async throws {
         let response = Data(
-            #"{"schema_version":3,"request_id":1,"ok":true,"payload":{"type":"status","data":{}}}"#.utf8
+            #"{"schema_version":5,"request_id":1,"ok":true,"payload":{"type":"status","data":{}}}"#.utf8
         )
         let client = SocketClient(
             socketPath: "/tmp/unlinger-test.sock",
@@ -57,7 +57,7 @@ struct SocketTransportTests {
     @Test("wrong request ID after send is delivery uncertain")
     func postSendWrongRequestID() async throws {
         let response = Data(
-            #"{"schema_version":3,"request_id":99,"ok":false,"error":{"code":"invalid_argument","message":"rejected"}}"#.utf8
+            #"{"schema_version":5,"request_id":99,"ok":false,"error":{"code":"invalid_argument","message":"rejected"}}"#.utf8
         )
         let client = SocketClient(
             socketPath: "/tmp/unlinger-test.sock",

@@ -16,37 +16,37 @@ public enum FixtureStore {
         .deletingLastPathComponent() // UnlingerApp/
         .appending(path: "Contract", directoryHint: .isDirectory)
 
-    public static func url(named name: String, schemaVersion: Int = 3) -> URL {
-        let sourceURL = sourceDirectory(schemaVersion: schemaVersion)
+    public static func url(named name: String) -> URL {
+        let sourceURL = sourceDirectory()
             .appending(path: "\(name).json")
         if !UnlingerResources.isPackagedApp,
            FileManager.default.isReadableFile(atPath: sourceURL.path()) {
             return sourceURL
         }
-        return bundledDirectory(schemaVersion: schemaVersion)
+        return bundledDirectory()
             .appending(path: "\(name).json")
     }
 
-    public static func data(named name: String, schemaVersion: Int = 3) throws -> Data {
+    public static func data(named name: String) throws -> Data {
         if !UnlingerResources.isPackagedApp, let data = try? Data(
-            contentsOf: sourceDirectory(schemaVersion: schemaVersion)
+            contentsOf: sourceDirectory()
                 .appending(path: "\(name).json")
         ) {
             return data
         }
         return try Data(
-            contentsOf: bundledDirectory(schemaVersion: schemaVersion)
+            contentsOf: bundledDirectory()
                 .appending(path: "\(name).json")
         )
     }
 
-    private static func sourceDirectory(schemaVersion: Int) -> URL {
-        contractDirectory.appending(path: "v\(schemaVersion)", directoryHint: .isDirectory)
+    private static func sourceDirectory() -> URL {
+        contractDirectory.appending(path: "v5", directoryHint: .isDirectory)
     }
 
-    private static func bundledDirectory(schemaVersion: Int) -> URL {
+    private static func bundledDirectory() -> URL {
         UnlingerResources.bundle.bundleURL
             .appending(path: "Fixtures", directoryHint: .isDirectory)
-            .appending(path: "v\(schemaVersion)", directoryHint: .isDirectory)
+            .appending(path: "v5", directoryHint: .isDirectory)
     }
 }

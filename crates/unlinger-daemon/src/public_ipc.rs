@@ -17,26 +17,20 @@ pub(crate) fn handle_at(
     control: &ControlPlane,
     command: public::Command,
     now_unix_millis: u64,
-    schema_version: u32,
 ) -> Result<public::Payload, ControlError> {
     match command {
         public::Command::Status => project_payload(
             control,
             control.handle_at(IpcCommand::Status, now_unix_millis)?,
-            schema_version,
         ),
-        public::Command::BrowserOverview => {
-            project_browser_overview(control, now_unix_millis, schema_version)
-        }
+        public::Command::BrowserOverview => project_browser_overview(control, now_unix_millis),
         public::Command::History { limit } => project_payload(
             control,
             control.handle_at(IpcCommand::History { limit }, now_unix_millis)?,
-            schema_version,
         ),
         public::Command::Explain { incident_id } => project_payload(
             control,
             control.handle_at(IpcCommand::Explain { incident_id }, now_unix_millis)?,
-            schema_version,
         ),
         public::Command::Incidents => {
             let roster = control.roster_snapshot();
@@ -58,12 +52,7 @@ pub(crate) fn handle_at(
                 items: roster
                     .reports
                     .into_iter()
-                    .map(|report| {
-                        project_current_incident(
-                            report,
-                            schema_version >= public::PREVIOUS_SCHEMA_VERSION,
-                        )
-                    })
+                    .map(project_current_incident)
                     .collect(),
             }))
         }
@@ -151,7 +140,6 @@ pub(crate) fn handle_at(
                 IpcCommand::ExportDiagnostics { incident_id },
                 now_unix_millis,
             )?,
-            schema_version,
         ),
     }
 }
@@ -194,68 +182,47 @@ fn validate_incident_id(incident_id: &str) -> Result<(), ControlError> {
 fn project_browser_overview(
     control: &ControlPlane,
     now_unix_millis: u64,
-    schema_version: u32,
 ) -> Result<public::Payload, ControlError> {
     let source = control.browser_source_snapshot_at(now_unix_millis)?;
     let phase = browser_overview_phase(&source.status, &source.roster);
     let impact = control.store().impact_summary(0)?;
-    let storage_residue = if schema_version == public::SCHEMA_VERSION {
-        control
-            .store()
-            .latest_storage_residue_observation()?
-            .map(project_storage_residue)
-    } else {
-        None
-    };
-    let storage_cleanup_result = if schema_version == public::SCHEMA_VERSION {
-        control
-            .store()
-            .latest_storage_cleanup_attempt()?
-            .and_then(project_storage_cleanup_result)
-    } else {
-        None
-    };
-    let uv_cache_maintenance = if schema_version == public::SCHEMA_VERSION {
-        control
-            .store()
-            .latest_tool_cache_maintenance()?
-            .map(|mut cache| {
-                cache.automatic_maintenance_eligible = cache.availability
-                    == public::ToolCacheAvailability::Available
-                    && now_unix_millis.saturating_sub(cache.observed_at_unix_millis)
-                        <= 30 * 60 * 1_000
-                    && !cache.last_attempt.as_ref().is_some_and(|attempt| {
-                        attempt.outcome == public::ToolCacheOutcome::Running
-                    })
-                    && crate::ipc::storage_cleanup_gate_open(&source.status);
-                cache
-            })
-    } else {
-        None
-    };
-    let tool_cache_maintenance = if schema_version == public::SCHEMA_VERSION {
-        control.store().retired_npm_cache_maintenance()?
-    } else {
-        None
-    };
-    let node_compile_cache_maintenance = if schema_version == public::SCHEMA_VERSION {
-        control
-            .store()
-            .latest_node_compile_cache_maintenance()?
-            .map(|mut cache| {
-                cache.automatic_maintenance_eligible = cache.availability
-                    == public::ToolCacheAvailability::Available
-                    && now_unix_millis.saturating_sub(cache.observed_at_unix_millis)
-                        <= 30 * 60 * 1_000
-                    && !cache.last_attempt.as_ref().is_some_and(|attempt| {
-                        attempt.outcome == public::ToolCacheOutcome::Running
-                    })
-                    && crate::ipc::storage_cleanup_gate_open(&source.status);
-                Box::new(cache)
-            })
-    } else {
-        None
-    };
+    let storage_residue = control
+        .store()
+        .latest_storage_residue_observation()?
+        .map(project_storage_residue);
+    let storage_cleanup_result = control
+        .store()
+        .latest_storage_cleanup_attempt()?
+        .and_then(project_storage_cleanup_result);
+    let uv_cache_maintenance = control
+        .store()
+        .latest_tool_cache_maintenance()?
+        .map(|mut cache| {
+            cache.automatic_maintenance_eligible = cache.availability
+                == public::ToolCacheAvailability::Available
+                && now_unix_millis.saturating_sub(cache.observed_at_unix_millis) <= 30 * 60 * 1_000
+                && !cache
+                    .last_attempt
+                    .as_ref()
+                    .is_some_and(|attempt| attempt.outcome == public::ToolCacheOutcome::Running)
+                && crate::ipc::storage_cleanup_gate_open(&source.status);
+            cache
+        });
+    let tool_cache_maintenance = control.store().retired_npm_cache_maintenance()?;
+    let node_compile_cache_maintenance = control
+        .store()
+        .latest_node_compile_cache_maintenance()?
+        .map(|mut cache| {
+            cache.automatic_maintenance_eligible = cache.availability
+                == public::ToolCacheAvailability::Available
+                && now_unix_millis.saturating_sub(cache.observed_at_unix_millis) <= 30 * 60 * 1_000
+                && !cache
+                    .last_attempt
+                    .as_ref()
+                    .is_some_and(|attempt| attempt.outcome == public::ToolCacheOutcome::Running)
+                && crate::ipc::storage_cleanup_gate_open(&source.status);
+            Box::new(cache)
+        });
     let settlement_impact = source
         .status
         .most_recent_reclaim
@@ -338,22 +305,20 @@ fn project_browser_overview(
             sessions,
             coverage_notices,
             recent_settlement,
-            impact: (schema_version == public::SCHEMA_VERSION).then_some({
-                public::BrowserImpactSummary {
-                    tracking_started_at_unix_millis: impact.tracking_started_at_unix_millis,
-                    historical_completeness: match impact.historical_completeness {
-                        crate::ImpactHistoryCompleteness::Complete => {
-                            public::ImpactHistoryCompleteness::Complete
-                        }
-                        crate::ImpactHistoryCompleteness::PartialBackfill => {
-                            public::ImpactHistoryCompleteness::PartialBackfill
-                        }
-                    },
-                    terminal_cleanup_count: impact.terminal_cleanup_count,
-                    proved_reclaim_count: impact.proved_reclaim_count,
-                    reclaimed_process_count: impact.reclaimed_process_count,
-                    estimated_reclaimed_memory_bytes: impact.estimated_reclaimed_memory_bytes,
-                }
+            impact: Some(public::BrowserImpactSummary {
+                tracking_started_at_unix_millis: impact.tracking_started_at_unix_millis,
+                historical_completeness: match impact.historical_completeness {
+                    crate::ImpactHistoryCompleteness::Complete => {
+                        public::ImpactHistoryCompleteness::Complete
+                    }
+                    crate::ImpactHistoryCompleteness::PartialBackfill => {
+                        public::ImpactHistoryCompleteness::PartialBackfill
+                    }
+                },
+                terminal_cleanup_count: impact.terminal_cleanup_count,
+                proved_reclaim_count: impact.proved_reclaim_count,
+                reclaimed_process_count: impact.reclaimed_process_count,
+                estimated_reclaimed_memory_bytes: impact.estimated_reclaimed_memory_bytes,
             }),
             storage_residue,
             storage_cleanup_result,
@@ -556,18 +521,14 @@ fn project_recent_browser_settlement(
 fn project_payload(
     control: &ControlPlane,
     payload: IpcPayload,
-    schema_version: u32,
 ) -> Result<public::Payload, ControlError> {
     Ok(match payload {
         IpcPayload::Status(status) => public::Payload::Status(project_status(control, status)?),
-        IpcPayload::History(events) => public::Payload::History(
-            events
-                .into_iter()
-                .map(|event| project_history_event(event, schema_version))
-                .collect(),
-        ),
+        IpcPayload::History(events) => {
+            public::Payload::History(events.into_iter().map(project_history_event).collect())
+        }
         IpcPayload::Incident(detail) => {
-            public::Payload::Incident(project_incident(control, detail, schema_version)?)
+            public::Payload::Incident(project_incident(control, detail)?)
         }
         IpcPayload::Pause { .. }
         | IpcPayload::Resumed
@@ -579,9 +540,9 @@ fn project_payload(
             ));
         }
         IpcPayload::Diagnostics(bundle) => {
-            let incident = project_incident(control, bundle.incident, schema_version)?;
+            let incident = project_incident(control, bundle.incident)?;
             public::Payload::Diagnostics(public::DiagnosticsBundle {
-                document_schema_version: schema_version,
+                document_schema_version: public::SCHEMA_VERSION,
                 generated_at_unix_millis: bundle.generated_at_unix_millis,
                 status: project_status(control, bundle.status)?,
                 incident,
@@ -742,7 +703,6 @@ fn project_mutation_capability(
 fn project_incident(
     control: &ControlPlane,
     detail: crate::IncidentDetail,
-    schema_version: u32,
 ) -> Result<public::IncidentDetail, ControlError> {
     let incident_id = detail.incident_id;
     let retry_failed_cleanup = project_mutation_capability(
@@ -768,7 +728,7 @@ fn project_incident(
         events: detail
             .events
             .into_iter()
-            .map(|event| project_history_event(event, schema_version))
+            .map(project_history_event)
             .collect(),
         capabilities: public::IncidentCapabilities {
             retry_failed_cleanup,
@@ -779,18 +739,18 @@ fn project_incident(
     })
 }
 
-fn project_history_event(event: HistoryEvent, schema_version: u32) -> public::HistoryEvent {
+fn project_history_event(event: HistoryEvent) -> public::HistoryEvent {
     let event_token = event.event_token;
     public::HistoryEvent {
         event_token: event_token.clone(),
         incident_id: event.incident_id,
         occurred_at_unix_millis: event.occurred_at_unix_millis,
-        observation_span: (schema_version == public::SCHEMA_VERSION
-            && event.kind == crate::EventKind::Observation)
-            .then_some(public::ObservationSpan {
+        observation_span: (event.kind == crate::EventKind::Observation).then_some(
+            public::ObservationSpan {
                 first_observed_at_unix_millis: event.first_occurred_at_unix_millis,
                 observation_count: event.observation_count,
-            }),
+            },
+        ),
         state: project_incident_state(event.state),
         payload: match event.payload {
             EventPayload::Observation { report } => public::EventPayload::Observation {
@@ -863,17 +823,13 @@ fn project_history_event(event: HistoryEvent, schema_version: u32) -> public::Hi
 /// Projects one in-memory cycle report into the public roster entry. The
 /// store's `ObservationRecord` redaction step runs first, so tracking keys,
 /// fingerprints, targets, and artifact candidates never leave the daemon.
-fn project_current_incident(
-    report: IncidentReport,
-    include_browser_compatibility: bool,
-) -> public::CurrentIncident {
+fn project_current_incident(report: IncidentReport) -> public::CurrentIncident {
     let record = ObservationRecord::from(&report);
     public::CurrentIncident {
         incident_id: report.incident_id,
         observation: project_observation_record_with_compatibility(
             record,
-            include_browser_compatibility
-                .then(|| project_browser_compatibility(report.browser_compatibility)),
+            Some(project_browser_compatibility(report.browser_compatibility)),
         ),
     }
 }
@@ -1161,9 +1117,8 @@ mod tests {
             .expect("complete cleanup attempt");
     }
 
-    fn overview(control: &ControlPlane, schema_version: u32) -> public::BrowserOverviewSnapshot {
-        let payload =
-            project_browser_overview(control, 3_000, schema_version).expect("project overview");
+    fn overview(control: &ControlPlane) -> public::BrowserOverviewSnapshot {
+        let payload = project_browser_overview(control, 3_000).expect("project overview");
         let public::Payload::BrowserOverview(snapshot) = payload else {
             panic!("expected a browser overview payload");
         };
@@ -1176,7 +1131,7 @@ mod tests {
         record_partial_cleanup(&store);
         let control = ControlPlane::new(store, ready_status()).expect("projection control plane");
 
-        let v5 = overview(&control, public::SCHEMA_VERSION);
+        let v5 = overview(&control);
         let summary = v5
             .storage_cleanup_result
             .clone()
@@ -1215,22 +1170,9 @@ mod tests {
             .expect("prepare newer attempt");
         let control = ControlPlane::new(newer, ready_status()).expect("prepared control plane");
         assert!(
-            overview(&control, public::SCHEMA_VERSION)
-                .storage_cleanup_result
-                .is_none(),
+            overview(&control).storage_cleanup_result.is_none(),
             "an unresolved PREPARED attempt must not project an older success"
         );
-
-        // v4 and v3 must never acquire v5-only cleanup-result data. The v3
-        // dispatch refusal itself is enforced before this projection.
-        for previous in [
-            public::PREVIOUS_SCHEMA_VERSION,
-            public::LEGACY_SCHEMA_VERSION,
-        ] {
-            let snapshot = overview(&control, previous);
-            assert!(snapshot.storage_cleanup_result.is_none());
-            assert!(snapshot.storage_residue.is_none());
-        }
     }
 
     fn ready_status() -> DaemonStatus {
@@ -1249,21 +1191,13 @@ mod tests {
             .record_tool_cache_observation(2_900, public::ToolCacheAvailability::Available)
             .unwrap();
         let control = ControlPlane::new(store, ready_status()).unwrap();
-        let state = overview(&control, public::SCHEMA_VERSION)
-            .uv_cache_maintenance
-            .unwrap();
+        let state = overview(&control).uv_cache_maintenance.unwrap();
         assert!(!state.automatic_maintenance_eligible);
         assert_eq!(state.kind, public::ToolCacheKind::UvCache);
         assert!(state.last_attempt.is_none());
         let json = serde_json::to_string(&state).unwrap();
         assert!(!json.contains('/'));
         assert!(!json.contains("attempt_token"));
-        for previous in [
-            public::PREVIOUS_SCHEMA_VERSION,
-            public::LEGACY_SCHEMA_VERSION,
-        ] {
-            assert!(overview(&control, previous).uv_cache_maintenance.is_none());
-        }
     }
 
     #[test]
@@ -1273,29 +1207,11 @@ mod tests {
             .record_node_compile_cache_observation(2_900, public::ToolCacheAvailability::Available)
             .unwrap();
         let control = ControlPlane::new(store, ready_status()).unwrap();
-        let state = overview(&control, public::SCHEMA_VERSION)
-            .node_compile_cache_maintenance
-            .unwrap();
+        let state = overview(&control).node_compile_cache_maintenance.unwrap();
         assert_eq!(state.kind, public::ToolCacheKind::NodeCompileCache);
         assert!(!state.automatic_maintenance_eligible);
         assert!(state.last_attempt.is_none());
-        assert!(
-            overview(&control, public::SCHEMA_VERSION)
-                .uv_cache_maintenance
-                .is_none()
-        );
-        for version in [
-            public::PREVIOUS_SCHEMA_VERSION,
-            public::LEGACY_SCHEMA_VERSION,
-        ] {
-            let snapshot = overview(&control, version);
-            assert!(snapshot.node_compile_cache_maintenance.is_none());
-            assert!(
-                !serde_json::to_string(&snapshot)
-                    .unwrap()
-                    .contains("node_compile_cache_maintenance")
-            );
-        }
+        assert!(overview(&control).uv_cache_maintenance.is_none());
     }
 
     fn report(state: IncidentState) -> IncidentReport {
@@ -1427,7 +1343,7 @@ mod tests {
         for observed_at in [101, 102] {
             let cycle = control.begin_observation_cycle(observed_at).unwrap();
             assert_eq!(
-                overview(&control, public::SCHEMA_VERSION).phase,
+                overview(&control).phase,
                 public::BrowserOverviewPhase::Unknown,
                 "an in-progress replacement scan cannot claim a coherent result"
             );
@@ -1439,13 +1355,9 @@ mod tests {
                 .update_status(|status| status.scan_in_progress = false)
                 .unwrap();
 
-            for schema in [
-                public::SCHEMA_VERSION,
-                public::PREVIOUS_SCHEMA_VERSION,
-                public::LEGACY_SCHEMA_VERSION,
-            ] {
+            {
                 assert_eq!(
-                    overview(&control, schema).phase,
+                    overview(&control).phase,
                     public::BrowserOverviewPhase::Reclaiming,
                     "even an empty fresh roster cannot settle the worker's cleanup"
                 );
@@ -1456,7 +1368,7 @@ mod tests {
         drop(activity);
         assert!(!control.status().unwrap().cleanup_in_progress);
         assert_eq!(
-            overview(&control, public::SCHEMA_VERSION).phase,
+            overview(&control).phase,
             public::BrowserOverviewPhase::Clear
         );
     }

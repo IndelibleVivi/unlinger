@@ -1427,7 +1427,7 @@ mod platform {
         }
 
         #[test]
-        fn mapped_executable_identity_does_not_require_path_read_access() {
+        fn mapped_executable_identity_handles_unreadable_and_deleted_owned_images() {
             struct OwnedChild(std::process::Child);
 
             impl Drop for OwnedChild {
@@ -1463,6 +1463,11 @@ mod platform {
                 .expect("launch fixture executable");
             let child = OwnedChild(child);
             let pid = i32::try_from(child.0.id()).expect("fixture PID fits i32");
+            let original = MacosSnapshotter::new()
+                .lookup(child.0.id())
+                .expect("lookup owned executable")
+                .expect("owned executable is live");
+            assert!(original.executable.is_complete());
             let reported_path = match read_executable_path(pid) {
                 ExecutablePathObservation::Returned(path) => path,
                 other => panic!("fixture executable path unavailable: {other:?}"),
@@ -1491,6 +1496,32 @@ mod platform {
                     ),
                 }
             );
+
+            std::fs::remove_file(&executable_path).expect("unlink only the owned executable");
+            let current = MacosSnapshotter::new()
+                .lookup(child.0.id())
+                .expect("lookup deleted owned executable")
+                .expect("deleting an executable does not imply process exit");
+            assert_eq!(
+                current.identity.started_at_unix_micros,
+                original.identity.started_at_unix_micros
+            );
+            if current.executable_path.is_none() {
+                assert!(!current.executable.is_complete());
+                assert_eq!(
+                    MacosRuntime::new().signal_exact(&original.identity, CleanupSignal::Term),
+                    SignalDisposition::IdentityMismatch,
+                    "a mapped region must not stand in for an unproved executable path"
+                );
+                assert!(current.runtime.descriptor_facts_complete);
+                eprintln!(
+                    "owned deleted executable: missing path stayed identity-incomplete and exact signal was refused"
+                );
+            } else {
+                // Some kernels retain a resolvable executable path. Its mapped
+                // vnode must still prove the original exact image identity.
+                assert!(original.identity.exact_match(&current.identity));
+            }
         }
 
         #[test]

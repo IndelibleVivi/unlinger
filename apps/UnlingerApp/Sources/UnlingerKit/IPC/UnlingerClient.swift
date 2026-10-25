@@ -43,7 +43,6 @@ extension UnlingerClient {
             T.self,
             expectedPayloadType: expectedType,
             requestID: requestID,
-            expectedSchemaVersion: 5,
             line: line
         )
     }

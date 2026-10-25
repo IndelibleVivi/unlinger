@@ -1,17 +1,23 @@
 # Unlinger frontend contract v5
 
-这里是native App消费的backend wire surface。Rust authority是[`crates/unlinger-protocol`](../../../crates/unlinger-protocol)，daemon projection位于[`crates/unlinger-daemon/src/public_ipc.rs`](../../../crates/unlinger-daemon/src/public_ipc.rs)。[`v5/`](v5/)保存current impact/residue/span fixtures；[`v4/`](v4/)保存transitional atomic browser-product fixtures；[`v3/`](v3/)保存仍受source daemon支持的legacy-compatible shared-command fixtures。三组都由Rust与Swift tests共同decode。
+这里是 native App 消费的唯一 current backend wire surface。Rust authority 是
+[`unlinger-protocol`](../../../crates/unlinger-protocol)，daemon projection 位于
+[`public_ipc.rs`](../../../crates/unlinger-daemon/src/public_ipc.rs)。
+[`v5/`](v5/) 保存 current status、roster、history/detail、diagnostics、mutation 与
+browser overview fixtures，Rust 与 Swift 共同 decode；App-local scenario 使用独立
+`fixture_schema_version: 1`，同样由当前 fixture owner 管理。
 
-协议边界：
+- Frontend `schema_version: 5` 是唯一 App contract，包含 atomic browser overview、
+  independent impact、typed residue/cache result 和 server-owned observation span。
+- Operator `schema_version: 1` 只供 Rust CLI、ownership 与 service lifecycle 使用。
+- v2/v3/v4 已退役，未知版本同样在 dispatch 前收到 typed `unsupported_schema`；
+  App 不 negotiation、不 downgrade、不调用 operator mutation/lifecycle。
+- Source 创建/打开 SQLite v14；旧非空 schema 拒绝且不修改。当前唯一 dogfood user
+  不需要历史 migration/client compatibility 分支。历史实现由 Git 保留。
 
-- `schema_version: 5`：current source App contract；在v4 atomic `browser_overview`上增加independent impact、typed storage residue，并为history/detail observation增加server-owned span；
-- `schema_version: 4`：transitional browser-product endpoint；保留既有overview/history/detail shape，不返回v5-only fields；
-- `schema_version: 3`：legacy-compatible endpoint；原有request必须保留v3 response schema与meaning，但`browser_overview`返回typed `invalid_request`，不得downgrade或拼装替代payload；
-- `schema_version: 1`：Rust CLI/service operator compatibility；包含internal lifecycle facts，不供App使用；
-- `schema_version: 2`：保留在[`v2/`](v2/)作为历史审计证据；当前server在dispatch前以schema-v1 framing返回typed `unsupported_schema`；
-- source App只发送v5，不会silent downgrade到v4/v3或改走v1 mutation/lifecycle path。
-
-Source 与参考安装使用 SQLite v14 和 frontend v5，保留 v4/v3 compatibility 与 operator v1。安装 generation、App artifact、activation 与 dated field evidence 由 [`current-state.md`](../../../docs/current-state.md) 维护。App 只能投影 backend current truth，不能借历史结果自行赋予或扩大 signal/file-deletion authority。
+安装 generation、App artifact、activation 与 dated field evidence 由
+[`current-state`](../../../docs/current-state.md) 维护。App 只投影 daemon facts，
+不能由历史结果赋予 signal/file-deletion authority。
 
 ## Transport and trust
 
@@ -26,7 +32,7 @@ Source 与参考安装使用 SQLite v14 和 frontend v5，保留 v4/v3 compatibi
 
 Read-only：
 
-- `browser_overview`（v4/v5；v5 adds impact/residue）
+- `browser_overview`（v5 atomic projection，包含 impact/residue）
 - `status`
 - `history { limit }`
 - `explain { incident_id }`
@@ -87,17 +93,19 @@ App在connect/send前把namespace、ID、canonical mutation、semantic lock、cr
 
 ## Shared status, roster, events, and diagnostics
 
-V3/v4/v5 `PublicStatus`只给frontend：daemon version、health、readiness、effective mode、activity、pause、last completed scan、incident counts、recent reclaim、event/storage health、bounded attention/protection、global capabilities和mutation authority。它不发送daemon PID、instance ID、activation/armed generation、enforcement epoch、requested mode、database schema、binary/path identity、service transaction state或raw last error。
+V5 `PublicStatus`只给frontend：daemon version、health、readiness、effective mode、activity、pause、last completed scan、incident counts、recent reclaim、event/storage health、bounded attention/protection、global capabilities和mutation authority。它不发送daemon PID、instance ID、activation/armed generation、enforcement epoch、requested mode、database schema、binary/path identity、service transaction state或raw last error。
 
 Capability projection和mutation authorization调用同一Rust public-action policy。UI不从lifecycle、incident stage、reason string或score推导授权。
 
 `incidents`继续返回transitional `ObservationRoster`，供compatibility、detail和diagnostic testing使用。Never-observed没有fake timestamp/token；replacement cycle完成前保留上一份roster，失败后标`stale_after_failure`。它不是browser screen的composition surface、work queue或manual-kill authority。
 
-每个retained public history event有opaque、stable、unique `event_token`。Equivalent consecutive observations在当前SQLite v14保留的span authority中合并为one span；v5提供first/latest time与count，v4/v3保持旧shape。Observation count/age retention不再驱逐cleanup impact/detail；detail至少保留14天，aggregate lifetime authority继续存在。Swift history index只展示terminal cleanup outcomes，observation span留在detail。Cleanup同时保留process、artifact、overall outcome；`state: FAILED`与`overall_outcome: cleared_with_residue`可以共存。Diagnostics payload有required integer `document_schema_version`；source v5 App要求value 5。Export是semantic-lossless JSON，不承诺原始byte layout或key order。
+每个retained public history event有opaque、stable、unique `event_token`。Equivalent consecutive observations在当前SQLite v14保留的span authority中合并为one span；v5提供first/latest time与count。Observation count/age retention不再驱逐cleanup impact/detail；detail至少保留14天，aggregate lifetime authority继续存在。Swift history index只展示terminal cleanup outcomes，observation span留在detail。Cleanup同时保留process、artifact、overall outcome；`state: FAILED`与`overall_outcome: cleared_with_residue`可以共存。Diagnostics payload有required integer `document_schema_version`；source v5 App要求value 5。Export是semantic-lossless JSON，不承诺原始byte layout或key order。
 
 ## Canonical fixtures and verification
 
-[`v5/`](v5/)包含empty/detected impact-residue overviews与observation-span history。[`v4/`](v4/)保留confirmed、protected和settled transitional overview envelopes。[`v3/`](v3/)继续包含status、roster、history/detail/outcome/diagnostics、mutation receipts/status以及App-local historical scenarios。Bundled source App包含v5/v4/v3，不包含v2；fixture lookup必须指定schema version，不能把compatibility文件误当current payload。
+[`v5/`](v5/) 包含全部 current wire fixtures 和 App-local scenarios；打包只携带这一组。
+FixtureStore 没有 schema 选择或兼容 fallback，fixture client 使用与 live transport 相同的
+strict v5 decoder。Retired-schema rejection 由 Rust IPC 和 Swift decoder 的负例验证。
 
 ```bash
 cargo test -p unlinger-protocol
@@ -110,7 +118,7 @@ scripts/pre-v0.1-smoke.sh
 ## Optional cache family facts
 
 V5 `uv_cache_maintenance` 与 `node_compile_cache_maintenance` 是独立 optional
-fields；旧 v5 payload 可以省略，v4/v3 不获得这些字段或 cache mutation。
+fields；尚未观察到该 family 时可以省略，frontend 不提供 cache mutation。
 `tool_cache_maintenance` 只保留 retired npm evidence。Node 使用自己的
 `removed_entry_count` / `removed_logical_bytes`，与 uv 的 `native_removed_*`
 分别展示；前者记录成功移除的文件与已验证逻辑长度估算，后者是 producer

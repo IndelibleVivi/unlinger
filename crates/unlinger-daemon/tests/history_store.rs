@@ -366,197 +366,6 @@ fn failed_receipt(id: &str, state: IncidentState, reason_id: &str) -> CleanupRec
     }
 }
 
-fn create_v2_database(path: &PathBuf) {
-    let connection = Connection::open(path).expect("open legacy database");
-    connection
-        .execute_batch(
-            "CREATE TABLE events (
-                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                 incident_id TEXT NOT NULL,
-                 occurred_at_ms INTEGER NOT NULL CHECK (occurred_at_ms >= 0),
-                 kind TEXT NOT NULL CHECK (kind IN ('observation', 'cleanup')),
-                 state TEXT NOT NULL,
-                 payload_json TEXT NOT NULL
-             );
-             CREATE INDEX events_incident_timeline
-                 ON events (incident_id, occurred_at_ms, id);
-             CREATE INDEX events_recent
-                 ON events (occurred_at_ms DESC, id DESC);
-             CREATE TABLE settings (
-                 key TEXT PRIMARY KEY,
-                 integer_value INTEGER
-             );
-             CREATE TABLE cooling_candidates (
-                 tracking_key TEXT PRIMARY KEY,
-                 first_seen_ms INTEGER NOT NULL CHECK (first_seen_ms >= 0),
-                 last_seen_ms INTEGER NOT NULL CHECK (last_seen_ms >= first_seen_ms),
-                 root_identity_fingerprint TEXT NOT NULL,
-                 member_fingerprint TEXT NOT NULL
-             );
-             PRAGMA user_version = 2;",
-        )
-        .expect("create legacy schema");
-    let report = confirmed_report("legacy-incident");
-    let payload = serde_json::to_string(&EventPayload::Observation {
-        report: ObservationRecord::from(&report),
-    })
-    .expect("serialize legacy event");
-    connection
-        .execute(
-            "INSERT INTO events (
-                 incident_id, occurred_at_ms, kind, state, payload_json
-             ) VALUES (?1, ?2, 'observation', 'CONFIRMED', ?3)",
-            params![report.incident_id, 1_000_i64, payload],
-        )
-        .expect("insert legacy event");
-    connection
-        .execute(
-            "INSERT INTO settings (key, integer_value)
-             VALUES ('pause_until_ms', 88000)",
-            [],
-        )
-        .expect("insert legacy pause");
-    connection
-        .execute(
-            "INSERT INTO cooling_candidates (
-                 tracking_key, first_seen_ms, last_seen_ms,
-                 root_identity_fingerprint, member_fingerprint
-             ) VALUES (?1, 1000, 91000, ?2, ?3)",
-            params![
-                report.tracking_key,
-                report.root.identity_fingerprint,
-                report.member_fingerprint
-            ],
-        )
-        .expect("insert legacy cooling");
-    drop(connection);
-    make_private(path);
-}
-
-fn downgrade_current_database_to_v4(path: &PathBuf) {
-    let connection = Connection::open(path).expect("open current database for v4 fixture");
-    connection
-        .execute_batch(
-            "DROP TABLE task_controllers;
-             DROP TABLE task_scopes;
-             DROP TABLE session_owner_controllers;
-             DROP TABLE session_owner_leases;
-             DROP TABLE impact_attribution_legacy;
-             DROP TABLE storage_residue_latest;
-             DROP TABLE cleanup_impacts;
-             DROP TABLE impact_authority;
-             DROP TABLE ordinary_mutation_receipts;
-             DROP TABLE control_metadata;
-             DROP TABLE mutation_authority;
-             DROP TABLE public_event_tokens;
-             DROP TABLE cleanup_artifact_actions;
-             DROP TABLE incident_protections;
-             DROP TABLE storage_recoveries;
-             ALTER TABLE cleanup_attempts DROP COLUMN resources_json;
-             ALTER TABLE cooling_candidates RENAME TO cooling_candidates_v5;
-             CREATE TABLE cooling_candidates (
-                 tracking_key TEXT PRIMARY KEY,
-                 first_continuous_ms INTEGER NOT NULL CHECK (first_continuous_ms >= 0),
-                 last_continuous_ms INTEGER NOT NULL
-                     CHECK (last_continuous_ms >= first_continuous_ms),
-                 first_wall_ms INTEGER NOT NULL CHECK (first_wall_ms >= 0),
-                 last_wall_ms INTEGER NOT NULL CHECK (last_wall_ms >= 0),
-                 root_identity_fingerprint TEXT NOT NULL,
-                 member_fingerprint TEXT NOT NULL,
-                 boot_session_fingerprint TEXT NOT NULL,
-                 enforcement_epoch TEXT NOT NULL
-             );
-             INSERT INTO cooling_candidates (
-                 tracking_key, first_continuous_ms, last_continuous_ms,
-                 first_wall_ms, last_wall_ms, root_identity_fingerprint,
-                 member_fingerprint, boot_session_fingerprint, enforcement_epoch
-             ) SELECT
-                 tracking_key, first_continuous_ms, last_continuous_ms,
-                 first_wall_ms, last_wall_ms, root_identity_fingerprint,
-                 member_fingerprint, boot_session_fingerprint, enforcement_epoch
-             FROM cooling_candidates_v5;
-             DROP TABLE cooling_candidates_v5;
-             ALTER TABLE cleanup_retry_blocks RENAME TO cleanup_retry_blocks_v5;
-             CREATE TABLE cleanup_retry_blocks (
-                 incident_id TEXT PRIMARY KEY,
-                 tracking_key TEXT NOT NULL,
-                 blocked_at_ms INTEGER NOT NULL CHECK (blocked_at_ms >= 0),
-                 reason_id TEXT,
-                 source_attempt_id INTEGER NOT NULL REFERENCES cleanup_attempts(id)
-             );
-             INSERT INTO cleanup_retry_blocks (
-                 incident_id, tracking_key, blocked_at_ms, reason_id, source_attempt_id
-             ) SELECT
-                 incident_id, tracking_key, blocked_at_ms, reason_id, source_attempt_id
-             FROM cleanup_retry_blocks_v5;
-             DROP TABLE cleanup_retry_blocks_v5;
-             DROP TABLE IF EXISTS node_compile_cache_latest;
-             DROP TABLE IF EXISTS tool_cache_latest;
-             DROP TABLE IF EXISTS retired_npm_cache_latest;
-             PRAGMA user_version = 4;",
-        )
-        .expect("build schema-v4 fixture");
-}
-
-fn downgrade_current_database_to_v5(path: &PathBuf) {
-    let connection = Connection::open(path).expect("open current database for v5 fixture");
-    connection
-        .execute_batch(
-            "DROP TABLE task_controllers;
-             DROP TABLE task_scopes;
-             DROP TABLE session_owner_controllers;
-             DROP TABLE session_owner_leases;
-             DROP TABLE storage_residue_latest;
-             DROP TABLE cleanup_impacts;
-             DROP TABLE impact_authority;
-             DROP TABLE ordinary_mutation_receipts;
-             DROP TABLE control_metadata;
-             DROP TABLE mutation_authority;
-             DROP TABLE public_event_tokens;
-             DROP INDEX storage_recoveries_recent;
-             ALTER TABLE storage_recoveries RENAME TO storage_recoveries_v6;
-             CREATE TABLE storage_recoveries (
-                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                 recovery_id TEXT NOT NULL UNIQUE,
-                 occurred_at_ms INTEGER NOT NULL CHECK (occurred_at_ms >= 0),
-                 reason_id TEXT NOT NULL CHECK (
-                     reason_id IN ('integrity_check_failed', 'required_schema_invalid')
-                 ),
-                 quarantine_directory_name TEXT NOT NULL,
-                 quarantined_sidecar_count INTEGER NOT NULL
-                     CHECK (quarantined_sidecar_count >= 0)
-             );
-             INSERT INTO storage_recoveries (
-                 id, recovery_id, occurred_at_ms, reason_id,
-                 quarantine_directory_name, quarantined_sidecar_count
-             ) SELECT
-                 id, recovery_id, occurred_at_ms, reason_id,
-                 quarantine_directory_name, quarantined_sidecar_count
-             FROM storage_recoveries_v6;
-             DROP TABLE storage_recoveries_v6;
-             CREATE INDEX storage_recoveries_recent
-                 ON storage_recoveries (occurred_at_ms DESC, id DESC);
-             DROP TABLE IF EXISTS node_compile_cache_latest;
-             DROP TABLE IF EXISTS tool_cache_latest;
-             DROP TABLE IF EXISTS retired_npm_cache_latest;
-             PRAGMA user_version = 5;",
-        )
-        .expect("build schema-v5 fixture");
-}
-
-fn downgrade_current_database_to_v10(path: &PathBuf) {
-    let connection = Connection::open(path).expect("open current database for v10 fixture");
-    connection
-        .execute_batch(
-            "DROP TABLE storage_cleanup_attempts;
-             DROP TABLE IF EXISTS node_compile_cache_latest;
-             DROP TABLE IF EXISTS tool_cache_latest;
-             DROP TABLE IF EXISTS retired_npm_cache_latest;
-             PRAGMA user_version = 10;",
-        )
-        .expect("build schema-v10 fixture");
-}
-
 fn chrome_code_sign_clone_observation(
     observed_at_unix_millis: u64,
     candidate_count: usize,
@@ -1189,64 +998,6 @@ fn a_new_attempt_finalizes_an_unresolved_prior_attempt_as_delivery_unknown() {
 }
 
 #[test]
-fn v10_to_v11_migration_preserves_residue_and_session_owner_authority() {
-    let database = TempDatabase::new();
-    let store = HistoryStore::open(&database.0).expect("open store");
-    let observation = chrome_code_sign_clone_observation(5_000, 4, 12_000);
-    store
-        .record_storage_residue_observation(&observation)
-        .expect("record residue observation");
-    drop(store);
-
-    let connection = Connection::open(&database.0).expect("open v10 fixture");
-    connection
-        .execute_batch(
-            "INSERT INTO session_owner_leases (
-                 lease_id, capability, selector_fingerprint, session_name,
-                 controller_version, generation, registrar_json, owner_json,
-                 created_at_ms, activated_at_us, released_at_us, release_reason
-             ) VALUES (
-                 '0123456789abcdef0123456789abcdef',
-                 'fedcba9876543210fedcba9876543210',
-                 '0123456789abcdef', 'session-v10', '1.62.1', 1,
-                 '{}', NULL, 10, NULL, NULL, NULL
-             );",
-        )
-        .expect("seed v10 session owner lease");
-    drop(connection);
-    downgrade_current_database_to_v10(&database.0);
-
-    let migrated = HistoryStore::open(&database.0).expect("migrate v10 to v11");
-    assert_eq!(HistoryStore::schema_version(), 14);
-    assert_eq!(
-        migrated
-            .latest_storage_residue_observation()
-            .expect("read migrated residue"),
-        Some(observation)
-    );
-    let lease = migrated
-        .session_owner_status("0123456789abcdef0123456789abcdef")
-        .expect("read migrated session owner")
-        .expect("preserved session owner lease");
-    assert_eq!(lease.session_name, "session-v10");
-    assert_eq!(lease.generation, 1);
-    // The storage cleanup authority starts empty on a migrated v10 database.
-    assert!(
-        migrated
-            .latest_storage_cleanup_attempt()
-            .expect("read migrated attempts")
-            .is_none()
-    );
-    drop(migrated);
-
-    let connection = Connection::open(&database.0).expect("inspect migrated schema");
-    let version: i64 = connection
-        .pragma_query_value(None, "user_version", |row| row.get(0))
-        .expect("read migrated version");
-    assert_eq!(version, 14);
-}
-
-#[test]
 fn cooling_grace_is_durable_and_resets_on_identity_or_observation_gap() {
     let database = TempDatabase::new();
     let store = HistoryStore::open(&database.0).expect("open store");
@@ -1297,257 +1048,6 @@ fn cooling_grace_is_durable_and_resets_on_identity_or_observation_gap() {
             )
             .expect("long observation gap resets grace")
     );
-}
-
-#[test]
-fn migrates_v2_history_and_pause_but_resets_legacy_wall_clock_cooling() {
-    let database = TempDatabase::new();
-    create_v2_database(&database.0);
-
-    let store = HistoryStore::open(&database.0).expect("migrate v2 store");
-    assert_eq!(store.history(10).expect("preserved history").len(), 1);
-    assert_eq!(store.pause_until().expect("preserved pause"), Some(88_000));
-
-    let connection = Connection::open(&database.0).expect("inspect migrated database");
-    let version: i64 = connection
-        .pragma_query_value(None, "user_version", |row| row.get(0))
-        .expect("read schema version");
-    let journal_mode: String = connection
-        .pragma_query_value(None, "journal_mode", |row| row.get(0))
-        .expect("read journal mode");
-    let synchronous: i64 = connection
-        .pragma_query_value(None, "synchronous", |row| row.get(0))
-        .expect("read synchronous mode");
-    assert_eq!(version, i64::from(HistoryStore::schema_version()));
-    assert_eq!(journal_mode, "wal");
-    assert_eq!(synchronous, 2);
-    drop(connection);
-
-    let report = cooling_report("legacy-cooling");
-    assert!(
-        !store
-            .track_cooling(
-                &report,
-                &cooling_clock(200_000, 500_000, "boot-a", "epoch-a"),
-                90_000,
-                120_000,
-            )
-            .expect("legacy cooling must restart")
-    );
-}
-
-#[test]
-fn v3_to_current_adds_lifecycle_public_identity_and_resets_signature_unknown_cooling() {
-    let database = TempDatabase::new();
-    let store = HistoryStore::open(&database.0).expect("create current store");
-    let report = cooling_report("inc-v3");
-    assert!(
-        !store
-            .track_cooling(
-                &report,
-                &cooling_clock(1_000, 1_000, "boot-a", "epoch-a"),
-                90_000,
-                120_000,
-            )
-            .expect("start continuous cooling")
-    );
-    store
-        .record_observation(1_001, &confirmed_report("history-survives-v3"))
-        .expect("record history before migration");
-    drop(store);
-    downgrade_current_database_to_v4(&database.0);
-    let connection = Connection::open(&database.0).expect("downgrade fixture metadata");
-    connection
-        .execute_batch("DROP TABLE managed_lifecycle; PRAGMA user_version = 3;")
-        .expect("simulate a schema-v3 candidate");
-    drop(connection);
-
-    let migrated = HistoryStore::open(&database.0).expect("migrate v3 to current");
-    assert!(
-        !migrated
-            .track_cooling(
-                &report,
-                &cooling_clock(91_000, 91_000, "boot-a", "epoch-a"),
-                90_000,
-                120_000,
-            )
-            .expect("v3 cooling lacks signature identity and must restart")
-    );
-    assert_eq!(migrated.history(10).expect("preserved history").len(), 1);
-    assert!(
-        migrated
-            .managed_lifecycle()
-            .expect("lifecycle query")
-            .is_none()
-    );
-}
-
-#[test]
-fn v4_to_current_preserves_history_and_retry_block_but_resets_incompatible_cooling() {
-    let database = TempDatabase::new();
-    let store = HistoryStore::open(&database.0).expect("create current store");
-    let cooling = cooling_report("inc-v4-cooling");
-    store
-        .track_cooling(
-            &cooling,
-            &cooling_clock(1_000, 1_000, "boot-a", "epoch-a"),
-            90_000,
-            120_000,
-        )
-        .expect("start cooling");
-    store
-        .record_observation(1_010, &confirmed_report("history-v4"))
-        .expect("record history");
-    let blocked = confirmed_report("blocked-v4");
-    let attempt = store
-        .begin_cleanup_attempt(1_020, &blocked, "epoch-a")
-        .expect("begin failure");
-    store
-        .complete_cleanup_attempt(
-            &attempt,
-            1_030,
-            &failed_receipt(
-                "blocked-v4",
-                IncidentState::Failed,
-                "cleanup.signal_rejected",
-            ),
-        )
-        .expect("block retry");
-    drop(store);
-    downgrade_current_database_to_v4(&database.0);
-
-    let migrated = HistoryStore::open(&database.0).expect("migrate v4 to current");
-    assert_eq!(HistoryStore::schema_version(), 14);
-    let connection = Connection::open(&database.0).expect("inspect migrated artifact journal");
-    let artifact_columns = connection
-        .prepare("PRAGMA table_info(cleanup_artifact_actions)")
-        .expect("prepare migrated artifact schema query")
-        .query_map([], |row| row.get::<_, String>(1))
-        .expect("query migrated artifact schema")
-        .collect::<Result<std::collections::BTreeSet<_>, _>>()
-        .expect("collect migrated artifact columns");
-    assert_eq!(
-        artifact_columns,
-        std::collections::BTreeSet::from([
-            "artifact_fingerprint".to_owned(),
-            "attempt_id".to_owned(),
-            "completed_at_ms".to_owned(),
-            "disposition".to_owned(),
-            "id".to_owned(),
-            "kind".to_owned(),
-            "prepared_at_ms".to_owned(),
-            "sequence".to_owned(),
-        ])
-    );
-    drop(connection);
-    assert_eq!(migrated.history(10).expect("preserved history").len(), 3);
-    assert!(
-        migrated
-            .cleanup_blocked("blocked-v4")
-            .expect("block preserved")
-    );
-    assert!(
-        !migrated
-            .track_cooling(
-                &cooling,
-                &cooling_clock(91_000, 91_000, "boot-a", "epoch-a"),
-                90_000,
-                120_000,
-            )
-            .expect("signature-unknown v4 cooling resets")
-    );
-}
-
-#[test]
-fn v5_to_current_backfills_event_tokens_and_impact_authority() {
-    let database = TempDatabase::new();
-    let store = HistoryStore::open(&database.0).expect("create current store");
-    store
-        .record_observation(1_010, &confirmed_report("history-v5"))
-        .expect("record history before v5 fixture");
-    let cleanup_report = confirmed_report("cleanup-v5");
-    let attempt = store
-        .begin_cleanup_attempt(1_020, &cleanup_report, "epoch-v5")
-        .expect("begin cleanup before v5 fixture");
-    journal_delivered_term(&store, &attempt, 1025);
-    store
-        .complete_cleanup_attempt(&attempt, 1_030, &cleared_receipt("cleanup-v5"))
-        .expect("complete cleanup before v5 fixture");
-    drop(store);
-    downgrade_current_database_to_v5(&database.0);
-
-    let migrated = HistoryStore::open(&database.0).expect("migrate v5 to current");
-    let history = migrated.history(10).expect("preserved history");
-    assert_eq!(history.len(), 3);
-    assert!(history.iter().all(|event| event.event_token.len() == 32));
-    let impact = migrated.impact_summary(10).expect("backfilled impact");
-    assert_eq!(
-        impact.historical_completeness,
-        ImpactHistoryCompleteness::PartialBackfill
-    );
-    assert_eq!(impact.terminal_cleanup_count, 1);
-    assert_eq!(impact.proved_reclaim_count, 1);
-    assert_eq!(impact.recent.len(), 1);
-    assert_eq!(impact.recent[0].incident_id, "cleanup-v5");
-    assert_eq!(
-        migrated
-            .mutation_namespace_token()
-            .expect("namespace")
-            .len(),
-        32
-    );
-    assert_eq!(migrated.cleanup_policy_revision().expect("revision"), 1);
-    drop(migrated);
-
-    let connection = Connection::open(&database.0).expect("inspect migrated schema");
-    let version: i64 = connection
-        .pragma_query_value(None, "user_version", |row| row.get(0))
-        .expect("read migrated version");
-    assert_eq!(version, i64::from(HistoryStore::schema_version()));
-    let archived_attribution_rows: i64 = connection
-        .query_row(
-            "SELECT count(*) FROM impact_attribution_legacy",
-            [],
-            |row| row.get(0),
-        )
-        .expect("read attribution migration provenance");
-    assert_eq!(archived_attribution_rows, 1);
-}
-
-#[test]
-fn v5_to_v7_failure_rolls_back_the_entire_migration_transaction() {
-    let database = TempDatabase::new();
-    let store = HistoryStore::open(&database.0).expect("create current store");
-    drop(store);
-    downgrade_current_database_to_v5(&database.0);
-    let connection = Connection::open(&database.0).expect("damage v5 fixture");
-    connection
-        .execute_batch("DROP TABLE events;")
-        .expect("remove required v5 events table");
-    drop(connection);
-
-    let error = HistoryStore::open(&database.0).expect_err("migration must fail atomically");
-    assert!(matches!(error, StoreError::Corrupt(_)));
-    let preserved = Connection::open(&database.0).expect("inspect rolled-back v5 fixture");
-    let version: i64 = preserved
-        .pragma_query_value(None, "user_version", |row| row.get(0))
-        .expect("read preserved version");
-    assert_eq!(version, 5);
-    for table in [
-        "public_event_tokens",
-        "mutation_authority",
-        "control_metadata",
-        "ordinary_mutation_receipts",
-    ] {
-        let count: i64 = preserved
-            .query_row(
-                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
-                [table],
-                |row| row.get(0),
-            )
-            .expect("query rolled-back table");
-        assert_eq!(count, 0, "{table} must not survive failed migration");
-    }
 }
 
 #[test]
@@ -2985,36 +2485,88 @@ fn unsupported_newer_schema_is_preserved_and_never_auto_recovered() {
 }
 
 #[test]
-fn post_migration_shape_failure_is_returned_without_fresh_start() {
-    let directory = TempDirectory::new("broken-migration");
-    let database = directory.database();
-    let store = HistoryStore::open(&database).expect("create current store");
-    drop(store);
-    downgrade_current_database_to_v4(&database);
-    let connection = Connection::open(&database).expect("damage v4 fixture");
-    connection
-        .execute_batch("DROP TABLE events;")
-        .expect("remove table not touched by v5 migration");
-    drop(connection);
+fn unsupported_older_schemas_are_refused_without_mutation() {
+    for version in 1_i64..14 {
+        let directory = TempDirectory::new(&format!("older-schema-v{version}"));
+        let database = directory.database();
+        let connection = Connection::open(&database).expect("create older fixture");
+        connection
+            .execute_batch(&format!(
+                "CREATE TABLE preserved_marker (
+                     singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+                     payload TEXT NOT NULL
+                 );
+                 INSERT INTO preserved_marker VALUES (1, 'version-{version}');
+                 PRAGMA user_version = {version};"
+            ))
+            .expect("populate older fixture");
+        drop(connection);
+        make_private(&database);
+        let bytes_before = fs::read(&database).expect("read older fixture before refusal");
 
-    let error = HistoryStore::open(&database).expect_err("post-migration shape must fail");
-    assert!(
-        matches!(error, StoreError::Corrupt(_)),
-        "unexpected migration failure: {error:?}"
-    );
-    let preserved = Connection::open(&database).expect("inspect failed candidate");
-    let version: i64 = preserved
-        .pragma_query_value(None, "user_version", |row| row.get(0))
-        .expect("read attempted migration version");
-    assert_eq!(version, 4);
-    let events: i64 = preserved
-        .query_row(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'events'",
-            [],
-            |row| row.get(0),
+        let error = HistoryStore::open(&database).expect_err("older schema must fail closed");
+        assert!(
+            matches!(error, StoreError::UnsupportedSchema(_)),
+            "v{version} returned {error:?}"
+        );
+        assert_eq!(
+            fs::read(&database).expect("read older fixture after refusal"),
+            bytes_before
+        );
+        for suffix in ["-wal", "-shm", "-journal"] {
+            assert!(!PathBuf::from(format!("{}{suffix}", database.display())).exists());
+        }
+        let preserved = Connection::open(&database).expect("older database remains in place");
+        let stored_version: i64 = preserved
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .expect("read preserved version");
+        assert_eq!(stored_version, version);
+        let payload: String = preserved
+            .query_row("SELECT payload FROM preserved_marker", [], |row| row.get(0))
+            .expect("read preserved row");
+        assert_eq!(payload, format!("version-{version}"));
+        drop(preserved);
+        assert!(
+            fs::read_dir(&directory.0)
+                .expect("read fixture directory")
+                .all(|entry| !entry
+                    .expect("directory entry")
+                    .file_name()
+                    .to_string_lossy()
+                    .contains(".quarantine-"))
+        );
+    }
+}
+
+#[test]
+fn nonempty_unversioned_schema_is_refused_without_mutation() {
+    let directory = TempDirectory::new("nonempty-unversioned");
+    let database = directory.database();
+    let connection = Connection::open(&database).expect("create unversioned fixture");
+    connection
+        .execute_batch(
+            "CREATE TABLE preserved_marker (payload TEXT NOT NULL);
+             INSERT INTO preserved_marker VALUES ('must-survive');",
         )
-        .expect("query missing table");
-    assert_eq!(events, 0);
+        .expect("populate unversioned fixture");
+    drop(connection);
+    make_private(&database);
+    let bytes_before = fs::read(&database).expect("read unversioned fixture before refusal");
+
+    let error = HistoryStore::open(&database).expect_err("nonempty v0 must fail closed");
+    assert!(matches!(error, StoreError::UnsupportedSchema(_)));
+    assert_eq!(
+        fs::read(&database).expect("read unversioned fixture after refusal"),
+        bytes_before
+    );
+    for suffix in ["-wal", "-shm", "-journal"] {
+        assert!(!PathBuf::from(format!("{}{suffix}", database.display())).exists());
+    }
+    let preserved = Connection::open(&database).expect("database remains in place");
+    let payload: String = preserved
+        .query_row("SELECT payload FROM preserved_marker", [], |row| row.get(0))
+        .expect("read preserved row");
+    assert_eq!(payload, "must-survive");
     assert!(
         fs::read_dir(&directory.0)
             .expect("read fixture directory")
@@ -3024,6 +2576,81 @@ fn post_migration_shape_failure_is_returned_without_fresh_start() {
                 .to_string_lossy()
                 .contains(".quarantine-"))
     );
+}
+
+#[test]
+fn fresh_v14_schema_reopens_byte_preserving_rows_and_schema_shape() {
+    let database = TempDatabase::new();
+    let store = HistoryStore::open(&database.0).expect("create fresh store");
+    store
+        .record_observation(1_000, &confirmed_report("inc-reopen-preservation"))
+        .expect("record durable observation");
+    drop(store);
+
+    let read_snapshot = || {
+        let connection = Connection::open(&database.0).expect("inspect v14 database");
+        let schema = {
+            let mut statement = connection
+                .prepare(
+                    "SELECT type, name, tbl_name, sql FROM sqlite_schema
+                     WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name",
+                )
+                .expect("prepare schema snapshot");
+            statement
+                .query_map([], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, Option<String>>(3)?,
+                    ))
+                })
+                .expect("query schema snapshot")
+                .collect::<Result<Vec<_>, _>>()
+                .expect("collect schema snapshot")
+        };
+        let events = {
+            let mut statement = connection
+                .prepare(
+                    "SELECT id, incident_id, first_occurred_at_ms, occurred_at_ms,
+                            observation_count, kind, state, payload_json, attempt_id
+                     FROM events ORDER BY id",
+                )
+                .expect("prepare event snapshot");
+            statement
+                .query_map([], |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, i64>(2)?,
+                        row.get::<_, i64>(3)?,
+                        row.get::<_, i64>(4)?,
+                        row.get::<_, String>(5)?,
+                        row.get::<_, String>(6)?,
+                        row.get::<_, String>(7)?,
+                        row.get::<_, Option<i64>>(8)?,
+                    ))
+                })
+                .expect("query event snapshot")
+                .collect::<Result<Vec<_>, _>>()
+                .expect("collect event snapshot")
+        };
+        let version: i64 = connection
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .expect("read v14 version");
+        (version, schema, events)
+    };
+
+    let before = read_snapshot();
+    assert_eq!(before.0, i64::from(HistoryStore::schema_version()));
+    assert!(!before.2.is_empty());
+    let reopened = HistoryStore::open(&database.0).expect("reopen valid v14");
+    assert_eq!(
+        reopened.history(10).expect("read preserved history").len(),
+        1
+    );
+    drop(reopened);
+    assert_eq!(read_snapshot(), before);
 }
 
 #[test]
@@ -3985,175 +3612,4 @@ fn no_signal_and_already_exited_are_not_attributed_even_if_the_caller_claims_del
             .iter()
             .all(|impact| impact.process_count.is_none())
     );
-}
-
-fn v8_attribution_fixture() -> TempDatabase {
-    let database = TempDatabase::new();
-    let store = HistoryStore::open(&database.0).unwrap();
-    store.set_pause_until(Some(90_000)).unwrap();
-    for (index, delivered) in [true, false].into_iter().enumerate() {
-        let id = format!("legacy-{index}");
-        let report = confirmed_report(&id);
-        store.record_observation(900, &report).unwrap();
-        let attempt = store
-            .begin_cleanup_attempt(1_000, &report, "epoch-test")
-            .unwrap();
-        if delivered {
-            journal_delivered_term(&store, &attempt, 1_001);
-        }
-        let mut receipt = cleared_receipt(&id);
-        receipt.resources = CleanupResources {
-            before: Some(ResourceSnapshot {
-                process_count: 2,
-                resident_memory_bytes: 8_192,
-            }),
-            after: Some(ResourceSnapshot {
-                process_count: 0,
-                resident_memory_bytes: 0,
-            }),
-            estimated_reclaimed_memory_bytes: Some(8_192),
-        };
-        store
-            .complete_cleanup_attempt(&attempt, 1_010 + index as u64, &receipt)
-            .unwrap();
-    }
-    drop(store);
-    let connection = Connection::open(&database.0).unwrap();
-    // Reconstruct precisely the old derived-count semantics, keeping the
-    // actual durable action evidence different for the two attempts.
-    connection
-        .execute_batch(
-            "UPDATE cleanup_impacts SET process_count = 2, estimated_reclaimed_memory_bytes = 8192;
-        UPDATE impact_authority SET proved_reclaim_count = 2, reclaimed_process_count = 4,
-            reclaimed_process_measurement_count = 2, estimated_reclaimed_memory_bytes = 16384,
-            reclaimed_memory_measurement_count = 2;
-        DROP TABLE impact_attribution_legacy;
-        DROP TABLE session_owner_controllers;
-        DROP TABLE session_owner_leases;
-        DROP TABLE IF EXISTS node_compile_cache_latest;
-             DROP TABLE IF EXISTS tool_cache_latest;
-             DROP TABLE IF EXISTS retired_npm_cache_latest;
-             PRAGMA user_version = 8;",
-        )
-        .unwrap();
-    database
-}
-
-#[test]
-fn v8_attribution_migration_preserves_raw_history_and_old_totals_and_is_idempotent() {
-    let database = v8_attribution_fixture();
-    let connection = Connection::open(&database.0).unwrap();
-    let history_before: String = connection
-        .query_row(
-            "SELECT group_concat(payload_json, '|') FROM events",
-            [],
-            |row| row.get(0),
-        )
-        .unwrap();
-    drop(connection);
-    let migrated = HistoryStore::open(&database.0).unwrap();
-    let summary = migrated.impact_summary(10).unwrap();
-    assert_eq!(summary.terminal_cleanup_count, 2);
-    assert_eq!(summary.proved_reclaim_count, 1);
-    assert_eq!(summary.reclaimed_process_count, Some(2));
-    assert_eq!(summary.estimated_reclaimed_memory_bytes, Some(8_192));
-    assert_eq!(
-        summary.historical_completeness,
-        ImpactHistoryCompleteness::Complete
-    );
-    assert_eq!(migrated.pause_until().unwrap(), Some(90_000));
-    assert_eq!(
-        migrated.most_recent_reclaim().unwrap().unwrap().incident_id,
-        "legacy-0"
-    );
-    drop(migrated);
-    let connection = Connection::open(&database.0).unwrap();
-    let archived: String = connection
-        .query_row(
-            "SELECT payload_json FROM impact_attribution_legacy",
-            [],
-            |row| row.get(0),
-        )
-        .unwrap();
-    let archived: serde_json::Value = serde_json::from_str(&archived).unwrap();
-    assert_eq!(archived["proved_reclaim_count"], 2);
-    assert_eq!(archived["estimated_reclaimed_memory_bytes"], 16_384);
-    let history_after: String = connection
-        .query_row(
-            "SELECT group_concat(payload_json, '|') FROM events",
-            [],
-            |row| row.get(0),
-        )
-        .unwrap();
-    assert_eq!(history_before, history_after);
-    drop(connection);
-    let reopened = HistoryStore::open(&database.0).unwrap();
-    assert_eq!(reopened.impact_summary(10).unwrap().proved_reclaim_count, 1);
-}
-
-#[test]
-fn migration_never_represents_pruned_legacy_totals_as_proved_reclaims() {
-    let database = v8_attribution_fixture();
-    let connection = Connection::open(&database.0).unwrap();
-    // Equivalent retained authority after all details expired under v8.
-    connection
-        .execute_batch(
-            "DELETE FROM cleanup_impacts; DELETE FROM public_event_tokens; DELETE FROM events;
-        DELETE FROM cleanup_actions; DELETE FROM cleanup_attempts;",
-        )
-        .unwrap();
-    drop(connection);
-    let migrated = HistoryStore::open(&database.0).unwrap();
-    let summary = migrated.impact_summary(10).unwrap();
-    assert_eq!(summary.terminal_cleanup_count, 2);
-    assert_eq!(summary.proved_reclaim_count, 0);
-    assert_eq!(
-        summary.historical_completeness,
-        ImpactHistoryCompleteness::PartialBackfill
-    );
-    let connection = Connection::open(&database.0).unwrap();
-    let archived: String = connection
-        .query_row(
-            "SELECT payload_json FROM impact_attribution_legacy",
-            [],
-            |row| row.get(0),
-        )
-        .unwrap();
-    assert_eq!(
-        serde_json::from_str::<serde_json::Value>(&archived).unwrap()["proved_reclaim_count"],
-        2
-    );
-}
-
-#[test]
-fn attribution_migration_failure_rolls_back_counts_and_schema_together() {
-    let database = v8_attribution_fixture();
-    let connection = Connection::open(&database.0).unwrap();
-    connection
-        .execute_batch(
-            "CREATE TRIGGER reject_attribution BEFORE UPDATE ON impact_authority
-        BEGIN SELECT RAISE(ABORT, 'synthetic attribution failure'); END;",
-        )
-        .unwrap();
-    assert!(HistoryStore::open(&database.0).is_err());
-    let version: u32 = connection
-        .pragma_query_value(None, "user_version", |row| row.get(0))
-        .unwrap();
-    assert_eq!(version, 8);
-    let count: i64 = connection
-        .query_row(
-            "SELECT proved_reclaim_count FROM impact_authority",
-            [],
-            |row| row.get(0),
-        )
-        .unwrap();
-    assert_eq!(count, 2);
-    let legacy_exists: bool = connection
-        .query_row(
-            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE name = 'impact_attribution_legacy')",
-            [],
-            |row| row.get(0),
-        )
-        .unwrap();
-    assert!(!legacy_exists);
 }

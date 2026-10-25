@@ -3,8 +3,6 @@
 use serde::{Deserialize, Serialize};
 
 pub const SCHEMA_VERSION: u32 = 5;
-pub const PREVIOUS_SCHEMA_VERSION: u32 = 4;
-pub const LEGACY_SCHEMA_VERSION: u32 = 3;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct RequestEnvelope {
@@ -77,13 +75,8 @@ pub struct ResponseEnvelope {
 impl ResponseEnvelope {
     #[must_use]
     pub fn success(request_id: u64, payload: Payload) -> Self {
-        Self::success_for(SCHEMA_VERSION, request_id, payload)
-    }
-
-    #[must_use]
-    pub fn success_for(schema_version: u32, request_id: u64, payload: Payload) -> Self {
         Self {
-            schema_version,
+            schema_version: SCHEMA_VERSION,
             request_id,
             ok: true,
             payload: Some(payload),
@@ -93,18 +86,8 @@ impl ResponseEnvelope {
 
     #[must_use]
     pub fn failure(request_id: u64, code: ErrorCode, message: impl Into<String>) -> Self {
-        Self::failure_for(SCHEMA_VERSION, request_id, code, message)
-    }
-
-    #[must_use]
-    pub fn failure_for(
-        schema_version: u32,
-        request_id: u64,
-        code: ErrorCode,
-        message: impl Into<String>,
-    ) -> Self {
         Self {
-            schema_version,
+            schema_version: SCHEMA_VERSION,
             request_id,
             ok: false,
             payload: None,
@@ -1043,8 +1026,6 @@ mod tests {
         let request = RequestEnvelope::new(41, Command::BrowserOverview);
         assert_eq!(request.schema_version, 5);
         assert_eq!(SCHEMA_VERSION, 5);
-        assert_eq!(PREVIOUS_SCHEMA_VERSION, 4);
-        assert_eq!(LEGACY_SCHEMA_VERSION, 3);
 
         let snapshot = BrowserOverviewSnapshot {
             generated_at_unix_millis: 123,
@@ -1112,7 +1093,7 @@ mod tests {
                 }],
             },
         };
-        let response = ResponseEnvelope::success_for(5, 41, Payload::BrowserOverview(snapshot));
+        let response = ResponseEnvelope::success(41, Payload::BrowserOverview(snapshot));
         let encoded = serde_json::to_string(&response).expect("encode v5 overview response");
         assert!(encoded.contains(r#""type":"browser_overview""#));
         assert!(!encoded.contains("pid"));
@@ -1274,89 +1255,69 @@ mod tests {
     }
 
     #[test]
-    fn v3_response_constructor_preserves_the_requested_schema() {
-        let response =
-            ResponseEnvelope::success_for(LEGACY_SCHEMA_VERSION, 9, Payload::History(Vec::new()));
-        assert_eq!(response.schema_version, 3);
-        assert_eq!(
-            serde_json::to_string(&response).expect("encode v3 response"),
-            r#"{"schema_version":3,"request_id":9,"ok":true,"payload":{"type":"history","data":[]}}"#
-        );
-    }
-
-    #[test]
-    fn canonical_v4_browser_overview_fixtures_roundtrip() {
-        macro_rules! fixture {
-            ($name:literal) => {
-                include_str!(concat!(
-                    env!("CARGO_MANIFEST_DIR"),
-                    "/../../apps/UnlingerApp/Contract/v4/",
-                    $name,
-                    ".json"
-                ))
-            };
-        }
+    fn canonical_current_frontend_fixtures_roundtrip_without_internal_fields() {
         for source in [
-            fixture!("browser-overview-confirmed"),
-            fixture!("browser-overview-protected"),
-            fixture!("browser-overview-settled"),
+            include_str!(
+                "../../../apps/UnlingerApp/Contract/v5/browser-overview-cache-maintenance.json"
+            ),
+            include_str!("../../../apps/UnlingerApp/Contract/v5/browser-overview-confirmed.json"),
+            include_str!(
+                "../../../apps/UnlingerApp/Contract/v5/browser-overview-impact-empty.json"
+            ),
+            include_str!(
+                "../../../apps/UnlingerApp/Contract/v5/browser-overview-impact-residue.json"
+            ),
+            include_str!(
+                "../../../apps/UnlingerApp/Contract/v5/browser-overview-node-compile-cache-maintenance.json"
+            ),
+            include_str!("../../../apps/UnlingerApp/Contract/v5/browser-overview-protected.json"),
+            include_str!("../../../apps/UnlingerApp/Contract/v5/browser-overview-settled.json"),
+            include_str!(
+                "../../../apps/UnlingerApp/Contract/v5/browser-overview-uv-cache-maintenance.json"
+            ),
+            include_str!("../../../apps/UnlingerApp/Contract/v5/diagnostics.json"),
+            include_str!("../../../apps/UnlingerApp/Contract/v5/history-cleared-with-residue.json"),
+            include_str!("../../../apps/UnlingerApp/Contract/v5/history-cleared.json"),
+            include_str!("../../../apps/UnlingerApp/Contract/v5/history-observation-span.json"),
+            include_str!("../../../apps/UnlingerApp/Contract/v5/incident-failed.json"),
+            include_str!("../../../apps/UnlingerApp/Contract/v5/incident-protected.json"),
+            include_str!("../../../apps/UnlingerApp/Contract/v5/incident-revived.json"),
+            include_str!("../../../apps/UnlingerApp/Contract/v5/incidents-current.json"),
+            include_str!("../../../apps/UnlingerApp/Contract/v5/mutation-authority-lost.json"),
+            include_str!("../../../apps/UnlingerApp/Contract/v5/mutation-committed.json"),
+            include_str!("../../../apps/UnlingerApp/Contract/v5/mutation-not-found.json"),
+            include_str!("../../../apps/UnlingerApp/Contract/v5/roster-current.json"),
+            include_str!("../../../apps/UnlingerApp/Contract/v5/roster-never-observed.json"),
+            include_str!("../../../apps/UnlingerApp/Contract/v5/roster-scanning.json"),
+            include_str!("../../../apps/UnlingerApp/Contract/v5/roster-stale.json"),
+            include_str!("../../../apps/UnlingerApp/Contract/v5/status-all-clear.json"),
+            include_str!("../../../apps/UnlingerApp/Contract/v5/status-draining.json"),
+            include_str!("../../../apps/UnlingerApp/Contract/v5/status-enforce.json"),
+            include_str!("../../../apps/UnlingerApp/Contract/v5/status-failed.json"),
+            include_str!("../../../apps/UnlingerApp/Contract/v5/status-needs-attention.json"),
+            include_str!("../../../apps/UnlingerApp/Contract/v5/status-paused.json"),
+            include_str!("../../../apps/UnlingerApp/Contract/v5/status-recently-reclaimed.json"),
+            include_str!("../../../apps/UnlingerApp/Contract/v5/status-report-only.json"),
+            include_str!("../../../apps/UnlingerApp/Contract/v5/status-scanning.json"),
+            include_str!("../../../apps/UnlingerApp/Contract/v5/status-starting.json"),
+            include_str!("../../../apps/UnlingerApp/Contract/v5/status-storage-recovered.json"),
         ] {
             let decoded: ResponseEnvelope =
-                serde_json::from_str(source).expect("decode canonical v4 fixture");
-            assert_eq!(decoded.schema_version, PREVIOUS_SCHEMA_VERSION);
-            let Payload::BrowserOverview(overview) =
-                decoded.payload.as_ref().expect("v4 fixture payload")
-            else {
-                panic!("v4 fixture is not a browser overview");
-            };
-            assert_eq!(overview.support_catalog.families.len(), 3);
-            let encoded = serde_json::to_string(&decoded).expect("encode canonical v4 fixture");
-            for forbidden in [
-                "\"pid\"",
-                "tracking_key",
-                "session_fingerprint",
-                "identity_fingerprint",
-                "member_fingerprint",
-                "user_data_dir",
-                "command_line",
-                "activation_generation",
-                "enforcement_epoch",
-            ] {
-                assert!(
-                    !encoded.contains(forbidden),
-                    "v4 fixture leaked {forbidden}"
-                );
-            }
-            let reparsed: ResponseEnvelope =
-                serde_json::from_str(&encoded).expect("reparse canonical v4 fixture");
-            assert_eq!(reparsed, decoded);
-        }
-    }
-
-    #[test]
-    fn canonical_v5_impact_residue_and_span_fixtures_roundtrip() {
-        macro_rules! fixture {
-            ($name:literal) => {
-                include_str!(concat!(
-                    env!("CARGO_MANIFEST_DIR"),
-                    "/../../apps/UnlingerApp/Contract/v5/",
-                    $name,
-                    ".json"
-                ))
-            };
-        }
-        for source in [
-            fixture!("browser-overview-impact-empty"),
-            fixture!("browser-overview-impact-residue"),
-            fixture!("browser-overview-cache-maintenance"),
-            fixture!("browser-overview-uv-cache-maintenance"),
-            fixture!("browser-overview-node-compile-cache-maintenance"),
-            fixture!("history-observation-span"),
-        ] {
-            let decoded: ResponseEnvelope =
-                serde_json::from_str(source).expect("decode canonical v5 fixture");
+                serde_json::from_str(source).expect("decode current fixture");
             assert_eq!(decoded.schema_version, SCHEMA_VERSION);
-            let encoded = serde_json::to_string(&decoded).expect("encode canonical v5 fixture");
+            if let Some(Payload::BrowserOverview(snapshot)) = &decoded.payload
+                && let (Some(settlement), Some(impact)) =
+                    (&snapshot.recent_settlement, &snapshot.impact)
+            {
+                assert!(impact.terminal_cleanup_count > 0);
+                assert!(impact.proved_reclaim_count > 0);
+                assert!(impact.reclaimed_process_count >= settlement.process_count);
+                assert!(
+                    impact.estimated_reclaimed_memory_bytes
+                        >= settlement.estimated_reclaimed_memory_bytes
+                );
+            }
+            let encoded = serde_json::to_string(&decoded).expect("encode current fixture");
             for forbidden in [
                 "\"pid\"",
                 "tracking_key",
@@ -1367,95 +1328,12 @@ mod tests {
                 "command_line",
                 "activation_generation",
                 "enforcement_epoch",
-            ] {
-                assert!(
-                    !encoded.contains(forbidden),
-                    "v5 fixture leaked {forbidden}"
-                );
-            }
-            let reparsed: ResponseEnvelope =
-                serde_json::from_str(&encoded).expect("reparse canonical v5 fixture");
-            assert_eq!(reparsed, decoded);
-        }
-    }
-
-    #[test]
-    fn canonical_v3_frontend_fixtures_roundtrip_without_internal_fields() {
-        macro_rules! fixture {
-            ($name:literal) => {
-                include_str!(concat!(
-                    env!("CARGO_MANIFEST_DIR"),
-                    "/../../apps/UnlingerApp/Contract/v3/",
-                    $name,
-                    ".json"
-                ))
-            };
-        }
-        let wire_fixtures = [
-            fixture!("status-all-clear"),
-            fixture!("status-report-only"),
-            fixture!("status-enforce"),
-            fixture!("status-scanning"),
-            fixture!("status-starting"),
-            fixture!("status-draining"),
-            fixture!("status-failed"),
-            fixture!("status-paused"),
-            fixture!("status-recently-reclaimed"),
-            fixture!("status-needs-attention"),
-            fixture!("status-storage-recovered"),
-            fixture!("history-cleared"),
-            fixture!("history-cleared-with-residue"),
-            fixture!("incident-protected"),
-            fixture!("incident-revived"),
-            fixture!("incident-failed"),
-            fixture!("incidents-current"),
-            fixture!("roster-current"),
-            fixture!("roster-scanning"),
-            fixture!("roster-stale"),
-            fixture!("roster-never-observed"),
-            fixture!("diagnostics"),
-            fixture!("mutation-committed"),
-            fixture!("mutation-not-found"),
-            fixture!("mutation-authority-lost"),
-        ];
-        for source in wire_fixtures {
-            let decoded: ResponseEnvelope =
-                serde_json::from_str(source).expect("decode canonical wire fixture");
-            assert_eq!(decoded.schema_version, LEGACY_SCHEMA_VERSION);
-            let encoded = serde_json::to_string(&decoded).expect("encode canonical wire fixture");
-            let reparsed: ResponseEnvelope =
-                serde_json::from_str(&encoded).expect("reparse canonical wire fixture");
-            assert_eq!(reparsed, decoded);
-            for forbidden in [
-                "\"pid\"",
-                "\"instance_id\"",
-                "\"activation_generation\"",
-                "\"armed_generation\"",
-                "\"enforcement_epoch\"",
-                "\"requested_mode\"",
-                "\"database_schema_version\"",
-                "\"identity_fingerprint\"",
-                "\"member_fingerprint\"",
-                "\"artifact_fingerprint\"",
-                "\"survivor_pids\"",
-                "\"event_id\"",
-                "\"attempt_id\"",
+                "database_schema_version",
             ] {
                 assert!(!encoded.contains(forbidden), "fixture leaked {forbidden}");
             }
-        }
-
-        for source in [
-            fixture!("app-daemon-unavailable"),
-            fixture!("app-mutation-delivery-uncertain"),
-            fixture!("daemon-incompatible"),
-            fixture!("app-mutation-unresolved"),
-        ] {
-            let decoded: AppStateFixture =
-                serde_json::from_str(source).expect("decode canonical app-state fixture");
-            let encoded = serde_json::to_string(&decoded).expect("encode app-state fixture");
-            let reparsed: AppStateFixture =
-                serde_json::from_str(&encoded).expect("reparse app-state fixture");
+            let reparsed: ResponseEnvelope =
+                serde_json::from_str(&encoded).expect("reparse current fixture");
             assert_eq!(reparsed, decoded);
         }
     }

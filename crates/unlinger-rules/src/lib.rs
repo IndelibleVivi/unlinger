@@ -2021,10 +2021,7 @@ mod tests {
     #[serde(deny_unknown_fields)]
     struct ProtocolSupport {
         source_app_schema: u32,
-        transitional_app_schema: u32,
-        legacy_app_schema: u32,
         source_operator_schema: u32,
-        historical_app_schema: u32,
         server_accepts: Vec<u32>,
     }
 
@@ -2358,11 +2355,8 @@ mod tests {
         );
 
         assert_eq!(matrix.protocol.source_app_schema, 5);
-        assert_eq!(matrix.protocol.transitional_app_schema, 4);
-        assert_eq!(matrix.protocol.legacy_app_schema, 3);
         assert_eq!(matrix.protocol.source_operator_schema, 1);
-        assert_eq!(matrix.protocol.historical_app_schema, 2);
-        assert_eq!(matrix.protocol.server_accepts, [1, 3, 4, 5]);
+        assert_eq!(matrix.protocol.server_accepts, [1, 5]);
         assert!(matrix.acceptance.private_enforcement_candidate_verified);
         assert!(!matrix.acceptance.ambient_enforcement_accepted);
         assert!(!matrix.acceptance.multi_day_dogfood_accepted);

@@ -124,7 +124,6 @@ public actor SocketClient: UnlingerClient {
             DiagnosticsBundle.self,
             expectedPayloadType: "diagnostics",
             requestID: requestID,
-            expectedSchemaVersion: 5,
             line: responseLine
         )
         return DiagnosticsExport(bundle: decoded.value, rawJSON: decoded.rawData)

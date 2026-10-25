@@ -1,0 +1,15 @@
+{
+  "schema_version": 5,
+  "request_id": 31,
+  "ok": true,
+  "payload": {
+    "type": "mutation_status",
+    "data": {
+      "status": "authority_lost",
+      "context": {
+        "namespace_token": "fedcba9876543210fedcba9876543210",
+        "mutation_id": "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+      }
+    }
+  }
+}

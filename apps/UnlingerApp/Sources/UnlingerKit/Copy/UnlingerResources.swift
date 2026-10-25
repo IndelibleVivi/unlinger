@@ -43,16 +43,12 @@ public enum UnlingerResources {
                 throw ResourceError.invalidLocalization
             }
         }
-        for (schema, name) in [
-            (3, "status-report-only"),
-            (4, "browser-overview-protected"),
-            (5, "browser-overview-impact-empty"),
-        ] {
-            let data = try FixtureStore.data(named: name, schemaVersion: schema)
+        for name in ["status-report-only", "browser-overview-protected", "browser-overview-impact-empty"] {
+            let data = try FixtureStore.data(named: name)
             let resourceComponents = bundle.bundleURL.standardizedFileURL.pathComponents
-            let fixtureComponents = FixtureStore.url(named: name, schemaVersion: schema).standardizedFileURL.pathComponents
+            let fixtureComponents = FixtureStore.url(named: name).standardizedFileURL.pathComponents
             guard let document = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  document["schema_version"] as? Int == schema,
+                  document["schema_version"] as? Int == 5,
                   Array(fixtureComponents.prefix(resourceComponents.count)) == resourceComponents else {
                 throw ResourceError.invalidFixture
             }

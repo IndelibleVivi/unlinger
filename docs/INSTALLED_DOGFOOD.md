@@ -4,6 +4,13 @@ This runbook advances only acceptance level 3. It installs the exact source cand
 
 ## Preconditions
 
+Current source creates/opens only SQLite v14 and serves frontend v5/operator v1.
+The sole dogfood baseline is already v14/v5. Older nonempty stores are refused
+unchanged; historical pre-v14 migration results below are dated evidence, not a
+current automatic upgrade promise. Retain the exact current-generation snapshot
+and binary for transactional rollback; do not replace that proof with a generic
+SQLite reader or reset a database to bypass version refusal.
+
 - The source commit is pushed and exact-head macOS CI is green.
 - `cargo test --workspace`, the Swift suite, release build and bundle gate pass at that commit.
 - Inspect the exact current service before replacement. A healthy service must be quiescent; a terminal `Failed` instance is also admitted by the transactional `StableOrFailed` recovery path. Preserve its error evidence and do not treat a later scan as rehabilitation. An existing enforce service requires owner-authorized replacement; the transaction disarms/drains the exact prior instance and records a report-only rollback floor.
@@ -26,11 +33,11 @@ host condition permits writes, use the exact installed CLI's transactional
 `service set-mode report-only` recovery, verify healthy/quiescent readiness, then restore
 an enforce policy only within the existing owner authorization.
 
-The source store retains one idle WAL connection through its last clone, so
+The source store shares one active serialized connection through its last clone, so
 committed data may remain in a live WAL between operations. Keep the existing
 SQLite-consistent `VACUUM INTO` backup and exact drain/process-exit boundary
 before restoring files; copying the main `.sqlite3` file alone is not a live
-backup. The idle lifetime permits checkpoints and does not change the migration,
+backup. The shared lifetime permits checkpoints and does not change the current-schema,
 rollback or acceptance requirements below.
 
 ## Candidate install
@@ -66,7 +73,7 @@ While that lease is pending, ordinary install, uninstall and `set-mode` remain b
 
 ## Installed App and restart checks
 
-When the App changes, install the verified ad-hoc bundle at the owner-local application target, preserving any prior bundle as a recoverable sibling until the new App has launched. For a backend-only candidate whose frontend contract is unchanged, retain the existing App and verify it against the new daemon. The packaged executable’s loader and active resource lookup must not require the source/build volume. Bundling must pass the relocated `--verify-bundle-resources` executable gate before installation; packaged resources cannot fall back to an old build directory. A clean launch must not request removable-volume access. Run the opt-in `LiveSocketTests` against the installed service socket, launch the packaged App, and verify that status/history/roster/detail/diagnostics and ordinary mutation reconciliation use the candidate's current frontend schema. For the current line this is schema v5, with v4 and v3 retained only as compatibility endpoints; the App must never silently downgrade. The regular Dock/window route must remain available independently of status-item discovery by any external menu host. Restart the daemon with:
+When the App changes, install the verified ad-hoc bundle at the owner-local application target, preserving any prior bundle as a recoverable sibling until the new App has launched. For a backend-only candidate whose frontend contract is unchanged, retain the existing App and verify it against the new daemon. The packaged executable’s loader and active resource lookup must not require the source/build volume. Bundling must pass the relocated `--verify-bundle-resources` executable gate before installation; packaged resources cannot fall back to an old build directory. A clean launch must not request removable-volume access. Run the opt-in `LiveSocketTests` against the installed service socket, launch the packaged App, and verify that status/history/roster/detail/diagnostics and ordinary mutation reconciliation use the candidate's current frontend schema. The current source line serves only frontend v5 and operator v1; retired v2/v3/v4 receive typed refusal, and the App must never silently downgrade. The regular Dock/window route must remain available independently of status-item discovery by any external menu host. Restart the daemon with:
 
 ```bash
 "$candidate_stage/unlinger" service restart-report-only --json

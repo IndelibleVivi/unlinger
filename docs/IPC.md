@@ -1,18 +1,18 @@
 # 本地 IPC contract
 
-Unlinger source接受四条exact local wire：
+Unlinger source 只接受两条职责明确的 local wire：
 
-- `schema_version = 1`：Rust CLI、task/session ownership、diagnosis 与 service lifecycle/operator compatibility；
-- `schema_version = 3`：legacy-compatible frontend endpoint；
-- `schema_version = 4`：transitional atomic browser-product endpoint；
-- `schema_version = 5`：current native App contract，增加impact、storage residue、最新storage cleanup result与observation span facts。
+- `schema_version = 1`：Rust CLI、task/session ownership、diagnosis 与 service lifecycle/operator；
+- `schema_version = 5`：native App public contract，包含 impact、storage residue、最新 cleanup/cache result 与 observation span。
 
-`schema_version = 2`是从未安装或发布的历史frontend draft。其fixtures保留审计价值，但current server在dispatch前以schema-v1 framing返回typed `unsupported_schema`。没有schema negotiation、silent downgrade、App→v3 fallback或App→v1 fallback。
+v2/v3/v4 已退役，未知版本同样在 command dispatch 前以 schema-v1 framing 返回 typed
+`unsupported_schema`。App 只发送 v5，不进行 negotiation、downgrade 或 operator fallback。
+单一 dogfood installation 不再承担旧 frontend client 的兼容分支；历史源文件由 Git 保留。
 
 Rust authority：
 
 - v1 envelope/commands/lifecycle：[`crates/unlinger-daemon/src/ipc.rs`](../crates/unlinger-daemon/src/ipc.rs)
-- v5 DTO/envelope与v4/v3 compatibility contract：[`crates/unlinger-protocol/src/lib.rs`](../crates/unlinger-protocol/src/lib.rs)
+- current v5 DTO/envelope：[`crates/unlinger-protocol/src/lib.rs`](../crates/unlinger-protocol/src/lib.rs)
 - internal→public projection：[`crates/unlinger-daemon/src/public_ipc.rs`](../crates/unlinger-daemon/src/public_ipc.rs)
 - shared ordinary-action policy：[`crates/unlinger-daemon/src/public_action_policy.rs`](../crates/unlinger-daemon/src/public_action_policy.rs)
 
@@ -22,7 +22,7 @@ before failure and remains unchanged after later failed cycles or Disarm. The
 same first failure is written to local stderr with generation/PID/instance
 before attempting SQLite fail-close, so store failure cannot erase the first
 log record. It grants no recovery or cleanup authority and does not alter
-frontend v5/v4/v3 DTOs.
+frontend v5 DTOs.
 
 ## Socket and local-account boundary
 
@@ -62,7 +62,7 @@ Transport区分：
 4. response received but untrusted；
 5. trusted response。
 
-对frontend mutation（v3/v4/v5语义相同）：
+对frontend v5 mutation：
 
 - encode/connect/明确 zero-byte first write failure：`failed_before_send`；
 - 任意 byte可能写出后发生 timeout、EOF、reset、oversize、bad JSON、wrong schema/request ID、contradictory envelope、wrong payload或 DTO decode failure：delivery uncertain；
@@ -72,13 +72,13 @@ Transport区分：
 
 同样的 post-send fault用于 read-only command时是 read/protocol failure，不建立 mutation uncertainty。Transport cancellation对 blocking POSIX I/O执行 shutdown/close；不会留下 MainActor blocking read。
 
-## Frontend schemas v5, v4, and v3
+## Frontend schema v5
 
 ### Read-only commands
 
 | Command | Payload | Meaning |
 | --- | --- | --- |
-| `browser_overview` | none | v4/v5 atomic browser projection；v5另含impact、storage residue与latest storage cleanup result |
+| `browser_overview` | none | atomic browser projection，包含 impact、storage residue 与 latest storage cleanup result |
 | `status` | none | public daemon projection、global capabilities、mutation authority |
 | `history` | `limit` | bounded redacted durable timeline |
 | `explain` | `incident_id` | exact redacted incident detail and capabilities |
@@ -96,7 +96,7 @@ Transport区分：
 | `protect_incident` | `context`, exact `incident_id` |
 | `unprotect_incident` | `context`, exact `incident_id` |
 
-V3不接受`browser_overview`并返回v3-framed typed `invalid_request`；它不会返回v4/v5 payload或silent downgrade。V4保留原atomic overview及既有history/detail shape，不返回v5-only impact、storage residue、storage cleanup result或observation span。V3/v4/v5 command enum都没有`arm`、`disarm`、`begin_drain`、install、update或rollback。
+Frontend command enum 没有 `arm`、`disarm`、`begin_drain`、install、update 或 rollback。旧 frontend 请求不会进入 mutation 或 projection。
 
 ## Namespace-aware durable mutation receipts
 
@@ -145,7 +145,7 @@ The Swift App writes its PendingMutation journal before connect/send. On restart
 
 ## Public status and readiness
 
-V3/v4/v5 `PublicStatus` includes:
+V5 `PublicStatus` includes:
 
 - daemon version, healthy;
 - `readiness = starting | ready | draining | failed | unknown`;
@@ -187,7 +187,7 @@ V4/v5 `browser_overview` replaces frontend composition of independently timed st
 
 V5 additionally carries `impact`, optional `storage_residue` and optional `storage_cleanup_result`. Impact has tracking start, `complete | partial_backfill` history completeness, terminal cleanup count, proved process-reclaim count, and aggregate process/memory values only when every proved reclaim has that measurement. It comes from independent SQLite-v7 cleanup-impact authority, not bounded event history. Recent settlement resolves the exact event token directly against that authority; later failures cannot hide an earlier most-recent proved reclaim. Storage residue contains only typed kind/status/time/count/logical bytes/shape/reference/eligibility/reason IDs. Source `chrome_code_sign_clone` observations set `automatic_cleanup_eligible` when at least one exact candidate satisfies its own two-observation, native reference and daemon lifecycle gates; it may coexist with aggregate `reference_check: referenced` when another candidate remains protected. The field is descriptive state, not an App mutation capability.
 
-`storage_cleanup_result` is the latest automatic chrome code-sign-clone *attempt* and is additive and optional: an older v5 payload without it still decodes, and an encoder omits it when absent. It carries only the typed `complete | partial | failed | delivery_unknown` outcome, prepared/completed times, the planned candidate count, before/after candidate counts and logical-byte sums, the proved removed count and the retained not-planned count. It never carries a pathname, candidate name, raw candidate identity or attempt identity, and logical bytes are never a physical APFS reclaim claim. The summary always derives from the newest attempt overall, so an unresolved newer PREPARED attempt yields no terminal summary rather than an older success; source recovery retries that PREPARED attempt before every due storage cycle and skips the cycle until it durably becomes `delivery_unknown`. V5 carries no root/candidate path or delete command, and v5/v4/v3 compatibility shapes are unchanged.
+`storage_cleanup_result` is the latest automatic chrome code-sign-clone *attempt* and is additive and optional: an older v5 payload without it still decodes, and an encoder omits it when absent. It carries only the typed `complete | partial | failed | delivery_unknown` outcome, prepared/completed times, the planned candidate count, before/after candidate counts and logical-byte sums, the proved removed count and the retained not-planned count. It never carries a pathname, candidate name, raw candidate identity or attempt identity, and logical bytes are never a physical APFS reclaim claim. The summary always derives from the newest attempt overall, so an unresolved newer PREPARED attempt yields no terminal summary rather than an older success; source recovery retries that PREPARED attempt before every due storage cycle and skips the cycle until it durably becomes `delivery_unknown`. V5 carries no root/candidate path or delete command, and retired frontend versions are refused before dispatch.
 
 Positive phase requires healthy Ready state, no scan in progress, current roster and equal non-null status/roster observation time. Otherwise phase is `unknown`. Trusted precedence is `attention → reclaiming → confirmed → verifying → active → protected → clear`; Swift and CLI display it but do not recompute it.
 
@@ -199,7 +199,7 @@ Recent settlement starts from the exact public reclaim `event_token`, loads that
 
 SQLite v7 assigns every retained event a unique opaque `public_token`. V1 internal event IDs remain unchanged and frontend schemas never expose them. History arrays are ordered by timestamp descending then durable internal event ID descending; incident-detail arrays use the ascending order. Public tokens are opaque identities and must not be compared to infer same-millisecond order. History uses `event_token`; recent reclaim and attention carry it when they originate from that durable event. Swift action identity adds stable action sequence and receipt namespace where required, so repeated stage/kind and artifact-only rows remain distinct.
 
-Equivalent consecutive observation rows coalesce under the latest event token. V5 observation events expose `observation_span { first_observed_at_unix_millis, observation_count }`; v4/v3 omit it and retain their earlier event shape. Cleanup events never become spans. Observation count/age retention cannot delete cleanup impacts or their at-least-14-day detail, while the lifetime aggregate remains after detail expiry. V6→v7 migration backfills retained terminal cleanup evidence and marks aggregate history `partial_backfill`; a fresh v7 database starts `complete`.
+Equivalent consecutive observation rows coalesce under the latest event token. V5 observation events expose `observation_span { first_observed_at_unix_millis, observation_count }`. Cleanup events never become spans. Observation count/age retention cannot delete cleanup impacts or their at-least-14-day detail, while the lifetime aggregate remains after detail expiry. The current source creates schema v14 directly with complete history; existing v14 historical `partial_backfill` labels remain honest. Older nonempty stores are refused unchanged.
 
 Cleanup projection keeps:
 
@@ -232,7 +232,7 @@ First trusted refresh baselines retained event tokens. Off/default-suppressed ev
 
 Delivery is best-effort over bounded polling, not gap-free. Permission truth comes from the OS. Notifications have no sound, remain quiet in foreground and carry only public-safe route data.
 
-## Schema v1 operator/lifecycle compatibility
+## Schema v1 operator/lifecycle
 
 V1 preserves existing CLI status/history/explain/doctor/pause/resume/retry/protect/unprotect/export behavior and the generation/instance-bound lifecycle commands:
 
@@ -242,33 +242,37 @@ V1 preserves existing CLI status/history/explain/doctor/pause/resume/retry/prote
 
 These commands depend on same-user socket access plus exact managed generation/instance and durable lifecycle gates. “Operator-only” is API ownership, not a separate privileged socket. Frontend schemas cannot encode them.
 
-V1 may expose bounded internal diagnostic identities needed by CLI/service transactions. Ordinary App code must never decode/stringify v1 `DaemonStatus`. The frontend receipt invariant is scoped to v3/v4/v5 mutations; v1 compatibility behavior remains intentionally separate.
+V1 may expose bounded internal diagnostic identities needed by CLI/service transactions. Ordinary App code must never decode/stringify v1 `DaemonStatus`. The frontend receipt invariant is scoped to frontend v5 mutations; current operator-v1 behavior remains separate.
 
 ## Version skew and installed boundary
 
-Current source accepts schemas 1, 3, 4 and 5. The source App emits schema v5 only and treats a v4-, v3-, or v1-only endpoint as incompatible rather than silently downgrading. Schema v4 preserves its prior atomic overview and response shapes; schema v3 preserves its existing commands; schema v1 remains operator-only and returns a trusted `unsupported_schema` envelope to an unsupported frontend request.
+Current source accepts only operator v1 and frontend v5. The App emits v5 only;
+retired v2/v3/v4 and unknown versions receive a trusted typed `unsupported_schema`
+envelope before dispatch. A v1-only daemon is incompatible with the App; recognizing
+that error does not authorize an operator fallback.
 
-Current source uses SQLite v14 and serves frontend v5 with v4/v3 compatibility and operator v1. V14 adds independent Node compile-cache authority to v13 uv/retired-npm separation; v11 clone results, v10 optional host ownership and earlier migrations remain intact. The current reference installation is accepted generation 47 on SQLite v14 from `e8faf7a`. Candidate generation 46 completed restart/socket checks and really rolled back to the exact generation-45 daemon reopening v14; the unchanged artifact freshly installed as generation 47 and repeated restart/socket checks before acceptance and restoration of the existing enforce policy. [Current state](current-state.md) owns exact installed evidence.
+Source creates/opens SQLite v14 directly. Valid v14 stores preserve their schema,
+history, provenance and recovery authority; nonempty other versions are refused
+unchanged. The exact installed generation/artifact and dated rollback/field results
+belong to [current state](current-state.md).
 
 The service retains the prior snapshot and exact generation identity after candidate readiness, blocks mode/install/uninstall mutations during the lease, and exposes explicit report-only restart, accept and rollback commands. A first install can roll back to the absence of a prior service; an upgrade restores the exact prior generation/database. Readiness, acceptance and enforcement are separate durable states.
 
 ## Verification anchors
 
-- [`crates/unlinger-protocol/src/lib.rs`](../crates/unlinger-protocol/src/lib.rs): v5 DTOs/commands, v4/v3 compatibility responses, receipts, envelopes and fixture decoders;
+- [`crates/unlinger-protocol/src/lib.rs`](../crates/unlinger-protocol/src/lib.rs): current v5 DTOs/commands, receipts, envelopes and fixture decoders;
 - [`crates/unlinger-daemon/src/store.rs`](../crates/unlinger-daemon/src/store.rs): SQLite v14 independent Node/uv cache and v11 clone cleanup attempt/result authority, v10 session-owner leases, v9 attribution repair and v8 task ownership, observation spans, independent impact authority, storage residue, event tokens, namespace/receipt/revision transactions;
 - [`crates/unlinger-daemon/src/public_action_policy.rs`](../crates/unlinger-daemon/src/public_action_policy.rs): shared policy matrix;
-- [`crates/unlinger-daemon/tests/history_store.rs`](../crates/unlinger-daemon/tests/history_store.rs): migration, atomicity, namespace, replay and recovery tests;
-- [`crates/unlinger-daemon/tests/ipc_roundtrip.rs`](../crates/unlinger-daemon/tests/ipc_roundtrip.rs): v1/v2/v3/v4/v5 routing, atomic browser projection, impact/residue/span compatibility, exact settlement identity, lifecycle serialization and raw-socket behavior;
-- [`apps/UnlingerApp/Contract/v5`](../apps/UnlingerApp/Contract/v5): current impact/residue/span fixtures;
-- [`apps/UnlingerApp/Contract/v4`](../apps/UnlingerApp/Contract/v4): transitional atomic browser-product fixtures;
-- [`apps/UnlingerApp/Contract/v3`](../apps/UnlingerApp/Contract/v3): legacy-compatible shared-command fixtures;
+- [`crates/unlinger-daemon/tests/history_store.rs`](../crates/unlinger-daemon/tests/history_store.rs): direct initialization/version refusal, atomicity, namespace, replay and recovery tests;
+- [`crates/unlinger-daemon/tests/ipc_roundtrip.rs`](../crates/unlinger-daemon/tests/ipc_roundtrip.rs): current v1/v5 routing and retired-version refusal, atomic browser projection, impact/residue/span facts, exact settlement identity, lifecycle serialization and raw-socket behavior;
+- [`apps/UnlingerApp/Contract/v5`](../apps/UnlingerApp/Contract/v5): all current wire and App-local fixtures;
 - [`apps/UnlingerApp/Tests/UnlingerAppTests`](../apps/UnlingerApp/Tests/UnlingerAppTests): strict decode, phase-aware transport, journal/reconciliation, concurrency/detail/notification/routing behavior.
 
 Changing wire shape, requiredness, limits, error discriminators, readiness/freshness, mutation authority, redaction, socket boundary or installed compatibility requires source tests and this document in the same change.
 
 ## Task ownership operator commands
 
-Source schema v1 adds `task_reserve {task_id}`, `task_activate {task_id, capability, owner_pid}`, `task_finish {task_id, capability}` and read-only `task_status {task_id}`. These commands do not exist in frontend schemas v3/v4/v5 and never arm or change service mode. Reserve/activate require a healthy ready daemon and authenticated local socket peer PID (`LOCAL_PEERPID`) in addition to the existing same-UID check. Activation requires the registrar's exact current child; finish checks native owner absence. Registry transitions are durable and conditional, released tasks cannot reactivate, and one timed-out mutation is never resent.
+Source schema v1 adds `task_reserve {task_id}`, `task_activate {task_id, capability, owner_pid}`, `task_finish {task_id, capability}` and read-only `task_status {task_id}`. These commands do not exist in frontend v5 and never arm or change service mode. Reserve/activate require a healthy ready daemon and authenticated local socket peer PID (`LOCAL_PEERPID`) in addition to the existing same-UID check. Activation requires the registrar's exact current child; finish checks native owner absence. Registry transitions are durable and conditional, released tasks cannot reactivate, and one timed-out mutation is never resent.
 
 `task_lease` contains the fresh opaque task/session selector and a private capability; only the registering CLI receives it. `task_status` returns task/session selector, phase, optional release reason and bound incident IDs. It does not return capability, command, workspace, native owner identity or a synthetic cleaned state. Existing incident receipt/impact routes remain the process-cleanup result authority. SQLite v8 added the two task tables transactionally; current source and installed v14 retain them without changing their meaning. See [TASKS.md](TASKS.md).
 
@@ -295,12 +299,12 @@ The source Playwright `0.6.0` pack permits this evidence only for ordinary `play
 
 The CLI exposes one coherent adapter path, `unlinger session run --session <name> --registry-namespace <16-hex> --controller-version <version> -- COMMAND...`, plus read-only `session status`. The same CLI process declares the lease, starts a gated exact child with the unchanged `PLAYWRIGHT_CLI_SESSION`, activates it before allowing exec, waits for the actual owner to exit and requests immutable release. Direct split lifecycle commands stay on operator IPC for an in-process host adapter; they are not exposed as a misleading multi-process shell workflow. No supported Codex adapter currently drives this lifecycle automatically, and a new lease generation does not adopt a controller born before that generation's activation. A later hook or observer is not that controller's exact parent and cannot truthfully adopt it; turn-level `Stop`/`SessionEnd` and thread archive/close hints also lack the trusted thread-to-controller/session binding required by this contract. A real zero-touch Codex adapter therefore needs host-native integration at controller creation and task/thread termination. The explicit wrapper remains useful but is not zero-touch. All unsupported or unbound cases remain protected.
 
-SQLite v10 stores the private lease capability, selector fingerprint, unchanged session name, exact controller version, registrar/owner identities, timestamps and bound controller identities. Status omits capability and native owner/controller identity. Records are retained for at least 14 days after release and pruned only after complete exact-identity coverage proves the selector/controller absent. Frontend v3/v4/v5 commands and DTOs exclude every session-owner payload.
+SQLite v10 stores the private lease capability, selector fingerprint, unchanged session name, exact controller version, registrar/owner identities, timestamps and bound controller identities. Status omits capability and native owner/controller identity. Records are retained for at least 14 days after release and pruned only after complete exact-identity coverage proves the selector/controller absent. Frontend v5 commands and DTOs exclude every session-owner payload.
 
 
 ## No-intervention completion
 
-Frontend wire versions remain v5/v4/v3. A process absence result still has
+Frontend wire version is v5. A process absence result still has
 `process_outcome: cleared`; absence alone does not authorize an impact claim.
 The reason `cleanup.tree_gone_without_signal` identifies a completion without a
 delivered signal or artifact action. Such a receipt has no estimated reclaimed
@@ -318,8 +322,7 @@ cleanup eligibility, or public raw-process data is introduced.
 Frontend v5 adds optional `uv_cache_maintenance` with `kind: uv_cache`. Old v5
 payloads may omit it; old v5 clients ignore the new field. The old
 `tool_cache_maintenance` key is reserved for retired `npm_download_cache`
-evidence and never emits uv kinds or becomes eligible. v4/v3 receive neither
-field and no cache mutation command. Both carry observation time, typed
+evidence and never emits uv kinds or becomes eligible. Frontend exposes no cache mutation command. Both carry observation time, typed
 availability (`available | absent | unsupported | unavailable`), descriptive
 `automatic_maintenance_eligible` and an optional latest attempt. Eligibility is
 a current ready/healthy/unpaused enforce decision, not permission to bypass cadence.
@@ -341,12 +344,11 @@ ordinary observations must not recover an active cache attempt.
 Operator cleanup activity includes the separate cache activity; browser phase
 continues to describe browser/process work. Paths and raw native output are never
 persisted or sent over IPC. A pre-v13 binary requires rollback's restored database.
-Installed generation 47 uses v14 according to [current evidence](current-state.md). A pre-v14 binary likewise requires the rollback-restored v13 database.
+The reference installation uses v14 according to [current evidence](current-state.md). Historical pre-v14 binaries can only reopen their own transaction-restored snapshot; the current source refuses those older stores.
 
 SQLite v14 adds an independent `node_compile_cache_latest` table and the optional
 v5 `node_compile_cache_maintenance` field with `kind: node_compile_cache`.
-Old v5 clients ignore this field; old payloads can omit it. v4/v3 carry none of
-the cache fields and gain no mutation command. Node's availability, observation
+Old v5 clients ignore this field; old payloads can omit it. Frontend gains no cache mutation command. Node's availability, observation
 time and lifecycle-derived eligibility use the same typed shapes. Its attempt
 outcomes are `running | completed | busy | failed | delivery_unknown`, with
 prepared/completed times and `removed_entry_count`/`removed_logical_bytes`.

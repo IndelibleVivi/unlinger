@@ -672,13 +672,12 @@ impl From<serde_json::Error> for StoreError {
 pub struct HistoryStore {
     path: PathBuf,
     startup_recovery: Option<StorageRecoveryOccurrence>,
-    // Keep one idle WAL connection alive across independent operation
-    // connections. Otherwise every gap between calls can become SQLite's last
-    // close, checkpointing and removing both sidecars before the next call
-    // creates them again. Clones share this lifetime, not a transaction or a
-    // connection queue. Mutex supplies Sync for rusqlite's Send-only handle;
-    // the idle handle is never used to execute work or hold a read transaction.
-    _wal_lifetime: Arc<Mutex<Connection>>,
+    // A single connection owns this store incarnation. Clones serialize short
+    // database operations here; their transactions never span native work or
+    // grace/revival waits. This avoids competing in-process SQLite writers.
+    connection: Arc<Mutex<Connection>>,
+    #[cfg(unix)]
+    file_identity: (u64, u64),
 }
 
 impl HistoryStore {
@@ -705,10 +704,18 @@ impl HistoryStore {
             Err(error) => return Err(error),
         };
         let connection = initialize_store_file(&path)?;
+        #[cfg(unix)]
+        let file_identity = {
+            use std::os::unix::fs::MetadataExt;
+            let metadata = fs::symlink_metadata(&path)?;
+            (metadata.dev(), metadata.ino())
+        };
         let mut store = Self {
             path,
             startup_recovery: None,
-            _wal_lifetime: Arc::new(Mutex::new(connection)),
+            connection: Arc::new(Mutex::new(connection)),
+            #[cfg(unix)]
+            file_identity,
         };
         if let Some(occurrence) = recovery {
             store.persist_storage_recovery(&occurrence)?;
@@ -3244,6 +3251,7 @@ impl HistoryStore {
             [],
         )?;
         transaction.commit()?;
+        drop(connection);
         let remaining_events = self.event_count()?;
         Ok(PruneResult {
             removed_events: before.saturating_sub(remaining_events),
@@ -3622,14 +3630,25 @@ impl HistoryStore {
         Ok(events)
     }
 
-    fn connection(&self) -> Result<Connection, StoreError> {
+    fn connection(&self) -> Result<std::sync::MutexGuard<'_, Connection>, StoreError> {
+        let connection = self.connection.lock().map_err(|_| {
+            StoreError::Invalid("history connection ownership was poisoned".to_owned())
+        })?;
         if !validate_existing_store_components(&self.path)? {
             return Err(StoreError::UnsafePath(
                 "history database disappeared after startup".to_owned(),
             ));
         }
-        let connection = Connection::open(&self.path)?;
-        configure_connection(&connection)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            let metadata = fs::symlink_metadata(&self.path)?;
+            if (metadata.dev(), metadata.ino()) != self.file_identity {
+                return Err(StoreError::UnsafePath(
+                    "history database identity changed after startup".to_owned(),
+                ));
+            }
+        }
         Ok(connection)
     }
 }
@@ -3685,7 +3704,6 @@ fn preflight_store_file(path: &Path) -> Result<bool, StoreError> {
         OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )?;
     connection.busy_timeout(std::time::Duration::from_secs(2))?;
-    run_quick_check(&connection)?;
     let user_version =
         connection.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))?;
     if user_version > SCHEMA_VERSION {
@@ -3693,9 +3711,23 @@ fn preflight_store_file(path: &Path) -> Result<bool, StoreError> {
             "database schema version {user_version} is newer than supported {SCHEMA_VERSION}"
         )));
     }
-    if user_version == SCHEMA_VERSION {
-        validate_required_schema(&connection)?;
+    if user_version != SCHEMA_VERSION {
+        if user_version != 0 {
+            return Err(StoreError::UnsupportedSchema(format!(
+                "database schema version {user_version} is older than supported {SCHEMA_VERSION}"
+            )));
+        }
+        let schema_objects: i64 =
+            connection.query_row("SELECT COUNT(*) FROM sqlite_schema", [], |row| row.get(0))?;
+        if schema_objects != 0 {
+            return Err(StoreError::UnsupportedSchema(
+                "unversioned database is not empty".to_owned(),
+            ));
+        }
+        return Ok(true);
     }
+    run_quick_check(&connection)?;
+    validate_required_schema(&connection)?;
     Ok(true)
 }
 
@@ -4237,550 +4269,31 @@ fn initialize_schema(connection: &mut Connection) -> Result<(), StoreError> {
     if user_version == SCHEMA_VERSION {
         return Ok(());
     }
+    if user_version != 0 {
+        return Err(StoreError::UnsupportedSchema(format!(
+            "database schema version {user_version} is older than supported {SCHEMA_VERSION}"
+        )));
+    }
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    if user_version == 0 {
-        let has_application_tables = transaction
-            .query_row(
-                "SELECT 1 FROM sqlite_master
-                 WHERE type = 'table' AND name IN ('events', 'settings', 'cooling_candidates')
-                 LIMIT 1",
-                [],
-                |_| Ok(()),
-            )
-            .optional()?
-            .is_some();
-        if has_application_tables {
-            return Err(StoreError::Corrupt(
-                "unversioned database contains Unlinger application tables".to_owned(),
-            ));
-        }
-        transaction.execute_batch(SCHEMA_SQL)?;
-    } else {
-        if user_version < 3 {
-            transaction.execute_batch(MIGRATION_V3_FOUNDATIONS_SQL)?;
-            if !events_have_attempt_id(&transaction)? {
-                transaction.execute_batch(
-                    "ALTER TABLE events ADD COLUMN attempt_id INTEGER
-                         REFERENCES cleanup_attempts(id);",
-                )?;
-            }
-            transaction.execute_batch(
-                "DROP TABLE IF EXISTS cooling_candidates;
-                 CREATE TABLE cooling_candidates (
-                     tracking_key TEXT PRIMARY KEY,
-                     first_continuous_ms INTEGER NOT NULL CHECK (first_continuous_ms >= 0),
-                     last_continuous_ms INTEGER NOT NULL
-                         CHECK (last_continuous_ms >= first_continuous_ms),
-                     first_wall_ms INTEGER NOT NULL CHECK (first_wall_ms >= 0),
-                     last_wall_ms INTEGER NOT NULL CHECK (last_wall_ms >= 0),
-                     root_identity_fingerprint TEXT NOT NULL,
-                     member_fingerprint TEXT NOT NULL,
-                     boot_session_fingerprint TEXT NOT NULL,
-                     enforcement_epoch TEXT NOT NULL
-                 );
-                 CREATE INDEX IF NOT EXISTS events_incident_timeline
-                     ON events (incident_id, occurred_at_ms, id);
-                 CREATE INDEX IF NOT EXISTS events_recent
-                     ON events (occurred_at_ms DESC, id DESC);
-                 CREATE INDEX IF NOT EXISTS events_attempt_timeline
-                     ON events (attempt_id, id);",
-            )?;
-        }
-        if user_version < 4 {
-            transaction.execute_batch(MANAGED_LIFECYCLE_SQL)?;
-        }
-        if user_version < 5 {
-            transaction.execute_batch(MIGRATION_V5_SQL)?;
-        }
-        if user_version < 6 {
-            let has_events = transaction
-                .query_row(
-                    "SELECT 1 FROM sqlite_master
-                     WHERE type = 'table' AND name = 'events'",
-                    [],
-                    |_| Ok(()),
-                )
-                .optional()?
-                .is_some();
-            if !has_events {
-                return Err(StoreError::Corrupt(
-                    "schema-v6 migration requires the events table".to_owned(),
-                ));
-            }
-            transaction.execute_batch(MIGRATION_V6_SQL)?;
-        }
-        if user_version < 7 {
-            add_v7_columns(&transaction)?;
-            transaction.execute_batch(MIGRATION_V7_SQL)?;
-            migrate_v7_history_and_impacts(&transaction)?;
-        }
+    let schema_objects: i64 =
+        transaction.query_row("SELECT COUNT(*) FROM sqlite_schema", [], |row| row.get(0))?;
+    if schema_objects != 0 {
+        return Err(StoreError::UnsupportedSchema(
+            "unversioned database is not empty".to_owned(),
+        ));
     }
-    if user_version < 8 {
-        transaction.execute_batch(tasks::TASK_SCHEMA_SQL)?;
-    }
+    transaction.execute_batch(SCHEMA_SQL)?;
+    transaction.execute_batch(tasks::TASK_SCHEMA_SQL)?;
     transaction.execute_batch(attribution::SCHEMA_SQL)?;
-    // Older schemas have all reached the v7 impact shape at this point. Run
-    // the v9 attribution repair for every versioned pre-v9 database, including
-    // direct v1..v6 -> v11 upgrades; a brand-new unversioned database already
-    // starts with current empty authority and needs no legacy provenance row.
-    if (1..9).contains(&user_version) {
-        attribution::repair_legacy_impacts(&transaction)?;
-    }
-    if user_version < 10 {
-        transaction.execute_batch(session_owners::SESSION_OWNER_SCHEMA_SQL)?;
-    }
-    if user_version < 11 {
-        transaction.execute_batch(STORAGE_CLEANUP_ATTEMPT_SCHEMA_SQL)?;
-    }
-    if user_version < 12 {
-        transaction.execute_batch(tool_cache::SCHEMA_SQL)?;
-    }
-    if user_version < 13 {
-        // v12 was the npm-only source candidate. Preserve its evidence in its
-        // own namespace; no npm observation or result may become a uv result.
-        transaction
-            .execute_batch("ALTER TABLE tool_cache_latest RENAME TO retired_npm_cache_latest;")?;
-        transaction.execute_batch(tool_cache::SCHEMA_SQL)?;
-    }
-    if user_version < 14 {
-        transaction.execute_batch(tool_cache::NODE_SCHEMA_SQL)?;
-    }
+    transaction.execute_batch(session_owners::SESSION_OWNER_SCHEMA_SQL)?;
+    transaction.execute_batch(STORAGE_CLEANUP_ATTEMPT_SCHEMA_SQL)?;
+    transaction.execute_batch(tool_cache::SCHEMA_SQL)?;
+    transaction.execute_batch(tool_cache::RETIRED_NPM_SCHEMA_SQL)?;
+    transaction.execute_batch(tool_cache::NODE_SCHEMA_SQL)?;
     transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     transaction.commit()?;
     Ok(())
 }
-
-fn add_v7_columns(transaction: &Transaction<'_>) -> Result<(), StoreError> {
-    if !table_has_column(transaction, "events", "first_occurred_at_ms")? {
-        transaction.execute_batch(
-            "ALTER TABLE events
-                 ADD COLUMN first_occurred_at_ms INTEGER NOT NULL DEFAULT 0
-                     CHECK (first_occurred_at_ms >= 0);",
-        )?;
-    }
-    if !table_has_column(transaction, "events", "observation_count")? {
-        transaction.execute_batch(
-            "ALTER TABLE events
-                 ADD COLUMN observation_count INTEGER NOT NULL DEFAULT 1
-                     CHECK (observation_count >= 1);",
-        )?;
-    }
-    transaction.execute(
-        "UPDATE events SET first_occurred_at_ms = occurred_at_ms
-         WHERE first_occurred_at_ms = 0",
-        [],
-    )?;
-    for (column, definition) in [
-        ("signature_pack", "TEXT"),
-        ("signature_version", "TEXT"),
-        (
-            "observed_process_count",
-            "INTEGER CHECK (observed_process_count >= 0)",
-        ),
-        (
-            "observed_resident_memory_bytes",
-            "INTEGER CHECK (observed_resident_memory_bytes >= 0)",
-        ),
-    ] {
-        if !table_has_column(transaction, "cleanup_attempts", column)? {
-            transaction.execute_batch(&format!(
-                "ALTER TABLE cleanup_attempts ADD COLUMN {column} {definition};"
-            ))?;
-        }
-    }
-    Ok(())
-}
-
-fn table_has_column(
-    transaction: &Transaction<'_>,
-    table: &str,
-    column: &str,
-) -> Result<bool, StoreError> {
-    let pragma = format!("PRAGMA table_info({table})");
-    let mut statement = transaction.prepare(&pragma)?;
-    let rows = statement.query_map([], |row| row.get::<_, String>(1))?;
-    for stored in rows {
-        if stored? == column {
-            return Ok(true);
-        }
-    }
-    Ok(false)
-}
-
-fn migrate_v7_history_and_impacts(transaction: &Transaction<'_>) -> Result<(), StoreError> {
-    collapse_legacy_observation_spans(transaction)?;
-    let terminal_events = {
-        let mut statement = transaction.prepare(
-            "SELECT events.id, events.attempt_id, events.occurred_at_ms,
-                    events.payload_json
-             FROM events
-             WHERE events.kind = 'cleanup'
-               AND events.attempt_id IS NOT NULL
-               AND events.state IN ('CLEARED', 'FAILED', 'REVIVED')
-             ORDER BY events.id ASC",
-        )?;
-        statement
-            .query_map([], |row| {
-                Ok((
-                    row.get::<_, i64>(0)?,
-                    row.get::<_, i64>(1)?,
-                    row.get::<_, i64>(2)?,
-                    row.get::<_, String>(3)?,
-                ))
-            })?
-            .collect::<Result<Vec<_>, _>>()?
-    };
-    for (event_id, attempt_id, occurred_at, payload_json) in terminal_events {
-        if let Some(report) = latest_observation_before_event(transaction, attempt_id, event_id)? {
-            transaction.execute(
-                "UPDATE cleanup_attempts
-                 SET signature_pack = ?1, signature_version = ?2,
-                     observed_process_count = ?3,
-                     observed_resident_memory_bytes = ?4
-                 WHERE id = ?5",
-                params![
-                    report.signature_pack,
-                    report.signature_version,
-                    i64::try_from(report.member_count).map_err(|_| {
-                        StoreError::Range("legacy impact process count overflowed i64".to_owned())
-                    })?,
-                    sqlite_u64(
-                        report.resident_memory_bytes,
-                        "legacy impact resident memory",
-                    )?,
-                    attempt_id,
-                ],
-            )?;
-        }
-        let EventPayload::Cleanup { receipt } = serde_json::from_str(&payload_json)? else {
-            return Err(StoreError::Corrupt(format!(
-                "terminal event {event_id} contains a non-cleanup payload"
-            )));
-        };
-        insert_cleanup_impact_transaction(
-            transaction,
-            attempt_id,
-            event_id,
-            u64::try_from(occurred_at)
-                .map_err(|_| StoreError::Corrupt("negative legacy impact time".to_owned()))?,
-            &receipt,
-        )?;
-    }
-    transaction.execute(
-        "UPDATE impact_authority
-         SET tracking_started_at_ms = ?1,
-             historical_completeness = 'partial_backfill'
-         WHERE singleton = 1",
-        params![sqlite_millis(
-            current_unix_millis()?,
-            "impact migration timestamp"
-        )?],
-    )?;
-    Ok(())
-}
-
-fn collapse_legacy_observation_spans(transaction: &Transaction<'_>) -> Result<(), StoreError> {
-    let rows = {
-        let mut statement = transaction.prepare(
-            "SELECT id, incident_id, occurred_at_ms, kind, payload_json
-             FROM events ORDER BY incident_id ASC, occurred_at_ms ASC, id ASC",
-        )?;
-        statement
-            .query_map([], |row| {
-                Ok((
-                    row.get::<_, i64>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, i64>(2)?,
-                    row.get::<_, String>(3)?,
-                    row.get::<_, String>(4)?,
-                ))
-            })?
-            .collect::<Result<Vec<_>, _>>()?
-    };
-    let mut previous: Option<(i64, String, i64, ObservationRecord, i64)> = None;
-    for (event_id, incident_id, occurred_at, kind, payload_json) in rows {
-        if kind != EventKind::Observation.as_str() {
-            previous = None;
-            continue;
-        }
-        let EventPayload::Observation { report } = serde_json::from_str(&payload_json)? else {
-            return Err(StoreError::Corrupt(format!(
-                "legacy observation event {event_id} contains a non-observation payload"
-            )));
-        };
-        if let Some((previous_id, previous_incident, first_at, previous_report, count)) =
-            previous.take()
-            && previous_incident == incident_id
-            && observations_semantically_equal(&previous_report, &report)
-        {
-            let next_count = count.checked_add(1).ok_or_else(|| {
-                StoreError::Range("legacy observation span count overflowed i64".to_owned())
-            })?;
-            transaction.execute(
-                "UPDATE events
-                 SET first_occurred_at_ms = ?1, observation_count = ?2
-                 WHERE id = ?3",
-                params![first_at, next_count, event_id],
-            )?;
-            transaction.execute("DELETE FROM events WHERE id = ?1", params![previous_id])?;
-            previous = Some((event_id, incident_id, first_at, report, next_count));
-        } else {
-            previous = Some((event_id, incident_id, occurred_at, report, 1));
-        }
-    }
-    Ok(())
-}
-
-fn latest_observation_before_event(
-    transaction: &Transaction<'_>,
-    attempt_id: i64,
-    event_id: i64,
-) -> Result<Option<ObservationRecord>, StoreError> {
-    let incident_id = transaction.query_row(
-        "SELECT incident_id FROM cleanup_attempts WHERE id = ?1",
-        params![attempt_id],
-        |row| row.get::<_, String>(0),
-    )?;
-    let payload_json = transaction
-        .query_row(
-            "SELECT payload_json FROM events
-             WHERE incident_id = ?1 AND kind = 'observation' AND id < ?2
-             ORDER BY id DESC LIMIT 1",
-            params![incident_id, event_id],
-            |row| row.get::<_, String>(0),
-        )
-        .optional()?;
-    payload_json
-        .map(
-            |payload_json| match serde_json::from_str::<EventPayload>(&payload_json)? {
-                EventPayload::Observation { report } => Ok(report),
-                EventPayload::Cleanup { .. } => Err(StoreError::Corrupt(
-                    "legacy observation lookup selected a cleanup payload".to_owned(),
-                )),
-            },
-        )
-        .transpose()
-}
-
-const MIGRATION_V5_SQL: &str = "DELETE FROM cooling_candidates;
-     ALTER TABLE cleanup_attempts
-         ADD COLUMN resources_json TEXT;
-     ALTER TABLE cooling_candidates
-         ADD COLUMN signature_pack TEXT NOT NULL DEFAULT '';
-     ALTER TABLE cooling_candidates
-         ADD COLUMN signature_version TEXT NOT NULL DEFAULT '';
-     ALTER TABLE cleanup_retry_blocks
-         ADD COLUMN last_exact_observed_at_ms INTEGER
-             CHECK (last_exact_observed_at_ms >= blocked_at_ms);
-     ALTER TABLE cleanup_retry_blocks
-         ADD COLUMN absence_since_ms INTEGER
-             CHECK (absence_since_ms >= blocked_at_ms);
-     CREATE TABLE storage_recoveries (
-         id INTEGER PRIMARY KEY AUTOINCREMENT,
-         recovery_id TEXT NOT NULL UNIQUE,
-         occurred_at_ms INTEGER NOT NULL CHECK (occurred_at_ms >= 0),
-         reason_id TEXT NOT NULL CHECK (
-             reason_id IN ('integrity_check_failed', 'required_schema_invalid')
-         ),
-         quarantine_directory_name TEXT NOT NULL,
-         quarantined_sidecar_count INTEGER NOT NULL
-             CHECK (quarantined_sidecar_count >= 0)
-     );
-     CREATE INDEX storage_recoveries_recent
-         ON storage_recoveries (occurred_at_ms DESC, id DESC);
-     CREATE TABLE incident_protections (
-         incident_id TEXT PRIMARY KEY,
-         root_identity_fingerprint TEXT NOT NULL,
-         member_fingerprint TEXT NOT NULL,
-         protected_at_ms INTEGER NOT NULL CHECK (protected_at_ms >= 0),
-         last_exact_observed_at_ms INTEGER
-             CHECK (last_exact_observed_at_ms >= protected_at_ms),
-         absence_since_ms INTEGER CHECK (absence_since_ms >= protected_at_ms)
-     );
-     CREATE INDEX incident_protections_recent
-         ON incident_protections (protected_at_ms DESC, incident_id ASC);
-     CREATE TABLE cleanup_artifact_actions (
-         id INTEGER PRIMARY KEY AUTOINCREMENT,
-         attempt_id INTEGER NOT NULL REFERENCES cleanup_attempts(id),
-         sequence INTEGER NOT NULL CHECK (sequence >= 0),
-         prepared_at_ms INTEGER NOT NULL CHECK (prepared_at_ms >= 0),
-         completed_at_ms INTEGER CHECK (completed_at_ms >= prepared_at_ms),
-         kind TEXT NOT NULL CHECK (kind IN ('dev_tools_active_port')),
-         artifact_fingerprint TEXT NOT NULL,
-         disposition TEXT CHECK (
-             disposition IN (
-                 'removed', 'already_absent', 'identity_mismatch', 'referenced',
-                 'unsafe', 'rejected', 'cancelled_before_delivery', 'delivery_unknown'
-             )
-         ),
-         UNIQUE (attempt_id, sequence),
-         CHECK (
-             (completed_at_ms IS NULL AND disposition IS NULL)
-             OR (completed_at_ms IS NOT NULL AND disposition IS NOT NULL)
-         )
-     );
-     CREATE INDEX cleanup_artifact_actions_attempt_sequence
-         ON cleanup_artifact_actions (attempt_id, sequence);";
-
-const MIGRATION_V6_SQL: &str = "CREATE TABLE public_event_tokens (
-         event_id INTEGER PRIMARY KEY REFERENCES events(id) ON DELETE CASCADE,
-         event_token TEXT NOT NULL UNIQUE CHECK (length(event_token) = 32)
-     );
-     INSERT INTO public_event_tokens (event_id, event_token)
-         SELECT id, lower(hex(randomblob(16))) FROM events;
-     ALTER TABLE storage_recoveries ADD COLUMN public_token TEXT;
-     UPDATE storage_recoveries
-         SET public_token = lower(hex(randomblob(16)))
-         WHERE public_token IS NULL;
-     CREATE UNIQUE INDEX storage_recoveries_public_token
-         ON storage_recoveries (public_token);
-     CREATE TABLE mutation_authority (
-         singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
-         namespace_token TEXT NOT NULL UNIQUE CHECK (length(namespace_token) = 32)
-     );
-     INSERT INTO mutation_authority (singleton, namespace_token)
-         VALUES (1, lower(hex(randomblob(16))));
-     CREATE TABLE control_metadata (
-         singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
-         cleanup_policy_revision INTEGER NOT NULL
-             CHECK (cleanup_policy_revision >= 1)
-     );
-     INSERT INTO control_metadata (singleton, cleanup_policy_revision)
-         VALUES (1, 1);
-     CREATE TABLE ordinary_mutation_receipts (
-         namespace_token TEXT NOT NULL CHECK (length(namespace_token) = 32),
-         mutation_id TEXT NOT NULL CHECK (length(mutation_id) = 36),
-         canonical_version INTEGER NOT NULL CHECK (canonical_version = 1),
-         command_json TEXT NOT NULL,
-         receipt_json TEXT NOT NULL,
-         committed_at_ms INTEGER NOT NULL CHECK (committed_at_ms >= 0),
-         retain_until_ms INTEGER NOT NULL CHECK (retain_until_ms >= committed_at_ms),
-         PRIMARY KEY (namespace_token, mutation_id)
-     );
-     CREATE INDEX ordinary_mutation_receipts_recent
-         ON ordinary_mutation_receipts (committed_at_ms DESC, namespace_token, mutation_id);";
-
-const MIGRATION_V7_SQL: &str = "CREATE TABLE cleanup_impacts (
-         id INTEGER PRIMARY KEY AUTOINCREMENT,
-         attempt_id INTEGER NOT NULL UNIQUE REFERENCES cleanup_attempts(id),
-         event_id INTEGER NOT NULL UNIQUE REFERENCES events(id),
-         incident_id TEXT NOT NULL,
-         family TEXT NOT NULL,
-         family_version TEXT NOT NULL,
-         occurred_at_ms INTEGER NOT NULL CHECK (occurred_at_ms >= 0),
-         state TEXT NOT NULL CHECK (state IN ('CLEARED', 'FAILED', 'REVIVED')),
-         process_outcome TEXT NOT NULL CHECK (
-             process_outcome IN ('cleared', 'revived', 'failed', 'delivery_unknown')
-         ),
-         artifact_outcome TEXT NOT NULL CHECK (
-             artifact_outcome IN ('not_applicable', 'reconciled', 'residue', 'delivery_unknown')
-         ),
-         overall_outcome TEXT NOT NULL CHECK (
-             overall_outcome IN ('cleared', 'cleared_with_residue', 'revived', 'failed')
-         ),
-         process_count INTEGER CHECK (process_count >= 0),
-         estimated_reclaimed_memory_bytes INTEGER
-             CHECK (estimated_reclaimed_memory_bytes >= 0),
-         revival_checks_completed INTEGER NOT NULL
-             CHECK (revival_checks_completed >= 0)
-     );
-     CREATE INDEX cleanup_impacts_recent
-         ON cleanup_impacts (occurred_at_ms DESC, id DESC);
-     CREATE TABLE storage_residue_latest (
-         kind TEXT PRIMARY KEY CHECK (kind IN ('chrome_code_sign_clone')),
-         observed_at_ms INTEGER NOT NULL CHECK (observed_at_ms >= 0),
-         payload_json TEXT NOT NULL
-     );
-     CREATE TABLE impact_authority (
-         singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
-         tracking_started_at_ms INTEGER NOT NULL CHECK (tracking_started_at_ms >= 0),
-         historical_completeness TEXT NOT NULL CHECK (
-             historical_completeness IN ('complete', 'partial_backfill')
-         ),
-         terminal_cleanup_count INTEGER NOT NULL CHECK (terminal_cleanup_count >= 0),
-         proved_reclaim_count INTEGER NOT NULL CHECK (proved_reclaim_count >= 0),
-         reclaimed_process_count INTEGER NOT NULL CHECK (reclaimed_process_count >= 0),
-         reclaimed_process_measurement_count INTEGER NOT NULL
-             CHECK (reclaimed_process_measurement_count >= 0),
-         estimated_reclaimed_memory_bytes INTEGER NOT NULL
-             CHECK (estimated_reclaimed_memory_bytes >= 0),
-         reclaimed_memory_measurement_count INTEGER NOT NULL
-             CHECK (reclaimed_memory_measurement_count >= 0)
-     );
-     INSERT INTO impact_authority (
-         singleton, tracking_started_at_ms, historical_completeness,
-         terminal_cleanup_count, proved_reclaim_count,
-         reclaimed_process_count, reclaimed_process_measurement_count,
-         estimated_reclaimed_memory_bytes, reclaimed_memory_measurement_count
-     ) VALUES (1, 0, 'partial_backfill', 0, 0, 0, 0, 0, 0);";
-
-const MIGRATION_V3_FOUNDATIONS_SQL: &str = "CREATE TABLE IF NOT EXISTS cleanup_attempts (
-         id INTEGER PRIMARY KEY AUTOINCREMENT,
-         incident_id TEXT NOT NULL,
-         tracking_key TEXT NOT NULL,
-         root_identity_fingerprint TEXT NOT NULL,
-         member_fingerprint TEXT NOT NULL,
-         enforcement_epoch TEXT NOT NULL,
-         started_at_ms INTEGER NOT NULL CHECK (started_at_ms >= 0),
-         completed_at_ms INTEGER CHECK (completed_at_ms >= started_at_ms),
-         terminal_state TEXT CHECK (terminal_state IN ('CLEARED', 'FAILED', 'REVIVED')),
-         reason_id TEXT,
-         survivor_pids_json TEXT,
-         revival_checks_completed INTEGER NOT NULL DEFAULT 0
-             CHECK (revival_checks_completed >= 0),
-         CHECK (
-             (completed_at_ms IS NULL AND terminal_state IS NULL)
-             OR (completed_at_ms IS NOT NULL AND terminal_state IS NOT NULL)
-         )
-     );
-     CREATE UNIQUE INDEX IF NOT EXISTS cleanup_attempts_one_open
-         ON cleanup_attempts ((1)) WHERE completed_at_ms IS NULL;
-     CREATE INDEX IF NOT EXISTS cleanup_attempts_incident
-         ON cleanup_attempts (incident_id, id DESC);
-     CREATE TABLE IF NOT EXISTS cleanup_actions (
-         id INTEGER PRIMARY KEY AUTOINCREMENT,
-         attempt_id INTEGER NOT NULL REFERENCES cleanup_attempts(id),
-         sequence INTEGER NOT NULL CHECK (sequence >= 0),
-         prepared_at_ms INTEGER NOT NULL CHECK (prepared_at_ms >= 0),
-         completed_at_ms INTEGER CHECK (completed_at_ms >= prepared_at_ms),
-         stage TEXT NOT NULL CHECK (stage IN ('primary_term', 'member_term', 'exact_kill')),
-         pid INTEGER NOT NULL CHECK (pid > 0),
-         identity_fingerprint TEXT NOT NULL,
-         signal TEXT NOT NULL CHECK (signal IN ('term', 'kill')),
-         disposition TEXT CHECK (
-             disposition IN (
-                 'delivered', 'already_exited', 'identity_mismatch', 'rejected',
-                 'cancelled_before_delivery', 'delivery_unknown'
-             )
-         ),
-         UNIQUE (attempt_id, sequence),
-         CHECK (
-             (completed_at_ms IS NULL AND disposition IS NULL)
-             OR (completed_at_ms IS NOT NULL AND disposition IS NOT NULL)
-         )
-     );
-     CREATE INDEX IF NOT EXISTS cleanup_actions_attempt_sequence
-         ON cleanup_actions (attempt_id, sequence);
-     CREATE TABLE IF NOT EXISTS cleanup_retry_blocks (
-         incident_id TEXT PRIMARY KEY,
-         tracking_key TEXT NOT NULL,
-         blocked_at_ms INTEGER NOT NULL CHECK (blocked_at_ms >= 0),
-         reason_id TEXT,
-         source_attempt_id INTEGER NOT NULL REFERENCES cleanup_attempts(id)
-     );
-     CREATE TABLE IF NOT EXISTS settings (
-         key TEXT PRIMARY KEY,
-         integer_value INTEGER
-     );
-     CREATE TABLE IF NOT EXISTS events (
-         id INTEGER PRIMARY KEY AUTOINCREMENT,
-         incident_id TEXT NOT NULL,
-         occurred_at_ms INTEGER NOT NULL CHECK (occurred_at_ms >= 0),
-         kind TEXT NOT NULL CHECK (kind IN ('observation', 'cleanup')),
-         state TEXT NOT NULL,
-         payload_json TEXT NOT NULL,
-         attempt_id INTEGER REFERENCES cleanup_attempts(id)
-     );";
 
 const SCHEMA_SQL: &str = "CREATE TABLE cleanup_attempts (
          id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -5078,47 +4591,6 @@ const STORAGE_CLEANUP_ATTEMPT_SCHEMA_SQL: &str =
      );
      CREATE INDEX IF NOT EXISTS storage_cleanup_attempts_recent
          ON storage_cleanup_attempts (kind, id DESC);";
-
-const MANAGED_LIFECYCLE_SQL: &str = "CREATE TABLE IF NOT EXISTS managed_lifecycle (
-         singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
-         activation_generation INTEGER NOT NULL CHECK (activation_generation > 0),
-         instance_id TEXT NOT NULL,
-         requested_enforce INTEGER NOT NULL CHECK (requested_enforce IN (0, 1)),
-         effective_enforce INTEGER NOT NULL CHECK (effective_enforce IN (0, 1)),
-         armed_generation INTEGER CHECK (armed_generation > 0),
-         enforcement_epoch TEXT,
-         ready INTEGER NOT NULL CHECK (ready IN (0, 1)),
-         draining INTEGER NOT NULL CHECK (draining IN (0, 1)),
-         startup_phase TEXT NOT NULL CHECK (
-             startup_phase IN (
-                 'recovering', 'first_scan_report_only', 'ready_report_only',
-                 'ready_enforce', 'draining', 'failed'
-             )
-         ),
-         updated_at_ms INTEGER NOT NULL CHECK (updated_at_ms >= 0),
-         CHECK (
-             (effective_enforce = 0 AND armed_generation IS NULL AND enforcement_epoch IS NULL)
-             OR (
-                 effective_enforce = 1
-                 AND requested_enforce = 1
-                 AND armed_generation = activation_generation
-                 AND enforcement_epoch IS NOT NULL
-                 AND ready = 1
-                 AND draining = 0
-             )
-         )
-     );";
-
-fn events_have_attempt_id(transaction: &Transaction<'_>) -> Result<bool, StoreError> {
-    let mut statement = transaction.prepare("PRAGMA table_info(events)")?;
-    let rows = statement.query_map([], |row| row.get::<_, String>(1))?;
-    for column in rows {
-        if column? == "attempt_id" {
-            return Ok(true);
-        }
-    }
-    Ok(false)
-}
 
 fn reserve_mutation_receipt_slot(transaction: &Transaction<'_>) -> Result<(), StoreError> {
     let count = transaction.query_row(
@@ -6114,16 +5586,6 @@ fn finalize_unknown_storage_cleanup_attempts(
     Ok(updated)
 }
 
-fn current_unix_millis() -> Result<u64, StoreError> {
-    let elapsed = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|error| {
-            StoreError::Invalid(format!("system clock precedes Unix epoch: {error}"))
-        })?;
-    u64::try_from(elapsed.as_millis())
-        .map_err(|_| StoreError::Range("system clock overflowed u64 milliseconds".to_owned()))
-}
-
 fn parse_nonnegative_millis(value: i64, label: &str) -> Result<u64, StoreError> {
     u64::try_from(value).map_err(|_| StoreError::Corrupt(format!("{label} is negative")))
 }
@@ -6397,6 +5859,110 @@ fn payload_state(payload: &EventPayload) -> IncidentState {
 #[cfg(test)]
 mod connection_tests {
     use super::*;
+
+    #[test]
+    fn cloned_operations_wait_for_the_owner_instead_of_failing_sqlite_busy() {
+        struct Fixture(PathBuf);
+        impl Drop for Fixture {
+            fn drop(&mut self) {
+                let _ = fs::remove_dir_all(&self.0);
+            }
+        }
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let fixture = Fixture(std::env::temp_dir().join(format!(
+            "unlinger-store-owner-{}-{nonce}",
+            std::process::id()
+        )));
+        let store = HistoryStore::open(fixture.0.join("history.sqlite3")).unwrap();
+        let mut owner = store.connection().unwrap();
+        let transaction = owner
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .unwrap();
+        transaction
+            .execute(
+                "INSERT INTO settings (key, integer_value) VALUES ('held_writer', 1)",
+                [],
+            )
+            .unwrap();
+        let clone = store.clone();
+        let (started, start_seen) = std::sync::mpsc::channel();
+        let (finished, result) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            started.send(()).unwrap();
+            finished.send(clone.set_pause_until(Some(5_000))).unwrap();
+        });
+        start_seen.recv().unwrap();
+        let early = result.recv_timeout(std::time::Duration::from_millis(2_300));
+        transaction.commit().unwrap();
+        drop(owner);
+        assert!(
+            matches!(early, Err(std::sync::mpsc::RecvTimeoutError::Timeout)),
+            "a cloned operation reached SQLite's busy timeout instead of waiting for ownership: {early:?}"
+        );
+        result
+            .recv_timeout(std::time::Duration::from_secs(3))
+            .unwrap()
+            .unwrap();
+        worker.join().unwrap();
+        assert_eq!(store.pause_until().unwrap(), Some(5_000));
+
+        let mut external = Connection::open(store.path()).unwrap();
+        let external_writer = external
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .unwrap();
+        let error = store
+            .set_pause_until(Some(6_000))
+            .expect_err("external writers remain bounded");
+        assert!(matches!(error, StoreError::Sqlite {
+            error: rusqlite::Error::SqliteFailure(failure, _), ..
+        } if failure.code == rusqlite::ErrorCode::DatabaseBusy));
+        drop(external_writer);
+        assert_eq!(
+            store.pause_until().unwrap(),
+            Some(5_000),
+            "failed writes are not resent"
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn shared_connection_refuses_a_replaced_database_path_without_touching_it() {
+        struct Fixture(PathBuf);
+        impl Drop for Fixture {
+            fn drop(&mut self) {
+                let _ = fs::remove_dir_all(&self.0);
+            }
+        }
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let fixture = Fixture(std::env::temp_dir().join(format!(
+            "unlinger-store-replacement-{}-{nonce}",
+            std::process::id()
+        )));
+        let database = fixture.0.join("history.sqlite3");
+        let original = HistoryStore::open(&database).unwrap();
+        let replacement_path = fixture.0.join("replacement.sqlite3");
+        let replacement = HistoryStore::open(&replacement_path).unwrap();
+        replacement.set_pause_until(Some(9_000)).unwrap();
+        drop(replacement);
+        let bytes = fs::read(&replacement_path).unwrap();
+        let retained = fixture.0.join("retained.sqlite3");
+        fs::rename(&database, &retained).unwrap();
+        fs::rename(&replacement_path, &database).unwrap();
+        let error = original
+            .set_pause_until(Some(1))
+            .expect_err("the retained handle must not follow a replacement path");
+        assert!(matches!(error, StoreError::UnsafePath(_)));
+        assert_eq!(fs::read(&database).unwrap(), bytes);
+        fs::rename(&database, &replacement_path).unwrap();
+        fs::rename(&retained, &database).unwrap();
+        drop(original);
+    }
 
     #[test]
     fn sqlite_vfs_failure_captures_the_handles_os_errno_without_a_path() {

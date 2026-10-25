@@ -191,14 +191,12 @@ struct BrowserOverviewMappingTests {
     @Test("impact and storage residue remain typed presentation facts")
     func impactAndStorageResidue() throws {
         let data = try FixtureStore.data(
-            named: "browser-overview-impact-residue",
-            schemaVersion: 5
+            named: "browser-overview-impact-residue"
         )
         let snapshot = try ResponseDecoder.decode(
             BrowserOverviewSnapshot.self,
             expectedPayloadType: "browser_overview",
             requestID: 502,
-            expectedSchemaVersion: 5,
             line: data
         )
 

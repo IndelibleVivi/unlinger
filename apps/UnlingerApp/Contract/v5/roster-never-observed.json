@@ -1,0 +1,12 @@
+{
+  "schema_version": 5,
+  "request_id": 28,
+  "ok": true,
+  "payload": {
+    "type": "incidents",
+    "data": {
+      "freshness": "never_observed",
+      "items": []
+    }
+  }
+}

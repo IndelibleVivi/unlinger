@@ -5,9 +5,9 @@ import Testing
 struct ToolCacheTests {
     @Test("new cache fixture maps separately and old v5 remains compatible")
     func fixtureAndCompatibility() async throws {
-        let data = try FixtureStore.data(named: "browser-overview-cache-maintenance", schemaVersion: 5)
+        let data = try FixtureStore.data(named: "browser-overview-cache-maintenance")
         let snapshot = try ResponseDecoder.decode(BrowserOverviewSnapshot.self,
-            expectedPayloadType: "browser_overview", requestID: 505, expectedSchemaVersion: 5, line: data)
+            expectedPayloadType: "browser_overview", requestID: 505, line: data)
         let mapped = BrowserOverviewMapper.make(connection: .live, snapshot: snapshot)
         #expect(mapped.toolCacheMaintenance?.nativeRemovedEntryCount == 2)
         #expect(mapped.toolCacheMaintenance?.nativeRemovedLogicalBytes == 4096)
@@ -32,9 +32,9 @@ struct ToolCacheTests {
     }
     @Test("uv busy is a separate native result and preserves browser impact")
     func uvBusyAndOldCompatibility() async throws {
-        let data = try FixtureStore.data(named: "browser-overview-uv-cache-maintenance", schemaVersion: 5)
+        let data = try FixtureStore.data(named: "browser-overview-uv-cache-maintenance")
         var snapshot = try ResponseDecoder.decode(BrowserOverviewSnapshot.self,
-            expectedPayloadType: "browser_overview", requestID: 505, expectedSchemaVersion: 5, line: data)
+            expectedPayloadType: "browser_overview", requestID: 505, line: data)
         #expect(snapshot.toolCacheMaintenance == nil)
         var mapped = BrowserOverviewMapper.make(connection: .live, snapshot: snapshot)
         #expect(mapped.uvCacheMaintenance?.nativeRemovedEntryCount == 2)
@@ -60,14 +60,12 @@ struct ToolCacheTests {
     @Test("node compile cache fixture maps its own accounting copy and preserves uv")
     func nodeFixtureAndCompatibility() async throws {
         let data = try FixtureStore.data(
-            named: "browser-overview-node-compile-cache-maintenance",
-            schemaVersion: 5
+            named: "browser-overview-node-compile-cache-maintenance"
         )
         let snapshot = try ResponseDecoder.decode(
             BrowserOverviewSnapshot.self,
             expectedPayloadType: "browser_overview",
             requestID: 506,
-            expectedSchemaVersion: 5,
             line: data
         )
         #expect(snapshot.nodeCompileCacheMaintenance?.kind == .nodeCompileCache)

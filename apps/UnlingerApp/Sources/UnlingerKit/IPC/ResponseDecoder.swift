@@ -41,14 +41,12 @@ enum ResponseDecoder {
         _ type: T.Type,
         expectedPayloadType: String,
         requestID: UInt64,
-        expectedSchemaVersion: Int,
         line: Data
     ) throws(ClientError) -> T {
         try decodeWithRaw(
             type,
             expectedPayloadType: expectedPayloadType,
             requestID: requestID,
-            expectedSchemaVersion: expectedSchemaVersion,
             line: line
         ).value
     }
@@ -57,7 +55,6 @@ enum ResponseDecoder {
         _ type: T.Type,
         expectedPayloadType: String,
         requestID: UInt64,
-        expectedSchemaVersion: Int,
         line: Data
     ) throws(ClientError) -> Decoded<T> {
         let header: Header
@@ -76,7 +73,7 @@ enum ResponseDecoder {
         {
             throw .incompatibleDaemon(message)
         }
-        guard header.schemaVersion == expectedSchemaVersion else {
+        guard header.schemaVersion == 5 else {
             throw .protocolError("unexpected schema_version")
         }
         guard header.requestID == requestID else {

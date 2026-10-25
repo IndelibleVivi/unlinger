@@ -113,14 +113,9 @@
   ],
   "protocol": {
     "source_app_schema": 5,
-    "transitional_app_schema": 4,
-    "legacy_app_schema": 3,
     "source_operator_schema": 1,
-    "historical_app_schema": 2,
     "server_accepts": [
       1,
-      3,
-      4,
       5
     ]
   },

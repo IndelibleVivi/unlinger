@@ -2,21 +2,19 @@ import Foundation
 import Testing
 @testable import UnlingerKit
 
-/// Canonical v5 product, v4 transition, and v3 compatibility fixtures must decode
+/// Canonical current frontend fixtures must decode
 /// through the same explicit envelope validation the socket client uses.
 @Suite("Canonical fixture decoding")
 struct FixtureDecodingTests {
     @Test("schema-v5 impact, residue, cleanup result, and observation spans decode exactly")
     func v5ImpactAndResidueFixtures() throws {
         let emptyData = try FixtureStore.data(
-            named: "browser-overview-impact-empty",
-            schemaVersion: 5
+            named: "browser-overview-impact-empty"
         )
         let empty = try ResponseDecoder.decode(
             BrowserOverviewSnapshot.self,
             expectedPayloadType: "browser_overview",
             requestID: try #require(Self.requestID(in: emptyData)),
-            expectedSchemaVersion: 5,
             line: emptyData
         )
         #expect(empty.impact?.historicalCompleteness == .complete)
@@ -25,14 +23,12 @@ struct FixtureDecodingTests {
         #expect(empty.storageResidue?.automaticCleanupEligible == false)
 
         let detectedData = try FixtureStore.data(
-            named: "browser-overview-impact-residue",
-            schemaVersion: 5
+            named: "browser-overview-impact-residue"
         )
         let detected = try ResponseDecoder.decode(
             BrowserOverviewSnapshot.self,
             expectedPayloadType: "browser_overview",
             requestID: try #require(Self.requestID(in: detectedData)),
-            expectedSchemaVersion: 5,
             line: detectedData
         )
         #expect(detected.impact?.historicalCompleteness == .partialBackfill)
@@ -52,53 +48,48 @@ struct FixtureDecodingTests {
         })
 
         let spanData = try FixtureStore.data(
-            named: "history-observation-span",
-            schemaVersion: 5
+            named: "history-observation-span"
         )
         let events = try ResponseDecoder.decode(
             [HistoryEvent].self,
             expectedPayloadType: "history",
             requestID: try #require(Self.requestID(in: spanData)),
-            expectedSchemaVersion: 5,
             line: spanData
         )
         #expect(events.first?.observationSpan?.observationCount == 60)
         #expect(BrowserHistoryMapper.timelineEntries(events: events).first?.eventCount == 60)
     }
 
-    @Test("schema-v4 browser overview fixtures decode as one atomic DTO")
+    @Test("schema-v5 browser overview fixtures decode as one atomic DTO")
     func browserOverviewFixtures() throws {
         for name in [
             "browser-overview-confirmed",
             "browser-overview-protected",
             "browser-overview-settled"
         ] {
-            let data = try FixtureStore.data(named: name, schemaVersion: 4)
+            let data = try FixtureStore.data(named: name)
             let requestID = try #require(Self.requestID(in: data))
             let overview = try ResponseDecoder.decode(
                 BrowserOverviewSnapshot.self,
                 expectedPayloadType: "browser_overview",
                 requestID: requestID,
-                expectedSchemaVersion: 4,
                 line: data
             )
             #expect(overview.supportCatalog.families.count == 3)
         }
 
         let protected = try FixtureStore.data(
-            named: "browser-overview-protected",
-            schemaVersion: 4
+            named: "browser-overview-protected"
         )
         let overview = try ResponseDecoder.decode(
             BrowserOverviewSnapshot.self,
             expectedPayloadType: "browser_overview",
             requestID: try #require(Self.requestID(in: protected)),
-            expectedSchemaVersion: 4,
             line: protected
         )
         #expect(overview.phase == .protected)
-        #expect(overview.impact == nil)
-        #expect(overview.storageResidue == nil)
+        #expect(overview.impact != nil)
+        #expect(overview.storageResidue?.status == .clear)
         #expect(overview.storageCleanupResult == nil)
         #expect(overview.sessions.first?.compatibility.decision == .protected)
         #expect(overview.coverageNotices.first?.reasonId == "protection.browser_version_unsupported")
@@ -126,7 +117,6 @@ struct FixtureDecodingTests {
                 PublicStatus.self,
                 expectedPayloadType: "status",
                 requestID: requestID,
-                expectedSchemaVersion: 3,
                 line: data
             )
             #expect(status.daemonVersion == "0.1.0")
@@ -142,7 +132,6 @@ struct FixtureDecodingTests {
                 ObservationRoster.self,
                 expectedPayloadType: "incidents",
                 requestID: requestID,
-                expectedSchemaVersion: 3,
                 line: data
             )
         }
@@ -151,7 +140,6 @@ struct FixtureDecodingTests {
             ObservationRoster.self,
             expectedPayloadType: "incidents",
             requestID: try #require(Self.requestID(in: neverData)),
-            expectedSchemaVersion: 3,
             line: neverData
         )
         #expect(never.freshness == .neverObserved)
@@ -166,10 +154,9 @@ struct FixtureDecodingTests {
             DiagnosticsBundle.self,
             expectedPayloadType: "diagnostics",
             requestID: try #require(Self.requestID(in: data)),
-            expectedSchemaVersion: 3,
             line: data
         )
-        #expect(diagnostics.documentSchemaVersion == 3)
+        #expect(diagnostics.documentSchemaVersion == 5)
         #expect(diagnostics.incident.incidentId == "redacted-incident-5")
     }
 
@@ -180,7 +167,6 @@ struct FixtureDecodingTests {
             MutationReceipt.self,
             expectedPayloadType: "mutation_committed",
             requestID: try #require(Self.requestID(in: committedData)),
-            expectedSchemaVersion: 3,
             line: committedData
         )
         #expect(committed.policyRevisionAfter == 2)
@@ -191,7 +177,6 @@ struct FixtureDecodingTests {
                 MutationStatus.self,
                 expectedPayloadType: "mutation_status",
                 requestID: try #require(Self.requestID(in: data)),
-                expectedSchemaVersion: 3,
                 line: data
             )
         }
@@ -206,7 +191,6 @@ struct FixtureDecodingTests {
                 [HistoryEvent].self,
                 expectedPayloadType: "history",
                 requestID: requestID,
-                expectedSchemaVersion: 3,
                 line: data
             )
             #expect(!events.isEmpty)
@@ -222,7 +206,6 @@ struct FixtureDecodingTests {
                 IncidentDetail.self,
                 expectedPayloadType: "incident",
                 requestID: requestID,
-                expectedSchemaVersion: 3,
                 line: data
             )
             #expect(!detail.events.isEmpty)
@@ -237,7 +220,6 @@ struct FixtureDecodingTests {
             ObservationRoster.self,
             expectedPayloadType: "incidents",
             requestID: requestID,
-            expectedSchemaVersion: 3,
             line: data
         )
         #expect(roster.items.count == 2)
@@ -253,7 +235,6 @@ struct FixtureDecodingTests {
             [HistoryEvent].self,
             expectedPayloadType: "history",
             requestID: requestID,
-            expectedSchemaVersion: 3,
             line: data
         )
         let event = try #require(events.first)
@@ -270,13 +251,12 @@ struct FixtureDecodingTests {
 
     @Test("envelope mutual exclusion is enforced")
     func mutualExclusion() throws {
-        let both = Data(#"{"schema_version":3,"request_id":1,"ok":true,"payload":{"type":"status","data":{}},"error":{"code":"x","message":"y"}}"#.utf8)
+        let both = Data(#"{"schema_version":5,"request_id":1,"ok":true,"payload":{"type":"status","data":{}},"error":{"code":"x","message":"y"}}"#.utf8)
         #expect(throws: ClientError.self) {
             try ResponseDecoder.decode(
                 PublicStatus.self,
                 expectedPayloadType: "status",
                 requestID: 1,
-                expectedSchemaVersion: 3,
                 line: both
             )
         }
@@ -290,7 +270,6 @@ struct FixtureDecodingTests {
                 PublicStatus.self,
                 expectedPayloadType: "status",
                 requestID: 999,
-                expectedSchemaVersion: 3,
                 line: data
             )
         }
@@ -298,15 +277,21 @@ struct FixtureDecodingTests {
 
     @Test("wrong schema_version is rejected")
     func schemaVersionRejected() throws {
-        let v1 = Data(#"{"schema_version":1,"request_id":1,"ok":true,"payload":{"type":"status","data":{}}}"#.utf8)
-        #expect(throws: ClientError.self) {
-            try ResponseDecoder.decode(
-                PublicStatus.self,
-                expectedPayloadType: "status",
-                requestID: 1,
-                expectedSchemaVersion: 3,
-                line: v1
-            )
+        for version in [1, 2, 3, 4, 6] {
+            let data = try JSONSerialization.data(withJSONObject: [
+                "schema_version": version,
+                "request_id": 1,
+                "ok": true,
+                "payload": ["type": "status", "data": [:]]
+            ])
+            #expect(throws: ClientError.self) {
+                try ResponseDecoder.decode(
+                    PublicStatus.self,
+                    expectedPayloadType: "status",
+                    requestID: 1,
+                    line: data
+                )
+            }
         }
     }
 
@@ -331,31 +316,29 @@ struct FixtureDecodingTests {
     @Test("envelope integers are exact, not coerced")
     func exactIntegerEnvelope() throws {
         for invalid in [
-            #"{"schema_version":3.0,"request_id":1,"ok":true,"payload":{"type":"status","data":{}}}"#,
-            #"{"schema_version":3,"request_id":1.5,"ok":true,"payload":{"type":"status","data":{}}}"#,
-            #"{"schema_version":"3","request_id":1,"ok":true,"payload":{"type":"status","data":{}}}"#
+            #"{"schema_version":5.0,"request_id":1,"ok":true,"payload":{"type":"status","data":{}}}"#,
+            #"{"schema_version":5,"request_id":1.5,"ok":true,"payload":{"type":"status","data":{}}}"#,
+            #"{"schema_version":"5","request_id":1,"ok":true,"payload":{"type":"status","data":{}}}"#
         ] {
             #expect(throws: ClientError.self) {
                 try ResponseDecoder.decode(
                     PublicStatus.self,
                     expectedPayloadType: "status",
                     requestID: 1,
-                    expectedSchemaVersion: 3,
                     line: Data(invalid.utf8)
                 )
             }
         }
     }
 
-    @Test("missing required v3 DTO facts are rejected")
+    @Test("missing required v5 DTO facts are rejected")
     func requirednessIsStrict() throws {
-        let incomplete = Data(#"{"schema_version":3,"request_id":1,"ok":true,"payload":{"type":"incidents","data":{"freshness":"current","items":[{"incident_id":"i","observation":{"family":"x"}}]}}}"#.utf8)
+        let incomplete = Data(#"{"schema_version":5,"request_id":1,"ok":true,"payload":{"type":"incidents","data":{"freshness":"current","items":[{"incident_id":"i","observation":{"family":"x"}}]}}}"#.utf8)
         #expect(throws: ClientError.self) {
             try ResponseDecoder.decode(
                 ObservationRoster.self,
                 expectedPayloadType: "incidents",
                 requestID: 1,
-                expectedSchemaVersion: 3,
                 line: incomplete
             )
         }

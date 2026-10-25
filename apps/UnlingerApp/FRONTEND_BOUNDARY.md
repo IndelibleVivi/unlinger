@@ -3,18 +3,33 @@
 先读：
 
 1. [`Contract/README.md`](Contract/README.md)
-2. [`Contract/v5/`](Contract/v5/) current impact/residue/span fixtures, [`Contract/v4/`](Contract/v4/) transitional browser-product fixtures and [`Contract/v3/`](Contract/v3/) legacy-compatible shared-command fixtures
+2. [`Contract/v5/`](Contract/v5/) 唯一 current frontend contract/scenario fixtures
 3. 需要 transport/error 细节时读 [`docs/IPC.md`](../../docs/IPC.md)
 
-[`Contract/v2/`](Contract/v2/) 只保留历史审计证据。不要从它、transitional v3 data、CLI human output、schema-v1 `DaemonStatus` 或 service lifecycle code反推当前 browser UI。
+不要从历史协议、CLI human output、schema-v1 `DaemonStatus` 或 service lifecycle code
+反推当前 browser UI。v2/v3/v4 已退役，当前树不保留这些 fixture/resource 路径。
 
 ## Backend truth
 
-Unlinger 是 local-only macOS runtime-hygiene utility。Direct daemon默认report-only。Current source提供schema v5并保留v4/v3 compatibility，使用SQLite v14、Playwright `0.6.0`与其他`0.4.0` process-only packs；source/installed App只发送v5，并要求atomic `browser_overview`。安装中的accepted generation 47来自 `e8faf7a`，healthy `ReadyEnforce`，提供schema v5/v4/v3、operator v1与SQLite v14，当前无pending lease；matching App已安装并通过普通窗口Home/History/Settings、受保护session detail与diagnostic export验收。Frontend只投影backend truth，不拥有signal authorization、storage deletion、service installation/update/rollback、daemon mode switching或lifecycle recovery。
+Unlinger 是 local-only macOS runtime-hygiene utility，direct daemon 默认 report-only。
+Source 只服务 frontend v5/operator v1，直接创建或打开 SQLite v14；App 只发送 v5，
+要求 atomic `browser_overview`。旧 frontend/unknown schemas 在 dispatch 前收到 typed
+refusal。精确 installed generation、mode、health 与 field scope 由
+[`current-state`](../../docs/current-state.md) 维护，不能从旧验收记录继承。
+Frontend 不拥有 signal authorization、storage deletion、service installation/update/
+rollback、daemon mode switching 或 lifecycle recovery。
 
-Schemas v3/v4/v5都提供 status/history/explain/incidents/diagnostics、mutation status，以及pause/resume/named retry/exact protect/unprotect。V4与v5提供read-only `browser_overview`；v5在v4 shape上增加impact、storage residue和observation spans。V3请求overview会收到typed `invalid_request`，不会downgrade或拼装替代结果。所有actions使用backend capabilities，并由同一backend policy在commit前重新授权。UI缺失capability时fail closed，不从stage、score、reason string或session presence自行猜补。
+V5 提供 status/history/explain/incidents/diagnostics、mutation status、read-only browser
+overview，以及 pause/resume/named retry/exact protect/unprotect。所有 action 消费 backend
+capabilities，并在 commit 前由同一 backend policy 重新授权。缺失 capability 时 fail
+closed，不从 stage、score、reason string 或 session presence 自行猜补。
 
-Automatic process admission依然极窄：source与installed generation 47只允许exact Chrome for Testing `151.0.7922.34`或`152.0.7977.42`且所有 hard gates成立；controller-bearing sessions还必须满足相应task/optional owner lifetime contract。所有source/installed packs都关闭runtime-artifact admission；这不改变frontend schema，UI也不得从settlement、residue observation或历史DAP evidence推断当前会删artifact。Unknown/mixed/wrong versions、unproved controller ownership、headed/attached、standard/shared profile与不完整 identity保持 `PROTECTED`。UI不得添加 manual kill绕过它。
+Automatic process admission 只允许精确 CfT `151.0.7922.34` 或 `152.0.7977.42`，且所有
+hard gates 成立；controller-bearing sessions 还须满足 task/optional owner lifetime。
+Playwright pack `0.6.0`、其他 packs `0.4.0`；runtime-artifact admission 仍关闭。UI 不得从
+settlement、residue observation 或历史 DAP evidence 推断当前会删 artifact。Unknown/
+mixed/wrong versions、不明 controller ownership、headed/attached、standard/shared
+profile 与 incomplete identity 保持 protected；没有 manual kill 绕过入口。
 
 ## State mapping
 
@@ -56,10 +71,22 @@ History index使用redacted incident ID作为一条session row的稳定identity�
 
 Eligible attention只来自 typed durable cleanup/storage/daemon facts；App ordinary-mutation unresolved不产生系统 notification。Sustained unreachable只声称 App无法连接。No sound，foreground quiet，`userInfo`只含 route kind、redacted incident ID和 public event token。Fixture/preview/swift-run tests不接真实 notification center。
 
-Click routing复用 shared `AppRouter`，进入 exact incident或 global status。Direct AppKit `@main`在 `NSApplication.run()` 整个生命周期强持有唯一 `UnlingerAppDelegate`；closing the last ordinary window不得终止 menu client。该 delegate拥有 `NSStatusItem`/`NSPopover` 与一个可关闭、可再次打开的 ordinary `NSWindowController`；两者通过 `NSHostingController` 投影同一份 SwiftUI state/router。Popover route必须提供显式 Back，并可在不改写当前 route 的前提下打开 ordinary window；window只保留原生 Back。不得退回依赖 SwiftUI `App`/lazy `WindowGroup` 注册或 `MenuBarExtra` scene replication 的并行宿主。`SMAppService.mainApp` 只负责 menu client launch at login，不触碰 daemon。
+Notification routing 使用既有 `AppRouter`，进入 exact incident 或 global status。
+Direct AppKit `@main` 强持有唯一 `UnlingerAppDelegate`；closing the last ordinary window
+不终止 menu client。Popover 和 ordinary window 各有独立 router；menu-to-window 是
+一次性 copy，并清空 hidden popover route，两个 NavigationStack 不绑定同一路径。
+`AppWindowController` 复用 NSWindow，仅在展示时挂载 hosting controller，关闭时清空
+直接 host references。语言、暂停与 notification popup 使用 `StablePopUpButton`，不能
+在 polling graph 中恢复 SwiftUI popup adaptors。`SMAppService.mainApp` 只负责 menu
+client launch at login，不触碰 daemon。
 
 ## Live boundary
 
-Active generation-34 database属于安装服务并使用SQLite v10；它已accepted、healthy `ReadyEnforce`且没有pending lease。Generation 33通过[`../../docs/INSTALLED_DOGFOOD.md`](../../docs/INSTALLED_DOGFOOD.md)完成install、restart与真实rollback到generation 32；同exact artifact鲜重安装为generation 34，完成App/socket检查、accept并在owner authorization下明确arm。随后两个production-interval clone observations移除八份stable stale candidates并保留一份live referenced candidate。`docs/current-state.md`拥有exact runtime truth；Frontend不得把该bounded field result解释成新的UI authority或multi-day acceptance。
+安装服务的数据库、socket、App 与 process 不属于 source smoke。准确 installed truth 与
+历史 bounded field evidence 见 [`current-state`](../../docs/current-state.md)；frontend
+不得将这些结果解释成新的 UI authority 或 multi-day acceptance。
 
-使用 [`scripts/pre-v0.1-smoke.sh`](scripts/pre-v0.1-smoke.sh) 获得可重复的isolated report-only v5 App integration；它同时保留v4/v3 compatibility regression coverage。Owner-only CfT harness、historical process-only cleanup与installed dogfood proof仍不属于frontend source validation，即使generation 34拥有对应的bounded runtime evidence。
+[`scripts/pre-v0.1-smoke.sh`](scripts/pre-v0.1-smoke.sh) 只操作其唯一临时 report-only
+数据库/socket/lock，执行当前 v5 App integration 和 restart reconciliation。Retired-schema
+refusal 由 Rust IPC tests 验证。Owner-only CfT、installed rollback 和 enforcement field
+不属于 frontend source validation。

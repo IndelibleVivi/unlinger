@@ -152,7 +152,7 @@ public struct FixtureClient: UnlingerClient {
         )
         return DiagnosticsExport(
             bundle: DiagnosticsBundle(
-                documentSchemaVersion: 3,
+                documentSchemaVersion: 5,
                 generatedAtUnixMillis: UInt64(Date().timeIntervalSince1970 * 1000),
                 status: status,
                 incident: incident
@@ -213,7 +213,6 @@ public struct FixtureClient: UnlingerClient {
             T.self,
             expectedPayloadType: expectedType,
             requestID: requestID,
-            expectedSchemaVersion: 3,
             line: data
         )
     }

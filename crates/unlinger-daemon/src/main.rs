@@ -508,7 +508,15 @@ fn run_tool_cache_cycle(
     let adapter = UvCacheMaintenance::discover(stopping);
     let availability = match &adapter {
         Ok(_) => ToolCacheAvailability::Available,
-        Err(availability) => *availability,
+        Err(error) => {
+            if error.availability() == ToolCacheAvailability::Unavailable {
+                eprintln!(
+                    "unlingerd: uv cache discovery unavailable: {}",
+                    error.reason()
+                );
+            }
+            error.availability()
+        }
     };
     control
         .store()
@@ -585,7 +593,15 @@ fn run_node_compile_cache_cycle(
     let adapter = NodeCompileCacheMaintenance::discover(stopping);
     let availability = match &adapter {
         Ok(_) => ToolCacheAvailability::Available,
-        Err(value) => *value,
+        Err(error) => {
+            if error.availability() == ToolCacheAvailability::Unavailable {
+                eprintln!(
+                    "unlingerd: Node cache discovery unavailable: {}",
+                    error.reason()
+                );
+            }
+            error.availability()
+        }
     };
     control
         .store()

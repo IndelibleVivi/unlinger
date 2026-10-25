@@ -11,7 +11,7 @@ import subprocess
 import sys
 import tempfile
 
-SUPPORTED_FIXTURE_SCHEMAS = frozenset({3, 4, 5})
+CURRENT_FIXTURE_SCHEMA = 5
 APP_LOCAL_FIXTURE_SCHEMA = 1
 
 
@@ -44,11 +44,11 @@ def verify_fixtures(directory: Path) -> None:
             fixture_schema_version = document.get("fixture_schema_version")
             if (type(fixture_schema_version) is not int
                     or fixture_schema_version != APP_LOCAL_FIXTURE_SCHEMA
-                    or relative.parent != Path("v3")):
+                    or relative.parent != Path("v5")):
                 raise ValueError(f"fixture has an unsupported schema generation: {path.name}")
             continue
         schema_version = document["schema_version"]
-        if type(schema_version) is not int or schema_version not in SUPPORTED_FIXTURE_SCHEMAS:
+        if type(schema_version) is not int or schema_version != CURRENT_FIXTURE_SCHEMA:
             raise ValueError(f"fixture has an unsupported schema generation: {path.name}")
         if relative.parent != Path(f"v{schema_version}"):
             raise ValueError(f"fixture schema generation does not match its directory: {path.name}")

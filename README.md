@@ -50,6 +50,12 @@ cargo build --locked --release --workspace
 
 `preview.sh` runs one report-only reconciliation with its own temporary database, socket and lock, prints a redacted receipt, then removes only that temporary state. It does not install a LaunchAgent or send cleanup signals. Only protected sessions is an expected result when no verified abandoned session exists.
 
+This preview serves frontend schema v5 and operator v1, and creates/opens SQLite
+v14. Older nonempty database schemas are refused unchanged; automatic historical
+migration and v3/v4 frontend compatibility have been retired. Preserve existing
+state and follow the [installed runbook](docs/INSTALLED_DOGFOOD.md) for replacement
+and rollback.
+
 The [getting-started guide](docs/GETTING_STARTED.md) continues with an interactive isolated daemon, an executable command-lifetime example, optional service installation and uninstall. The [task guide](docs/TASKS.md) gives the exact browser configuration and integration contract.
 
 ## How cleanup earns permission

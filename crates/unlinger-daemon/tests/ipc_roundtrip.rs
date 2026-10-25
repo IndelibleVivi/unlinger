@@ -787,7 +787,7 @@ fn ordinary_schema_v1_status_and_not_found_envelopes_have_stable_json() {
 }
 
 #[test]
-fn frontend_schema_v3_status_is_public_and_has_explicit_capabilities() {
+fn frontend_schema_v5_status_is_public_and_has_explicit_capabilities() {
     let temp = TempState::new();
     let database = temp.directory.join("history.sqlite3");
     let socket = temp.directory.join("unlingerd.sock");
@@ -810,12 +810,12 @@ fn frontend_schema_v3_status_is_public_and_has_explicit_capabilities() {
 
     let response = raw_request(
         &socket,
-        r#"{"schema_version":3,"request_id":17,"command":{"command":"status"}}"#,
+        r#"{"schema_version":5,"request_id":17,"command":{"command":"status"}}"#,
     );
     assert_eq!(
         response,
         serde_json::json!({
-            "schema_version": 3,
+            "schema_version": 5,
             "request_id": 17,
             "ok": true,
             "payload": {
@@ -860,12 +860,12 @@ fn frontend_schema_v3_status_is_public_and_has_explicit_capabilities() {
         "database_schema_version",
         "last_error",
     ] {
-        assert!(!encoded.contains(forbidden), "v3 status leaked {forbidden}");
+        assert!(!encoded.contains(forbidden), "v5 status leaked {forbidden}");
     }
 }
 
 #[test]
-fn frontend_schema_v4_browser_overview_is_atomic_typed_and_public_safe() {
+fn frontend_schema_v5_browser_overview_is_atomic_typed_and_public_safe() {
     let temp = TempState::new();
     let database = temp.directory.join("history.sqlite3");
     let socket = temp.directory.join("unlingerd.sock");
@@ -876,7 +876,7 @@ fn frontend_schema_v4_browser_overview_is_atomic_typed_and_public_safe() {
     let control = ControlPlane::new(HistoryStore::open(&database).expect("open store"), status)
         .expect("restore control state");
     let cycle = control.begin_observation_cycle(1_000).expect("begin cycle");
-    let mut report = confirmed_report("inc-v4", "tracking-private");
+    let mut report = confirmed_report("inc-v5", "tracking-private");
     report.signature_pack = "playwright".to_owned();
     report.browser_compatibility = BrowserCompatibility {
         product: BrowserProduct::ChromeForTesting,
@@ -898,16 +898,17 @@ fn frontend_schema_v4_browser_overview_is_atomic_typed_and_public_safe() {
 
     let response = raw_request(
         &socket,
-        r#"{"schema_version":4,"request_id":71,"command":{"command":"browser_overview"}}"#,
+        r#"{"schema_version":5,"request_id":71,"command":{"command":"browser_overview"}}"#,
     );
-    assert_eq!(response["schema_version"], 4);
+    assert_eq!(response["schema_version"], 5);
     assert_eq!(response["ok"], true);
     let overview = &response["payload"]["data"];
     assert_eq!(response["payload"]["type"], "browser_overview");
     assert_eq!(overview["freshness"], "current");
     assert_eq!(overview["phase"], "confirmed");
     assert_eq!(overview["effective_mode"], "report_only");
-    assert!(overview.get("impact").is_none());
+    assert_eq!(overview["impact"]["terminal_cleanup_count"], 0);
+    assert_eq!(overview["impact"]["proved_reclaim_count"], 0);
     assert!(overview.get("storage_residue").is_none());
     assert_eq!(overview["sessions"][0]["family"], "playwright");
     assert_eq!(
@@ -938,7 +939,7 @@ fn frontend_schema_v4_browser_overview_is_atomic_typed_and_public_safe() {
 }
 
 #[test]
-fn frontend_schema_v5_projects_impact_residue_and_observation_spans_without_changing_v4() {
+fn frontend_schema_v5_projects_impact_residue_and_observation_spans_current_facts() {
     let temp = TempState::new();
     let database = temp.directory.join("history.sqlite3");
     let socket = temp.directory.join("unlingerd.sock");
@@ -1109,27 +1110,6 @@ fn frontend_schema_v5_projects_impact_residue_and_observation_spans_without_chan
         );
     }
 
-    let v4 = raw_request(
-        &socket,
-        r#"{"schema_version":4,"request_id":74,"command":{"command":"browser_overview"}}"#,
-    );
-    assert!(v4["payload"]["data"].get("impact").is_none());
-    assert!(v4["payload"]["data"].get("storage_residue").is_none());
-    assert!(
-        v4["payload"]["data"]
-            .get("storage_cleanup_result")
-            .is_none()
-    );
-
-    // A legacy v3 client cannot request the v5-only browser overview at all,
-    // so it can never acquire the new result data.
-    let v3_overview = raw_request(
-        &socket,
-        r#"{"schema_version":3,"request_id":77,"command":{"command":"browser_overview"}}"#,
-    );
-    assert_eq!(v3_overview["ok"], false);
-    assert!(!v3_overview.to_string().contains("storage_cleanup_result"));
-
     let history_v5 = raw_request(
         &socket,
         r#"{"schema_version":5,"request_id":75,"command":{"command":"history","limit":20}}"#,
@@ -1145,38 +1125,36 @@ fn frontend_schema_v5_projects_impact_residue_and_observation_spans_without_chan
         observation_v5["observation_span"]["first_observed_at_unix_millis"],
         1_000
     );
-
-    let history_v4 = raw_request(
-        &socket,
-        r#"{"schema_version":4,"request_id":76,"command":{"command":"history","limit":20}}"#,
-    );
-    assert!(
-        history_v4["payload"]["data"]
-            .as_array()
-            .expect("v4 history")
-            .iter()
-            .all(|event| event.get("observation_span").is_none())
-    );
 }
 
 #[test]
-fn v3_rejects_the_browser_overview_without_downgrading() {
+fn retired_frontend_schemas_are_rejected_before_command_dispatch() {
     let temp = TempState::new();
-    let database = temp.directory.join("history.sqlite3");
     let socket = temp.directory.join("unlingerd.sock");
     let control = ControlPlane::new(
-        HistoryStore::open(&database).expect("open store"),
+        HistoryStore::open(temp.directory.join("history.sqlite3")).unwrap(),
         DaemonStatus::new(DaemonMode::ReportOnly, 42),
     )
-    .expect("restore control state");
-    let _server = IpcServer::start(&socket, control).expect("start IPC server");
-    let response = raw_request(
-        &socket,
-        r#"{"schema_version":3,"request_id":72,"command":{"command":"browser_overview"}}"#,
+    .unwrap();
+    let _server = IpcServer::start(&socket, control.clone()).unwrap();
+    for version in [2, 3, 4, 6] {
+        for command in ["status", "browser_overview", "pause"] {
+            let request = serde_json::json!({"schema_version":version,"request_id":73,"command":{"command":command,"private":"private-value-must-not-echo"}}).to_string();
+            let response = raw_request(&socket, &request);
+            assert_eq!(response["schema_version"], 1);
+            assert_eq!(response["request_id"], 73);
+            assert_eq!(response["ok"], false);
+            assert_eq!(response["error"]["code"], "unsupported_schema");
+            assert!(!response.to_string().contains("private-value-must-not-echo"));
+        }
+    }
+    assert!(
+        control
+            .status_at(100)
+            .unwrap()
+            .paused_until_unix_millis
+            .is_none()
     );
-    assert_eq!(response["schema_version"], 3);
-    assert_eq!(response["ok"], false);
-    assert_eq!(response["error"]["code"], "invalid_request");
 }
 
 #[test]
@@ -1267,7 +1245,7 @@ fn schema_v5_browser_overview_joins_the_exact_recent_settlement_by_event_identit
 }
 
 #[test]
-fn frontend_schema_v3_lifecycle_capabilities_match_authoritative_policy() {
+fn frontend_schema_v5_lifecycle_capabilities_match_authoritative_policy() {
     for (startup_state, readiness, reason_id) in [
         (StartupState::Draining, "draining", "action.daemon_draining"),
         (StartupState::Failed, "failed", "action.daemon_failed"),
@@ -1285,7 +1263,7 @@ fn frontend_schema_v3_lifecycle_capabilities_match_authoritative_policy() {
 
         let response = raw_request(
             &socket,
-            r#"{"schema_version":3,"request_id":18,"command":{"command":"status"}}"#,
+            r#"{"schema_version":5,"request_id":18,"command":{"command":"status"}}"#,
         );
         assert_eq!(
             response.pointer("/payload/data/readiness"),
@@ -1307,7 +1285,7 @@ fn frontend_schema_v3_lifecycle_capabilities_match_authoritative_policy() {
 }
 
 #[test]
-fn frontend_schema_v3_history_strips_process_and_storage_identities() {
+fn frontend_schema_v5_history_strips_process_and_storage_identities() {
     let temp = TempState::new();
     let database = temp.directory.join("history.sqlite3");
     let socket = temp.directory.join("unlingerd.sock");
@@ -1326,9 +1304,9 @@ fn frontend_schema_v3_history_strips_process_and_storage_identities() {
 
     let response = raw_request(
         &socket,
-        r#"{"schema_version":3,"request_id":18,"command":{"command":"history","limit":20}}"#,
+        r#"{"schema_version":5,"request_id":18,"command":{"command":"history","limit":20}}"#,
     );
-    assert_eq!(response["schema_version"], 3);
+    assert_eq!(response["schema_version"], 5);
     assert_eq!(response["ok"], true);
     assert_eq!(response["payload"]["type"], "history");
     let encoded = response.to_string();
@@ -1349,13 +1327,13 @@ fn frontend_schema_v3_history_strips_process_and_storage_identities() {
     ] {
         assert!(
             !encoded.contains(forbidden),
-            "v3 history leaked {forbidden}"
+            "v5 history leaked {forbidden}"
         );
     }
 }
 
 #[test]
-fn frontend_schema_v3_observation_roster_is_public_redacted_and_fresh() {
+fn frontend_schema_v5_observation_roster_is_public_redacted_and_fresh() {
     let temp = TempState::new();
     let database = temp.directory.join("history.sqlite3");
     let socket = temp.directory.join("unlingerd.sock");
@@ -1381,12 +1359,12 @@ fn frontend_schema_v3_observation_roster_is_public_redacted_and_fresh() {
 
     let response = raw_request(
         &socket,
-        r#"{"schema_version":3,"request_id":31,"command":{"command":"incidents"}}"#,
+        r#"{"schema_version":5,"request_id":31,"command":{"command":"incidents"}}"#,
     );
     assert_eq!(
         response,
         serde_json::json!({
-            "schema_version": 3,
+            "schema_version": 5,
             "request_id": 31,
             "ok": true,
             "payload": {
@@ -1406,6 +1384,11 @@ fn frontend_schema_v3_observation_roster_is_public_redacted_and_fresh() {
                         "resident_memory_bytes": 4096,
                         "roles": [{"role": "controller", "count": 1}],
                         "evidence": [],
+                        "browser_compatibility": {
+                            "decision": "unknown",
+                            "product": "unknown",
+                            "reason_id": "compatibility.browser_facts_unavailable"
+                        },
                         "gates": {
                             "same_user": true,
                             "strong_automation_provenance": true,
@@ -1431,12 +1414,12 @@ fn frontend_schema_v3_observation_roster_is_public_redacted_and_fresh() {
         "targets",
         "pid",
     ] {
-        assert!(!encoded.contains(forbidden), "v3 roster leaked {forbidden}");
+        assert!(!encoded.contains(forbidden), "v5 roster leaked {forbidden}");
     }
 }
 
 #[test]
-fn frontend_schema_v3_observation_roster_is_bounded() {
+fn frontend_schema_v5_observation_roster_is_bounded() {
     let temp = TempState::new();
     let database = temp.directory.join("history.sqlite3");
     let socket = temp.directory.join("unlingerd.sock");
@@ -1457,7 +1440,7 @@ fn frontend_schema_v3_observation_roster_is_bounded() {
 
     let response = raw_request(
         &socket,
-        r#"{"schema_version":3,"request_id":32,"command":{"command":"incidents"}}"#,
+        r#"{"schema_version":5,"request_id":32,"command":{"command":"incidents"}}"#,
     );
     let data = response["payload"]["data"]["items"]
         .as_array()
@@ -1466,7 +1449,7 @@ fn frontend_schema_v3_observation_roster_is_bounded() {
 }
 
 #[test]
-fn frontend_schema_v3_roster_never_observed_has_no_fake_token_or_timestamp() {
+fn frontend_schema_v5_roster_never_observed_has_no_fake_token_or_timestamp() {
     let temp = TempState::new();
     let database = temp.directory.join("history.sqlite3");
     let socket = temp.directory.join("unlingerd.sock");
@@ -1479,7 +1462,7 @@ fn frontend_schema_v3_roster_never_observed_has_no_fake_token_or_timestamp() {
 
     let response = raw_request(
         &socket,
-        r#"{"schema_version":3,"request_id":33,"command":{"command":"incidents"}}"#,
+        r#"{"schema_version":5,"request_id":33,"command":{"command":"incidents"}}"#,
     );
     let data = &response["payload"]["data"];
     assert_eq!(data["freshness"], "never_observed");
@@ -1489,7 +1472,7 @@ fn frontend_schema_v3_roster_never_observed_has_no_fake_token_or_timestamp() {
 }
 
 #[test]
-fn frontend_schema_v3_cannot_invoke_service_lifecycle_commands() {
+fn frontend_schema_v5_cannot_invoke_service_lifecycle_commands() {
     let temp = TempState::new();
     let database = temp.directory.join("history.sqlite3");
     let socket = temp.directory.join("unlingerd.sock");
@@ -1502,9 +1485,9 @@ fn frontend_schema_v3_cannot_invoke_service_lifecycle_commands() {
 
     let response = raw_request(
         &socket,
-        r#"{"schema_version":3,"request_id":19,"command":{"command":"arm","activation_generation":9,"instance_id":"private"}}"#,
+        r#"{"schema_version":5,"request_id":19,"command":{"command":"arm","activation_generation":9,"instance_id":"private"}}"#,
     );
-    assert_eq!(response["schema_version"], 3);
+    assert_eq!(response["schema_version"], 5);
     assert_eq!(response["request_id"], 19);
     assert_eq!(response["ok"], false);
     assert_eq!(response["error"]["code"], "invalid_json");
@@ -1534,7 +1517,7 @@ fn superseded_frontend_schema_v2_is_rejected_before_dispatch() {
 }
 
 #[test]
-fn frontend_schema_v3_errors_do_not_echo_private_request_values() {
+fn frontend_schema_v5_errors_do_not_echo_private_request_values() {
     let temp = TempState::new();
     let database = temp.directory.join("history.sqlite3");
     let socket = temp.directory.join("unlingerd.sock");
@@ -1550,7 +1533,7 @@ fn frontend_schema_v3_errors_do_not_echo_private_request_values() {
     let _server = IpcServer::start(&socket, control).expect("start IPC server");
     let private_value = "missing-private-correlation";
     let request = serde_json::json!({
-        "schema_version": 3,
+        "schema_version": 5,
         "request_id": 20,
         "command": {
             "command": "retry_failed_cleanup",
@@ -1564,7 +1547,7 @@ fn frontend_schema_v3_errors_do_not_echo_private_request_values() {
     .to_string();
 
     let response = raw_request(&socket, &request);
-    assert_eq!(response["schema_version"], 3);
+    assert_eq!(response["schema_version"], 5);
     assert_eq!(response["request_id"], 20);
     assert_eq!(response["ok"], true);
     assert_eq!(response["payload"]["type"], "mutation_committed");
@@ -1580,7 +1563,7 @@ fn frontend_schema_v3_errors_do_not_echo_private_request_values() {
 }
 
 #[test]
-fn frontend_schema_v3_receipt_replay_precedes_failed_lifecycle_policy() {
+fn frontend_schema_v5_receipt_replay_precedes_failed_lifecycle_policy() {
     let temp = TempState::new();
     let database = temp.directory.join("history.sqlite3");
     let socket = temp.directory.join("unlingerd.sock");
@@ -1602,7 +1585,7 @@ fn frontend_schema_v3_receipt_replay_precedes_failed_lifecycle_policy() {
     let first = raw_request(
         &socket,
         &serde_json::json!({
-            "schema_version": 3,
+            "schema_version": 5,
             "request_id": 40,
             "command": {
                 "command": "pause",
@@ -1622,7 +1605,7 @@ fn frontend_schema_v3_receipt_replay_precedes_failed_lifecycle_policy() {
     let replay = raw_request(
         &socket,
         &serde_json::json!({
-            "schema_version": 3,
+            "schema_version": 5,
             "request_id": 41,
             "command": {
                 "command": "pause",
@@ -1642,7 +1625,7 @@ fn frontend_schema_v3_receipt_replay_precedes_failed_lifecycle_policy() {
     let rejected = raw_request(
         &socket,
         &serde_json::json!({
-            "schema_version": 3,
+            "schema_version": 5,
             "request_id": 42,
             "command": {
                 "command": "resume",
@@ -1667,7 +1650,7 @@ fn frontend_schema_v3_receipt_replay_precedes_failed_lifecycle_policy() {
     let status_response = raw_request(
         &socket,
         &serde_json::json!({
-            "schema_version": 3,
+            "schema_version": 5,
             "request_id": 43,
             "command": {
                 "command": "mutation_status",

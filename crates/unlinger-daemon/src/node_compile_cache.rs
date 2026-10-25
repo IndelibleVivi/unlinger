@@ -4,7 +4,10 @@
 //! admitted. Node atomically publishes final files; temporary writers, unknown
 //! contents and custom roots are protected. No recursive deletion occurs.
 
-use crate::tool_cache::{ProducerBinding, read_producer_output};
+use crate::tool_cache::{
+    CacheDiscoveryError, PRODUCER_QUERY_BUDGET, ProducerBinding, ProducerQuery,
+    read_producer_output,
+};
 use crate::{ControlPlane, PreparedToolCacheAttempt};
 use serde::Deserialize;
 use std::ffi::{CStr, CString};
@@ -73,11 +76,13 @@ impl Identity {
     }
 }
 
+#[derive(Debug)]
 struct Entry {
     name: CString,
     identity: Identity,
 }
 
+#[derive(Debug)]
 pub struct NodeCompileCacheMaintenance {
     producer: PathBuf,
     binding: ProducerBinding,
@@ -110,10 +115,20 @@ impl NodeCompileCacheResult {
 }
 
 impl NodeCompileCacheMaintenance {
-    pub fn discover(cancelled: impl Fn() -> bool) -> Result<Self, ToolCacheAvailability> {
+    pub fn discover(cancelled: impl Fn() -> bool) -> Result<Self, CacheDiscoveryError> {
         let (producer, binding, info) = discover_producer(&cancelled)?;
-        let bucket = info.bucket().ok_or(ToolCacheAvailability::Unsupported)?;
-        let temp = default_temp_root().map_err(|_| ToolCacheAvailability::Unavailable)?;
+        let bucket = info.bucket().ok_or_else(|| {
+            CacheDiscoveryError::new(
+                ToolCacheAvailability::Unsupported,
+                "Node version, architecture, cache format, or owner is unsupported",
+            )
+        })?;
+        let temp = default_temp_root().map_err(|_| {
+            CacheDiscoveryError::new(
+                ToolCacheAvailability::Unavailable,
+                "Node default temporary root could not be proved",
+            )
+        })?;
         Self::open_at(&temp, producer, binding, bucket, &cancelled)
     }
 
@@ -123,41 +138,86 @@ impl NodeCompileCacheMaintenance {
         binding: ProducerBinding,
         bucket_name: CString,
         cancelled: &impl Fn() -> bool,
-    ) -> Result<Self, ToolCacheAvailability> {
+    ) -> Result<Self, CacheDiscoveryError> {
         let deadline = Instant::now() + BUDGET;
         let temp = OpenOptions::new()
             .read(true)
             .custom_flags(libc::O_DIRECTORY | no_follow_any() | libc::O_CLOEXEC)
             .open(temp_path)
-            .map_err(|_| ToolCacheAvailability::Unavailable)?;
-        let temp_meta = temp
-            .metadata()
-            .map_err(|_| ToolCacheAvailability::Unavailable)?;
+            .map_err(|_| {
+                CacheDiscoveryError::new(
+                    ToolCacheAvailability::Unavailable,
+                    "Node default temporary root could not be opened",
+                )
+            })?;
+        let temp_meta = temp.metadata().map_err(|_| {
+            CacheDiscoveryError::new(
+                ToolCacheAvailability::Unavailable,
+                "Node default temporary root metadata could not be read",
+            )
+        })?;
         if !safe_directory(&temp_meta) {
-            return Err(ToolCacheAvailability::Unavailable);
+            return Err(CacheDiscoveryError::new(
+                ToolCacheAvailability::Unavailable,
+                "Node default temporary root has unsafe metadata",
+            ));
         }
-        let root = open_at(&temp, ROOT_NAME, true).map_err(availability_for_open)?;
-        let root_meta = root
-            .metadata()
-            .map_err(|_| ToolCacheAvailability::Unavailable)?;
+        let root = open_at(&temp, ROOT_NAME, true).map_err(|error| {
+            if error.kind() == io::ErrorKind::NotFound {
+                CacheDiscoveryError::new(
+                    ToolCacheAvailability::Absent,
+                    "Node compile-cache root is absent",
+                )
+            } else {
+                CacheDiscoveryError::new(
+                    ToolCacheAvailability::Unavailable,
+                    "Node compile-cache root could not be opened",
+                )
+            }
+        })?;
+        let root_meta = root.metadata().map_err(|_| {
+            CacheDiscoveryError::new(
+                ToolCacheAvailability::Unavailable,
+                "Node compile-cache root metadata could not be read",
+            )
+        })?;
         if !safe_directory(&root_meta) {
-            return Err(ToolCacheAvailability::Unavailable);
+            return Err(CacheDiscoveryError::new(
+                ToolCacheAvailability::Unavailable,
+                "Node compile-cache root has unsafe metadata",
+            ));
         }
         let bucket = open_at(&root, &bucket_name, true).map_err(|error| {
             if error.kind() == io::ErrorKind::NotFound {
-                ToolCacheAvailability::Unsupported
+                CacheDiscoveryError::new(
+                    ToolCacheAvailability::Absent,
+                    "Node cache bucket is absent",
+                )
             } else {
-                ToolCacheAvailability::Unavailable
+                CacheDiscoveryError::new(
+                    ToolCacheAvailability::Unavailable,
+                    "Node cache bucket could not be opened",
+                )
             }
         })?;
-        let bucket_meta = bucket
-            .metadata()
-            .map_err(|_| ToolCacheAvailability::Unavailable)?;
+        let bucket_meta = bucket.metadata().map_err(|_| {
+            CacheDiscoveryError::new(
+                ToolCacheAvailability::Unavailable,
+                "Node cache bucket metadata could not be read",
+            )
+        })?;
         if !safe_directory(&bucket_meta) {
-            return Err(ToolCacheAvailability::Unavailable);
+            return Err(CacheDiscoveryError::new(
+                ToolCacheAvailability::Unavailable,
+                "Node cache bucket has unsafe metadata",
+            ));
         }
-        let entries = scan_entries(&bucket, deadline, cancelled)
-            .map_err(|_| ToolCacheAvailability::Unavailable)?;
+        let entries = scan_entries(&bucket, deadline, cancelled).map_err(|_| {
+            CacheDiscoveryError::new(
+                ToolCacheAvailability::Unavailable,
+                "Node cache bucket could not be scanned completely",
+            )
+        })?;
         let value = Self {
             producer,
             binding,
@@ -172,7 +232,10 @@ impl NodeCompileCacheMaintenance {
             entries,
         };
         if !value.bindings_current() {
-            return Err(ToolCacheAvailability::Unavailable);
+            return Err(CacheDiscoveryError::new(
+                ToolCacheAvailability::Unavailable,
+                "Node producer or cache identity changed while opening",
+            ));
         }
         Ok(value)
     }
@@ -423,14 +486,6 @@ fn safe_file(meta: &Metadata) -> bool {
         && meta.nlink() == 1
         && meta.mode() & 0o022 == 0
 }
-fn availability_for_open(error: io::Error) -> ToolCacheAvailability {
-    if error.kind() == io::ErrorKind::NotFound {
-        ToolCacheAvailability::Absent
-    } else {
-        ToolCacheAvailability::Unavailable
-    }
-}
-
 fn open_at(parent: &File, name: &CStr, directory: bool) -> io::Result<File> {
     let fd = unsafe {
         libc::openat(
@@ -541,7 +596,11 @@ fn default_temp_root() -> io::Result<PathBuf> {
 
 fn discover_producer(
     cancelled: &impl Fn() -> bool,
-) -> Result<(PathBuf, ProducerBinding, ProducerInfo), ToolCacheAvailability> {
+) -> Result<(PathBuf, ProducerBinding, ProducerInfo), CacheDiscoveryError> {
+    discover_producer_at(&producer_paths(), cancelled, PRODUCER_QUERY_BUDGET)
+}
+
+fn producer_paths() -> Vec<PathBuf> {
     let mut paths = vec![
         PathBuf::from("/opt/homebrew/bin/node"),
         PathBuf::from("/usr/local/bin/node"),
@@ -549,35 +608,111 @@ fn discover_producer(
     if let Some(home) = std::env::var_os("HOME") {
         paths.push(PathBuf::from(home).join(".local/bin/node"));
     }
+    paths
+}
+
+fn discover_producer_at(
+    paths: &[PathBuf],
+    cancelled: &impl Fn() -> bool,
+    query_budget: Duration,
+) -> Result<(PathBuf, ProducerBinding, ProducerInfo), CacheDiscoveryError> {
     let mut present = false;
+    let mut unsupported = false;
+    let mut transient_reason = None;
     for path in paths {
         if cancelled() {
-            return Err(ToolCacheAvailability::Unavailable);
+            return Err(CacheDiscoveryError::new(
+                ToolCacheAvailability::Unavailable,
+                "Node producer discovery was cancelled",
+            ));
         }
-        let Ok(path) = std::fs::canonicalize(path) else {
-            continue;
-        };
-        present = true;
-        let Ok(binding) = ProducerBinding::capture(&path) else {
-            continue;
-        };
-        let Some(output) = read_producer_output(&path, &["--eval", NODE_INFO], cancelled) else {
-            continue;
-        };
-        let Ok(info) = serde_json::from_str::<ProducerInfo>(&output) else {
-            continue;
-        };
-        if info.bucket().is_some()
-            && ProducerBinding::capture(&path).ok().as_ref() == Some(&binding)
+        if let Err(error) = std::fs::symlink_metadata(path)
+            && error.kind() == io::ErrorKind::NotFound
         {
+            continue;
+        }
+        present = true;
+        let Ok(path) = std::fs::canonicalize(path) else {
+            transient_reason = Some("Node producer path could not be proved");
+            continue;
+        };
+        let Ok(binding) = ProducerBinding::capture(&path) else {
+            transient_reason = Some("Node producer metadata is not safely bound");
+            continue;
+        };
+        let output =
+            match read_producer_output(&path, &["--eval", NODE_INFO], cancelled, query_budget) {
+                ProducerQuery::Output(output) => output,
+                ProducerQuery::Cancelled => {
+                    return Err(CacheDiscoveryError::new(
+                        ToolCacheAvailability::Unavailable,
+                        "Node producer query was cancelled",
+                    ));
+                }
+                ProducerQuery::BindingChanged => {
+                    transient_reason = Some("Node producer binding changed");
+                    continue;
+                }
+                ProducerQuery::SpawnFailed => {
+                    transient_reason = Some("Node producer query could not start");
+                    continue;
+                }
+                ProducerQuery::Exited => {
+                    transient_reason = Some("Node producer query exited unsuccessfully");
+                    continue;
+                }
+                ProducerQuery::TimedOut => {
+                    transient_reason = Some("Node producer query timed out");
+                    continue;
+                }
+                ProducerQuery::OutputOverflow => {
+                    transient_reason = Some("Node producer query output exceeded its cap");
+                    continue;
+                }
+                ProducerQuery::OutputReadFailed => {
+                    transient_reason = Some("Node producer query output could not be read");
+                    continue;
+                }
+                ProducerQuery::MalformedBytes => {
+                    transient_reason = Some("Node producer query output was not UTF-8");
+                    continue;
+                }
+            };
+        let Ok(info) = serde_json::from_str::<ProducerInfo>(output.trim()) else {
+            transient_reason = Some("Node producer query output was malformed");
+            continue;
+        };
+        if ProducerBinding::capture(&path).ok().as_ref() != Some(&binding) {
+            transient_reason = Some("Node producer binding changed during query");
+            continue;
+        }
+        if info.bucket().is_some() {
             return Ok((path, binding, info));
         }
+        unsupported = true;
     }
-    Err(if present {
-        ToolCacheAvailability::Unsupported
+    if !present {
+        return Err(CacheDiscoveryError::new(
+            ToolCacheAvailability::Absent,
+            "Node producer is absent from fixed prefixes",
+        ));
+    }
+    if let Some(reason) = transient_reason {
+        Err(CacheDiscoveryError::new(
+            ToolCacheAvailability::Unavailable,
+            reason,
+        ))
+    } else if unsupported {
+        Err(CacheDiscoveryError::new(
+            ToolCacheAvailability::Unsupported,
+            "Node producer version, architecture, cache format, or owner is unsupported",
+        ))
     } else {
-        ToolCacheAvailability::Absent
-    })
+        Err(CacheDiscoveryError::new(
+            ToolCacheAvailability::Unavailable,
+            "Node producer could not be proved",
+        ))
+    }
 }
 
 #[cfg(test)]

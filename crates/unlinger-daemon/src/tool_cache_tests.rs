@@ -10,7 +10,7 @@
 
 use std::ffi::OsString;
 use std::fs;
-use std::io::Write as _;
+use std::io::{self, Write as _};
 use std::os::fd::{AsRawFd, IntoRawFd};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::process::CommandExt;
@@ -20,9 +20,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use super::{
-    HumanSummary, NativeCacheCapability, ProducerBinding, UvCacheMaintenance, execute_supervisor,
-    execute_uv_supervisor, fixed_cache_shape_safe, open_directory_no_follow, parse_human_bytes,
-    parse_human_summary, parse_supervisor_result, pipe_cloexec, preflight_cache_root,
+    HumanSummary, NativeCacheCapability, ProducerBinding, ProducerQuery, UvCacheMaintenance,
+    discover_producer, execute_supervisor, execute_uv_supervisor, fixed_cache_shape_safe,
+    open_directory_no_follow, parse_human_bytes, parse_human_summary, parse_supervisor_result,
+    pipe_cloexec, preflight_cache_root, read_producer_output,
 };
 use unlinger_protocol::{ToolCacheAvailability, ToolCacheOutcome};
 
@@ -31,10 +32,10 @@ use unlinger_protocol::{ToolCacheAvailability, ToolCacheOutcome};
 /// root without hard-coding a machine path in the source.
 fn native_uv() -> PathBuf {
     let binary = required_path("UNLINGER_UV_BINARY");
-    assert_eq!(
-        super::producer_version(&binary, &|| false).as_deref(),
-        Some("0.11.20")
-    );
+    assert!(matches!(
+        super::producer_version(&binary, &|| false, Duration::from_secs(10)),
+        super::ProducerQuery::Output(ref version) if version == "0.11.20"
+    ));
     binary
 }
 fn installed_uv() -> PathBuf {
@@ -165,6 +166,158 @@ fn fake_producer(path: &Path, marker: &str) {
     )
     .unwrap();
     fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
+}
+
+fn query_producer(cache: &Path, name: &str, script: &str) -> PathBuf {
+    fs::create_dir_all(cache).unwrap();
+    fs::set_permissions(cache, fs::Permissions::from_mode(0o700)).unwrap();
+    let producer = cache.join(name);
+    fs::write(&producer, format!("#!/bin/sh\n{script}\n")).unwrap();
+    fs::set_permissions(&producer, fs::Permissions::from_mode(0o700)).unwrap();
+    producer
+}
+
+fn assert_reaped(pid_path: &Path) {
+    let pid: u32 = fs::read_to_string(pid_path)
+        .expect("child writes its exact pid")
+        .trim()
+        .parse()
+        .unwrap();
+    for _ in 0..100 {
+        if unsafe { libc::kill(pid as libc::pid_t, 0) } != 0 {
+            assert_eq!(io::Error::last_os_error().raw_os_error(), Some(libc::ESRCH));
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    panic!("exact producer child was not reaped");
+}
+
+#[test]
+fn producer_discovery_distinguishes_supported_unsupported_absent_and_transient() {
+    let root = OwnedRoot::new("discovery");
+    let prefixes = root.root.join("prefixes");
+    let bin = prefixes.join("bin");
+    let producer = query_producer(&bin, "uv", "printf 'uv 0.11.20\\n'");
+    let binding = ProducerBinding::capture(&producer).unwrap();
+    assert_eq!(
+        discover_producer(
+            std::slice::from_ref(&bin),
+            &|| false,
+            Duration::from_secs(2)
+        ),
+        Ok((producer.clone(), binding))
+    );
+
+    fs::write(&producer, "#!/bin/sh\nprintf 'uv 0.11.19\\n'\n").unwrap();
+    let unsupported = discover_producer(&[bin], &|| false, Duration::from_secs(2)).unwrap_err();
+    assert_eq!(
+        unsupported.availability(),
+        ToolCacheAvailability::Unsupported
+    );
+    assert_eq!(unsupported.reason(), "producer version is unsupported");
+
+    let missing = root.root.join("missing");
+    let absent = discover_producer(
+        std::slice::from_ref(&missing),
+        &|| false,
+        Duration::from_secs(2),
+    )
+    .unwrap_err();
+    assert_eq!(absent.availability(), ToolCacheAvailability::Absent);
+
+    for script in ["exit 7", "printf malformed"] {
+        query_producer(&root.root, "uv", script);
+        let error = discover_producer(
+            std::slice::from_ref(&root.root),
+            &|| false,
+            Duration::from_secs(2),
+        )
+        .unwrap_err();
+        assert_eq!(error.availability(), ToolCacheAvailability::Unavailable);
+    }
+    fs::remove_file(root.root.join("uv")).unwrap();
+    std::os::unix::fs::symlink(&missing, root.root.join("uv")).unwrap();
+    let error = discover_producer(
+        std::slice::from_ref(&root.root),
+        &|| false,
+        Duration::from_secs(2),
+    )
+    .unwrap_err();
+    assert_eq!(error.availability(), ToolCacheAvailability::Unavailable);
+}
+
+#[test]
+fn producer_discovery_keeps_transient_query_failures_unavailable() {
+    let root = OwnedRoot::new("producer-transient");
+    // A deadline may expire before the script starts. Exact-child reaping is
+    // separately proved by cancellation and output after their startup marker.
+    query_producer(&root.root, "uv", "exec /bin/sleep 30");
+    let started = std::time::Instant::now();
+    let error = discover_producer(
+        std::slice::from_ref(&root.root),
+        &|| false,
+        Duration::from_secs(1),
+    )
+    .unwrap_err();
+    assert_eq!(error.availability(), ToolCacheAvailability::Unavailable);
+    assert_eq!(error.reason(), "producer query timed out");
+    assert!(started.elapsed() < Duration::from_secs(5));
+}
+
+#[test]
+fn producer_query_bounds_output_and_honours_cancellation() {
+    let root = OwnedRoot::new("producer-query");
+    let pid_path = root.root.join("child.pid");
+    let overflow = query_producer(
+        &root.root,
+        "overflow",
+        &format!(
+            "echo $$ > '{}'; sleep 0.1; while :; do printf x; done",
+            pid_path.display()
+        ),
+    );
+    assert!(matches!(
+        read_producer_output(&overflow, &[], &|| false, Duration::from_secs(2)),
+        ProducerQuery::OutputOverflow
+    ));
+    assert_reaped(&pid_path);
+
+    let cancelled_path = root.root.join("cancelled.pid");
+    let cancelled = query_producer(
+        &root.root,
+        "cancelled",
+        &format!(
+            "echo $$ > '{}'; printf ready; exec /bin/sleep 30",
+            cancelled_path.display()
+        ),
+    );
+    let cancel_after_child_started = {
+        let path = cancelled_path.clone();
+        move || path.exists()
+    };
+    assert!(matches!(
+        read_producer_output(
+            &cancelled,
+            &[],
+            &cancel_after_child_started,
+            Duration::from_secs(2)
+        ),
+        ProducerQuery::Cancelled
+    ));
+    assert_reaped(&cancelled_path);
+}
+
+#[test]
+fn producer_discovery_prefers_transient_failure_over_another_unsupported_candidate() {
+    let root = OwnedRoot::new("producer-mixed");
+    let first = root.root.join("first");
+    let second = root.root.join("second");
+    query_producer(&first, "uv", "printf 'uv 0.11.19\\n'");
+    query_producer(&second, "uv", "exec /bin/sleep 30");
+    let error = discover_producer(&[first, second], &|| false, Duration::from_secs(1)).unwrap_err();
+    assert_eq!(error.availability(), ToolCacheAvailability::Unavailable);
+    assert_eq!(error.reason(), "producer query timed out");
 }
 
 fn authorized_supervisor_args(producer: &Path, root: &Path) -> Vec<OsString> {

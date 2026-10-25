@@ -1,0 +1,15 @@
+{
+  "schema_version": 5,
+  "request_id": 30,
+  "ok": true,
+  "payload": {
+    "type": "mutation_status",
+    "data": {
+      "status": "not_found",
+      "context": {
+        "namespace_token": "0123456789abcdef0123456789abcdef",
+        "mutation_id": "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+      }
+    }
+  }
+}

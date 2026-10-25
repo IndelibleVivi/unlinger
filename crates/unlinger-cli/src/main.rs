@@ -1511,7 +1511,7 @@ mod tests {
     #[test]
     fn browser_status_human_projection_uses_the_atomic_snapshot_without_fake_totals() {
         let response: unlinger_protocol::ResponseEnvelope = serde_json::from_str(include_str!(
-            "../../../apps/UnlingerApp/Contract/v4/browser-overview-confirmed.json"
+            "../../../apps/UnlingerApp/Contract/v5/browser-overview-confirmed.json"
         ))
         .expect("decode canonical browser overview");
         let Some(unlinger_protocol::Payload::BrowserOverview(overview)) = response.payload else {

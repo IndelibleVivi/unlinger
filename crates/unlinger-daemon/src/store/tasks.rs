@@ -39,6 +39,8 @@ mod tests {
         ProcessStatus, SnapshotCoverage,
     };
 
+    static NEXT_TEMP_STORE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
     struct TempStore {
         store: HistoryStore,
         directory: PathBuf,
@@ -46,12 +48,13 @@ mod tests {
     impl TempStore {
         fn new() -> Self {
             let directory = std::env::temp_dir().join(format!(
-                "ul-task-{}-{}",
+                "ul-task-{}-{}-{}",
                 std::process::id(),
                 SystemTime::now()
                     .duration_since(UNIX_EPOCH)
                     .unwrap()
-                    .as_nanos()
+                    .as_nanos(),
+                NEXT_TEMP_STORE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
             ));
             std::fs::create_dir(&directory).unwrap();
             Self {
@@ -203,31 +206,6 @@ mod tests {
         assert!(store.task_status(ID).unwrap().is_none());
         assert!(store.task_controller_bindings().unwrap().is_empty());
     }
-
-    #[test]
-    fn v7_upgrade_preserves_existing_state_and_creates_an_empty_task_registry() {
-        let temp = TempStore::new();
-        temp.store.set_pause_until(Some(900_000)).unwrap();
-        let connection = temp.store.connection().unwrap();
-        connection
-            .execute_batch(
-                "DROP TABLE session_owner_controllers;
-                 DROP TABLE session_owner_leases;
-                 DROP TABLE task_controllers;
-                 DROP TABLE task_scopes;
-                 DROP TABLE storage_cleanup_attempts;
-                 DROP TABLE tool_cache_latest;
-                 DROP TABLE node_compile_cache_latest;
-                 DROP TABLE IF EXISTS retired_npm_cache_latest;
-                 PRAGMA user_version=7;",
-            )
-            .unwrap();
-        drop(connection);
-        let migrated = HistoryStore::open(temp.store.path()).unwrap();
-        assert_eq!(migrated.pause_until().unwrap(), Some(900_000));
-        assert!(migrated.task_scopes().unwrap().is_empty());
-        assert_eq!(HistoryStore::schema_version(), 14);
-    }
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -324,6 +302,7 @@ impl HistoryStore {
                 "task capability does not match".to_owned(),
             ));
         }
+        drop(connection);
         self.task_scopes()?
             .into_iter()
             .find(|scope| scope.task_id == task_id)
@@ -443,12 +422,14 @@ impl HistoryStore {
                 params![fingerprint, task_id, serde_json::to_string(&process.identity)?, incident_id])?;
         }
         tx.commit()?;
+        drop(connection);
         if snapshot.proves_complete_exact_identity_coverage() {
             let cutoff = snapshot
                 .observed_at_unix_millis
                 .saturating_sub(14 * 24 * 60 * 60 * 1000)
                 .saturating_mul(1000);
             let bindings = self.task_controller_bindings()?;
+            let connection = self.connection()?;
             for scope in &scopes {
                 if scope
                     .released_at_us

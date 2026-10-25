@@ -2865,7 +2865,7 @@ impl IpcClient {
         }
     }
 
-    /// Reads the schema-v4 browser product projection with the same bounded,
+    /// Reads the schema-v5 browser product projection with the same bounded,
     /// single-attempt transport contract as operator IPC.
     #[cfg(unix)]
     pub fn request_browser_overview(
@@ -3225,17 +3225,13 @@ fn serve_connection(stream: &mut UnixStream, control: &ControlPlane) -> Result<(
             };
             write_response(stream, &response)
         }
-        unlinger_protocol::LEGACY_SCHEMA_VERSION
-        | unlinger_protocol::PREVIOUS_SCHEMA_VERSION
-        | unlinger_protocol::SCHEMA_VERSION => {
-            let frontend_schema_version = header.schema_version;
+        unlinger_protocol::SCHEMA_VERSION => {
             let request = match serde_json::from_slice::<unlinger_protocol::RequestEnvelope>(
                 &request_bytes,
             ) {
                 Ok(request) => request,
                 Err(error) => {
-                    let response = unlinger_protocol::ResponseEnvelope::failure_for(
-                        frontend_schema_version,
+                    let response = unlinger_protocol::ResponseEnvelope::failure(
                         header.request_id,
                         unlinger_protocol::ErrorCode::InvalidJson,
                         bounded_message(&error.to_string()),
@@ -3244,36 +3240,18 @@ fn serve_connection(stream: &mut UnixStream, control: &ControlPlane) -> Result<(
                     return Ok(());
                 }
             };
-            if frontend_schema_version == unlinger_protocol::LEGACY_SCHEMA_VERSION
-                && matches!(request.command, unlinger_protocol::Command::BrowserOverview)
-            {
-                let response = unlinger_protocol::ResponseEnvelope::failure_for(
-                    frontend_schema_version,
-                    request.request_id,
-                    unlinger_protocol::ErrorCode::InvalidRequest,
-                    "browser_overview requires frontend schema 4 or 5",
-                );
-                write_public_response(stream, &response)?;
-                return Ok(());
-            }
-            let response = match crate::public_ipc::handle_at(
-                control,
-                request.command,
-                now_unix_millis()?,
-                frontend_schema_version,
-            ) {
-                Ok(payload) => unlinger_protocol::ResponseEnvelope::success_for(
-                    frontend_schema_version,
-                    request.request_id,
-                    payload,
-                ),
-                Err(error) => unlinger_protocol::ResponseEnvelope::failure_for(
-                    frontend_schema_version,
-                    request.request_id,
-                    public_error_code(&error),
-                    public_error_message(&error),
-                ),
-            };
+
+            let response =
+                match crate::public_ipc::handle_at(control, request.command, now_unix_millis()?) {
+                    Ok(payload) => {
+                        unlinger_protocol::ResponseEnvelope::success(request.request_id, payload)
+                    }
+                    Err(error) => unlinger_protocol::ResponseEnvelope::failure(
+                        request.request_id,
+                        public_error_code(&error),
+                        public_error_message(&error),
+                    ),
+                };
             write_public_response(stream, &response)
         }
         _ => write_response(
@@ -3286,9 +3264,7 @@ fn serve_connection(stream: &mut UnixStream, control: &ControlPlane) -> Result<(
                 error: Some(IpcErrorBody {
                     code: "unsupported_schema".to_owned(),
                     message: format!(
-                        "supported IPC schemas are {IPC_SCHEMA_VERSION}, {}, {}, and {}",
-                        unlinger_protocol::LEGACY_SCHEMA_VERSION,
-                        unlinger_protocol::PREVIOUS_SCHEMA_VERSION,
+                        "supported IPC schemas are {IPC_SCHEMA_VERSION} and {}",
                         unlinger_protocol::SCHEMA_VERSION
                     ),
                 }),

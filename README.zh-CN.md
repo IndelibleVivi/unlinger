@@ -2,7 +2,12 @@
 
 **任务结束，它启动的进程也该结束。**
 
-[English](README.md) · [开始使用](docs/GETTING_STARTED.md) · [工作原理](docs/ARCHITECTURE.md)
+[English](README.md) · 当前 preview 只服务 frontend schema v5 和 operator v1，直接创建或打开 SQLite v14。
+旧 migration ladder 与 v3/v4 frontend compatibility 已退役；非空旧版本数据库保持
+原样并拒绝打开。替换和 rollback 必须保留现有状态，遵循
+[安装 runbook](docs/INSTALLED_DOGFOOD.md)。
+
+[开始使用](docs/GETTING_STARTED.md) · [工作原理](docs/ARCHITECTURE.md)
 
 Unlinger 在 macOS 上维护自动化工作留下的资源：经过验证的浏览器遗留进程、精确 Chrome clone 残留，以及逐项准入的可重建工具缓存。原生菜单栏 App 展示当前会话、受到保护的原因，以及清理实际完成了什么。
 

@@ -247,6 +247,7 @@ impl HistoryStore {
                 "session-owner capability does not match".to_owned(),
             ));
         }
+        drop(connection);
         self.session_owner_scopes()?
             .into_iter()
             .find(|scope| scope.lease_id == lease_id)
@@ -450,6 +451,7 @@ impl HistoryStore {
             )?;
         }
         tx.commit()?;
+        drop(connection);
         self.prune_session_owner_leases(snapshot)?;
         Ok(())
     }

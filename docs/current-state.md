@@ -2,7 +2,68 @@
 
 **Updated:** 2026-10-25. **Programme:** 0.1. **Reader posture:** experimental developer source preview; not a signed/notarized App release or multi-day reliability claim.
 
-## Programme continuation: observation, execution and native coverage (2026-10-25)
+## Current continuation: serialized authority and one current contract (2026-10-25)
+
+The owner retired unused migration/client compatibility for the sole dogfood
+installation. The current source candidate creates new SQLite v14 directly and
+reopens valid v14 without rewriting existing data or historical impact provenance.
+Nonempty older/newer/unversioned stores are refused unchanged. Only frontend v5
+and operator v1 remain active; retired frontend v2/v3/v4 receive typed
+`unsupported_schema` before command dispatch. Existing scenarios now live under
+one v5 fixture/resource path. The historical migration ladder, legacy response
+projections and schema-selecting client constructors have been removed.
+
+The generation-49 production-timing managed field attempt exposed a distinct
+`SQLITE_BUSY`/5 failure at process-action PREPARED `BEGIN IMMEDIATE`. Its durable
+attempt ended FAILED with **zero process actions and zero artifact actions**;
+there is no successful cleanup or reclaim claim. The harness completed its
+transactional fail-safe recovery into a fresh healthy, quiescent report-only
+instance. Generation 49 remains accepted with no rollback lease and PATH still
+selects its exact CLI. **Current policy is temporarily report-only** while the
+repair is validated; its earlier enforce observations below are dated evidence.
+The existing enforce policy may be restored only after the authorized repair
+and healthy/quiescent verification. This failure is separate from both older
+SHMSIZE and kernel-confirmed ENOSPC events.
+
+The repair gives all clones of one `HistoryStore` a single active mutex-owned
+SQLite connection, with independent short transactions. Native observation,
+signals and grace/revival waits never hold that guard. Per-operation private
+component checks, original Unix database device/inode binding, WAL/FULL durability,
+external-writer timeout, PREPARED and terminal fail-close remain required. It
+neither retries mutations nor rehabilitates Failed. Focused checks cover clone
+serialization beyond the old timeout, bounded refusal of an external writer,
+and refusal of a replaced database path. Source, installation and a repeat of
+the failed production field lane are separate gates; the new repair is not yet
+installed at this checkpoint.
+
+A native owned-child regression also exercises an executable that is unlinked
+while still running. A missing executable pathname remains incomplete and
+cannot acquire signal authority from an arbitrary mapped region. The current
+ambient path gaps therefore remain a real coverage limit. Startup-volume space
+is still variable and constrained; no personal files were removed to obtain a
+passing run. The supplied CfT workload uses the exact admitted official artifact
+and its own profile; no ordinary Chrome or runtime-artifact admission is involved.
+
+### Current source verification
+
+The candidate passes fresh formatting, strict workspace clippy, **455 Rust tests**
+(16 explicit opt-in tests ignored), release workspace build, source-only doctor
+and nonmutating dry-run. The native doctor inspected 679 processes; 14 lacked
+executable path identity, with no missing-errno or mapped-vnode failures. Those
+path gaps remain incomplete rather than being promoted into cleanup authority.
+The App passes **131 Swift tests / 19 suites**, 11 bundle-verifier tests, two demo
+ownership tests and relocated release bundling with only v5 packaged fixtures.
+The isolated report-only service passes **7 socket checks + restart + 7**, retaining
+independent uv/Node observations and zero maintenance attempts. The unchanged
+120-second synthetic history Accessibility gate passes **464 traversals, zero
+read failures**, initial/maximum **77,424 KiB**, final **17,728 KiB**. Later fixture
+accounting/resource consolidation passed the Swift and bundle checks again;
+the history rendering code and AX fixture were unchanged. This is source and
+isolated evidence; exact-source remote CI and installed repeat remain pending
+at this checkpoint.
+
+### Previous installed checkpoint: observation/execution candidate
+
 
 Candidate [`5fc355b`](https://github.com/IndelibleVivi/unlinger/commit/5fc355b26ed470c28cbd2de6eb2f5b1de5137d1e)
 is pushed, source-complete, isolated report-only verified and now installed as
