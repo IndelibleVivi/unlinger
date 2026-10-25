@@ -6,8 +6,10 @@
 
 Implementation candidate [`3fdb694`](https://github.com/IndelibleVivi/unlinger/commit/3fdb6941188fa956593872780271943c0180d29e)
 is pushed. Its [exact-source macOS CI](https://github.com/IndelibleVivi/unlinger/actions/runs/40147673014)
-passed for that exact implementation commit. Local non-GUI verification is complete; the
-candidate is not claimed fully source-complete while the GUI gate below remains open.
+passed for that exact implementation commit. Required local source verification is now
+complete, including the unlocked-console fixture Accessibility/RSS gate below.
+This is a source-complete candidate; installation, activation and field acceptance
+remain separate.
 
 The product remains ambient maintenance of abandoned local automation, with
 integration-independent core cleanup and optional stronger lifetime evidence.
@@ -73,13 +75,17 @@ stages its exact daemon on the startup volume as required. Source doctor took
 144 ms for 548 processes, with 15 incomplete executable identities; dry-run
 reports two protected controller-only incidents and performs no cleanup.
 
-**GUI acceptance remains incomplete.** The default history Accessibility/RSS
-run lost its retained window reference with `AXError -25202` after 129 successful
-tree probes; its 33 RSS samples reached 79,440 KiB, but the failed run is not a
-memory-acceptance pass. A single fresh-fixture repeat was refused before launch
-because the console was locked. The relation between locking and the earlier
-invalid reference has not been proved. No tolerance or assertion was weakened.
-Installation, activation and current-generation cleanup are not claimed.
+**The required fixture GUI gate now passes.** After the console was unlocked,
+the unchanged default history Accessibility/RSS script completed its full
+120-second window: **464 successful tree probes, zero transient probe failures**,
+78,368 KiB initial/maximum RSS and 21,424 KiB final RSS. Release bundling and
+relocated resource verification also passed. No fixture, duration, threshold or
+assertion was changed. The earlier failed run lost its retained window reference
+with `AXError -25202` after 129 successful probes, and the next attempt was refused
+on a locked console; those remain failed observations. The relation between
+locking and that earlier invalid reference is still unproved. This bounded source
+fixture pass is not installed-App or multi-day acceptance. Installation,
+activation and current-generation cleanup are not claimed.
 
 A bounded read-only native coverage probe found 15 live BSD-running processes
 whose `proc_pidpath` returned ENOENT. All 542 processes with a returned path had
