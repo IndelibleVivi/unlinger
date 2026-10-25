@@ -6,7 +6,9 @@ import Testing
 /// Ordinary source QA uses an isolated socket. An installed-generation run
 /// requires the owner-authorized INSTALLED_DOGFOOD transaction boundary.
 /// UNLINGER_LIVE_SOCKET selects the endpoint; these tests include mutations.
-@Suite("Live socket smoke (opt-in)")
+// Functional checks share the installed endpoint with the ordinary App. Keep
+// this gate serial; concurrent connection handling has separate Rust coverage.
+@Suite("Live socket smoke (opt-in)", .serialized)
 struct LiveSocketTests {
     private var socketPath: String? {
         ProcessInfo.processInfo.environment["UNLINGER_LIVE_SOCKET"]
@@ -32,7 +34,7 @@ struct LiveSocketTests {
         let status = try await client.status()
         let pauseContext = MutationContext(
             namespaceToken: status.mutationAuthority.namespaceToken,
-            mutationId: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeee1"
+            mutationId: UUID().uuidString.lowercased()
         )
         let pauseReceipt = try await client.pause(
             context: pauseContext,
@@ -47,7 +49,7 @@ struct LiveSocketTests {
         #expect(replayedPause == pauseReceipt)
         let resumeContext = MutationContext(
             namespaceToken: status.mutationAuthority.namespaceToken,
-            mutationId: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeee2"
+            mutationId: UUID().uuidString.lowercased()
         )
         let resumeReceipt = try await client.resume(context: resumeContext)
         guard case .committed(let replayedResume) = try await client.mutationStatus(
@@ -97,7 +99,7 @@ struct LiveSocketTests {
         let status = try await client.status()
         let context = MutationContext(
             namespaceToken: status.mutationAuthority.namespaceToken,
-            mutationId: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeee3"
+            mutationId: UUID().uuidString.lowercased()
         )
         let receipt = try await client.protectIncident(
             context: context,

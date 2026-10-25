@@ -30,21 +30,23 @@ per-operation connections or a mutation retry as a workaround for contention.
 
 ## Current source and installed candidate
 
-The accepted reference installation is generation 49 / SQLite v14 from source
-candidate `5fc355b`. The October-25 transaction recovered terminal-Failed 47,
-installed/restarted 48, actually rolled back to the exact old 47 daemon reopening
-its restored v14 database, then freshly installed the unchanged artifact as 49.
-Both candidates passed 7 + report-only restart + 7 schema-v5 socket checks.
-Generation 49 was accepted after healthy/quiescent readback; PATH points at its
-exact installed CLI, and the existing enforce policy was separately restored.
-The unchanged schema-v5 App is retained. A subsequent full-timing controlled
-field attempt failed at action PREPARED with SQLite BUSY/5, before any process or
-artifact action. The harness transactionally recovered a fresh healthy/quiescent
-report-only instance; keep this containment until the repair is validated.
-Original enforce restoration remains authorized after the repair checks.
-Successful current-generation cleanup, complete GUI navigation and multi-day
-acceptance remain separate evidence.
-`docs/current-state.md` owns live health, host constraints and exact field scope.
+The accepted reference installation remains generation 49 / SQLite v14 from
+`5fc355b`, with the unchanged schema-v5 App. Candidate `26b400d` passed source and
+exact-source CI and really installed as generation 50. Its initial installed
+concurrent socket gate had three uncertain deliveries; receipt readback found
+historical committed IDs, not new effects. It was not accepted. Real rollback
+restored generation 49, whose exact old daemon reopened the restored v14 healthy
+and quiescent in report-only mode.
+
+A subsequent startup-volume ENOSPC caused old generation 49 to record terminal
+SQLite `DiskFull`/13 at `store.rs:1655`, separately from its earlier BUSY field
+failure and older SHMSIZE events. Current effective policy is report-only and
+this instance must not be rehabilitated by scanning. Source follow-up accepts
+uv's real parenthesized build metadata without changing the exact version pin;
+functional socket gates use fresh mutation IDs and run serially while the App
+may poll. Existing enforce restoration remains authorized after healthy repair,
+but personal-file cleanup is outside that grant. `docs/current-state.md` owns
+host readiness, pending installation and exact field scope.
 
 The pre-upgrade generation-47 first-failure record identifies a distinct
 October-21 18:40 SQLite SHMSIZE/4874 event; its cause is unproved and must not be

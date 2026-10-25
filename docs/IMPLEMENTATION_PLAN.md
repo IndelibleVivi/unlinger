@@ -51,6 +51,12 @@ shared active connection、单一 v14/v5 契约与 producer discovery 改动正�
 不能混入已安装成果。系统盘空间和 native path gaps 仍限制实机覆盖。
 [current-state](current-state.md) 维护精确安装、field 和 host 事实；下方旧记录保留各自日期。
 
+**后续实机发现：** source `26b400d` 与 CI40173314896 通过后安装 candidate50；并发
+socket gate 有三项 uncertain delivery，固定 ID readback 对应旧 receipts。50 未接受，
+已真实 rollback 到旧49、由其自己健康重开 v14。随后系统盘 ENOSPC，49 新增明确
+`DiskFull`/13 并 terminal fail-close。当前 source 补正 uv released build metadata 解析，
+socket functional gate 改用每轮新 UUID 并串行执行；稳定写入余量恢复前不重复实机长任务。
+
 **Historical installed baseline (2026-09-21):** generation 39 / SQLite v13 is accepted and
 healthy `ReadyEnforce`; the matching schema-v5 App is installed. Both are built
 from `89001f5`.

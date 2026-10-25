@@ -4,6 +4,34 @@
 
 ## Current continuation: serialized authority and one current contract (2026-10-25)
 
+
+**Latest live boundary:** reference generation 49 is again terminal Failed and
+effective report-only. After a real candidate-50 rollback restored it healthy,
+the startup volume filled: Swift's linker returned ENOSPC/28 and generation 49
+recorded SQLite `DiskFull`/13. Its new first-failure time is 2026-10-25 15:46:23 +08,
+reported at `store.rs:1655`. This is a directly observed disk-full event, distinct
+from the earlier BUSY attempt and unproved SHMSIZE causes. Further installed and
+production field work requires restored host write capacity; source verification
+continues on the development volume. No personal files or live caches were
+manually deleted to obtain a pass.
+
+Candidate [`26b400d`](https://github.com/IndelibleVivi/unlinger/commit/26b400d862bb7de46572e867dd81d201f62d2ba1)
+passed [exact-source CI40173314896](https://github.com/IndelibleVivi/unlinger/actions/runs/40173314896)
+and installed as generation 50, healthy/quiescent/report-only. Its first
+concurrent installed socket run had three uncertain deliveries; read-only
+reconciliation found historical committed receipts for the fixed test IDs,
+with no new action. Seven subsequent read-only parallel requests completed in
+2.6–6.1 ms. The original timeout cause remains unproved. Generation 50 was not
+accepted; the actual rollback restored 49 and its old daemon reopened v14.
+
+The follow-up fixes a confirmed uv version-parser error: real `uv --version`
+contains parenthesized build metadata after `0.11.20`. Both that released form
+and the version-only form now admit the same exact pin; malformed suffixes stay
+unavailable. The functional socket suite uses new UUIDs per run and runs serially,
+so acceptance exercises fresh mutations while ordinary App polling remains active.
+It never automatically resends a timed-out mutation. Final follow-up checks and
+remote CI remain separate from the earlier candidate evidence.
+
 The owner retired unused migration/client compatibility for the sole dogfood
 installation. The current source candidate creates new SQLite v14 directly and
 reopens valid v14 without rewriting existing data or historical impact provenance.
@@ -19,8 +47,9 @@ attempt ended FAILED with **zero process actions and zero artifact actions**;
 there is no successful cleanup or reclaim claim. The harness completed its
 transactional fail-safe recovery into a fresh healthy, quiescent report-only
 instance. Generation 49 remains accepted with no rollback lease and PATH still
-selects its exact CLI. **Current policy is temporarily report-only** while the
-repair is validated; its earlier enforce observations below are dated evidence.
+selects its exact CLI. The healthy recovery described here precedes the later
+DiskFull failure above. **Current policy is report-only** while repair and host
+readiness are validated; its earlier enforce observations below are dated evidence.
 The existing enforce policy may be restored only after the authorized repair
 and healthy/quiescent verification. This failure is separate from both older
 SHMSIZE and kernel-confirmed ENOSPC events.
@@ -33,8 +62,8 @@ external-writer timeout, PREPARED and terminal fail-close remain required. It
 neither retries mutations nor rehabilitates Failed. Focused checks cover clone
 serialization beyond the old timeout, bounded refusal of an external writer,
 and refusal of a replaced database path. Source, installation and a repeat of
-the failed production field lane are separate gates; the new repair is not yet
-installed at this checkpoint.
+the failed production field lane are separate gates; the first repair candidate was installed only for testing and rolled back;
+no repair candidate is currently accepted or active.
 
 A native owned-child regression also exercises an executable that is unlinked
 while still running. A missing executable pathname remains incomplete and
@@ -43,6 +72,17 @@ ambient path gaps therefore remain a real coverage limit. Startup-volume space
 is still variable and constrained; no personal files were removed to obtain a
 passing run. The supplied CfT workload uses the exact admitted official artifact
 and its own profile; no ordinary Chrome or runtime-artifact admission is involved.
+
+### Follow-up verification after the installed probe
+
+The uv metadata/fresh-ID follow-up passes strict workspace clippy, all **455 Rust
+tests** (16 explicit opt-in ignored), release workspace build, source-only doctor
+and dry-run, and **131 Swift tests / 19 suites**. These final checks used the
+development volume after startup-volume ENOSPC interrupted an earlier test log
+and a Swift manifest/link attempt. The runtime App/resources are unchanged from
+the verified bundle above. A fresh installed acceptance and the production-timing
+cleanup repeat remain incomplete; no earlier test, receipt or CI is substituted
+for them. The functional gate no longer reuses historical mutation IDs.
 
 ### Current source verification
 
@@ -59,8 +99,8 @@ independent uv/Node observations and zero maintenance attempts. The unchanged
 read failures**, initial/maximum **77,424 KiB**, final **17,728 KiB**. Later fixture
 accounting/resource consolidation passed the Swift and bundle checks again;
 the history rendering code and AX fixture were unchanged. This is source and
-isolated evidence; exact-source remote CI and installed repeat remain pending
-at this checkpoint.
+isolated evidence; the original artifact passed exact-source CI; the follow-up CI and installed
+repeat remain separate gates.
 
 ### Previous installed checkpoint: observation/execution candidate
 

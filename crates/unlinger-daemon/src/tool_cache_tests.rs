@@ -209,6 +209,20 @@ fn producer_discovery_distinguishes_supported_unsupported_absent_and_transient()
         Ok((producer.clone(), binding))
     );
 
+    fs::write(
+        &producer,
+        "#!/bin/sh\nprintf 'uv 0.11.20 (9252ba6b5 2026-06-10 aarch64-apple-darwin)\\n'\n",
+    )
+    .unwrap();
+    assert!(
+        discover_producer(
+            std::slice::from_ref(&bin),
+            &|| false,
+            Duration::from_secs(2)
+        )
+        .is_ok()
+    );
+
     fs::write(&producer, "#!/bin/sh\nprintf 'uv 0.11.19\\n'\n").unwrap();
     let unsupported = discover_producer(&[bin], &|| false, Duration::from_secs(2)).unwrap_err();
     assert_eq!(
@@ -226,7 +240,11 @@ fn producer_discovery_distinguishes_supported_unsupported_absent_and_transient()
     .unwrap_err();
     assert_eq!(absent.availability(), ToolCacheAvailability::Absent);
 
-    for script in ["exit 7", "printf malformed"] {
+    for script in [
+        "exit 7",
+        "printf malformed",
+        "printf 'uv 0.11.20 unexpected'",
+    ] {
         query_producer(&root.root, "uv", script);
         let error = discover_producer(
             std::slice::from_ref(&root.root),

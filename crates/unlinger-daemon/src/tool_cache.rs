@@ -1451,14 +1451,23 @@ fn producer_version(
         ProducerQuery::Output(text) => text,
         other => return other,
     };
-    let mut words = text.split_whitespace();
-    if words.next() != Some("uv") {
+    let line = text.trim();
+    let Some(remainder) = line.strip_prefix("uv ") else {
+        return ProducerQuery::MalformedBytes;
+    };
+    let (version, metadata) = remainder
+        .split_once(char::is_whitespace)
+        .unwrap_or((remainder, ""));
+    let metadata = metadata.trim();
+    // Released uv binaries include optional parenthesized build metadata.
+    // That metadata is descriptive; only the exact version and binding admit it.
+    if version.is_empty()
+        || line.contains(['\n', '\r'])
+        || (!metadata.is_empty() && !(metadata.starts_with('(') && metadata.ends_with(')')))
+    {
         return ProducerQuery::MalformedBytes;
     }
-    match words.next() {
-        Some(version) if words.next().is_none() => ProducerQuery::Output(version.to_owned()),
-        _ => ProducerQuery::MalformedBytes,
-    }
+    ProducerQuery::Output(version.to_owned())
 }
 
 /// Path-free outcome of one bounded read-only producer query.
