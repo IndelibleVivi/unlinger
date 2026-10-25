@@ -2347,9 +2347,15 @@ mod tests {
         let residue = &matrix.storage_residue[0];
         assert_eq!(residue.kind, "chrome_code_sign_clone");
         assert_eq!(residue.observation, "exact_current_user_clone_root");
-        assert_eq!(residue.automatic_eligibility, "observe_only");
+        assert_eq!(
+            residue.automatic_eligibility,
+            "enforce_only_after_two_observations_and_complete_process_reference_proof"
+        );
         assert_eq!(residue.size_semantics, "logical_bytes_not_physical_reclaim");
-        assert_eq!(residue.reference_check, "incomplete");
+        assert_eq!(
+            residue.reference_check,
+            "per_candidate_executable_or_absolute_argv_path_and_cleanup_helper_suffix; global_incomplete_or_ambiguous_proof_blocks_all"
+        );
 
         assert_eq!(matrix.protocol.source_app_schema, 5);
         assert_eq!(matrix.protocol.transitional_app_schema, 4);

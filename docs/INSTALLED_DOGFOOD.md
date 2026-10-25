@@ -13,13 +13,25 @@ This runbook advances only acceptance level 3. It installs the exact source cand
 
 For SQLite I/O failure, preserve the instance's first-failure timestamp and
 extended code, then compare the corresponding kernel/filesystem error window.
+Current source can additionally retain `os_errno` from the failed SQLite
+connection setup when the live handle provides it; older installed binaries
+may not include that fact. An absent errno is unknown, not zero or a diagnosis.
 `SQLITE_IOERR_SHMOPEN` (4618) or `SQLITE_IOERR_SHMSIZE` (4874) alone does not prove
 disk exhaustion; the October-21 incident has matching kernel ENOSPC evidence for
-the same daemon and `-shm` sidecar. Restored free space or a healthy generic SQLite
+the same daemon and `-shm` sidecar at 11:48. A later 18:40 SHMSIZE event observed
+on October 25 has no matching retained kernel evidence and must not inherit that
+cause. Restored free space or a healthy generic SQLite
 reader does not rehabilitate a terminal Failed instance. After the underlying
 host condition permits writes, use the exact installed CLI's transactional
 `service set-mode report-only` recovery, verify healthy/quiescent readiness, then restore
 an enforce policy only within the existing owner authorization.
+
+The source store retains one idle WAL connection through its last clone, so
+committed data may remain in a live WAL between operations. Keep the existing
+SQLite-consistent `VACUUM INTO` backup and exact drain/process-exit boundary
+before restoring files; copying the main `.sqlite3` file alone is not a live
+backup. The idle lifetime permits checkpoints and does not change the migration,
+rollback or acceptance requirements below.
 
 ## Candidate install
 

@@ -1,6 +1,91 @@
 # Current state
 
-**Updated:** 2026-10-21. **Programme:** 0.1. **Reader posture:** experimental developer source preview; not a signed/notarized App release or multi-day reliability claim.
+**Updated:** 2026-10-25. **Programme:** 0.1. **Reader posture:** experimental developer source preview; not a signed/notarized App release or multi-day reliability claim.
+
+## Vision calibration and source reliability work (2026-10-25)
+
+The product remains ambient maintenance of abandoned local automation, with
+integration-independent core cleanup and optional stronger lifetime evidence.
+Current source has connected process classification/execution/receipts/impact,
+Chrome clone maintenance and separate uv/Node maintenance. The common
+controller-bearing browser case still requires exact owner lifetime evidence;
+the optional primitive is not an automatic Codex adapter. Exact browser and
+controller compatibility also remains narrow. Phase-2 ambient/multi-day exit
+has not been achieved. The [implementation programme](IMPLEMENTATION_PLAN.md)
+now makes sustained daemon reliability, admitted controllerless usage,
+compatibility maintenance and real ordinary-use evidence one continuous line;
+cache results and frontend completion are not substitutes for that exit gate.
+
+Fresh read-only service inspection found accepted generation 47 loaded with
+matching generation/binary identity, but **terminal `Failed`, unhealthy/not ready
+and effective report-only**. Its first-failure record is dated
+2026-10-21 18:40:20 +08 and identifies SQLite `SystemIoFailure`, extended code
+4874 (`SQLITE_IOERR_SHMSIZE`) during WAL connection setup. This is a distinct
+event from the earlier 11:48 failure with direct kernel ENOSPC evidence. The
+narrow retained kernel-log query for the later window returned no matching
+events; its cause remains unproved. Current free space or a successful later
+SQLite read cannot establish that cause or rehabilitate the instance.
+No installed service, installed App or live cache/browser was changed by this source work.
+Earlier healthy/enforce records below apply only to their dated observations.
+
+The source store now retains one idle WAL connection for a `HistoryStore` and
+all its clones. Per-operation connections/transactions, FULL durability and
+path validation remain; the idle owner holds no read transaction and is not a
+pool. This prevents repeated last-close checkpoint/sidecar recreation between
+operations, while the final store close retains SQLite's ordinary checkpoint
+and cleanup behavior. Connection setup captures a nonzero OS errno from the
+failed SQLite handle when available, without recording a path or guessing from
+a later thread errno. Schema v14, public protocols, admission gates,
+PREPARED-before-effect, unknown-delivery containment and terminal Failed are
+unchanged. This is a reduction in known lifecycle churn and better fault
+evidence, **not a proven repair of the historical SHMSIZE/SHMOPEN causes**.
+
+The strict machine-readable support matrix also now describes the existing
+Chrome clone enforce capability and required per-candidate/global reference
+proof, replacing stale `observe_only`/`incomplete` constants. It does not claim
+that a current runtime observation is complete. No new browser version, family,
+controller lane or runtime artifact has been admitted.
+
+Fresh formatting, strict workspace clippy, **442 Rust tests** (16 explicit
+opt-in cases ignored), release workspace build and source-only doctor/dry-run
+pass. The focused lifetime witness rejected the prior per-operation last-close
+behavior; the 73 store integration cases include checkpointing and unsafe-path
+refusal, and a service test proves a consistent backup includes committed WAL
+while the store remains alive. An owned invalid WAL fixture produces
+`CannotOpen` plus SQLite-reported `os_errno=21`, without a path. Independent
+static review found no actionable regression and explicitly bounded errno
+coverage to configuration/initialization. App validation passes 131 Swift
+tests /19 suites, 11 bundle-verifier tests, two owned-demo tests and relocated
+release bundling. The isolated v5 report-only socket lane passes
+**7 + restart + 7**, retaining independent cache observations without a maintenance attempt.
+
+The first full Rust command reached passing unit/integration suites but
+doctest temporary-directory creation failed with host `ENOSPC`. Moving only
+source-test temporary state to X9 then exposed Unix socket path-length limits;
+a short private X9 temporary root passed the focused shutdown suite and the
+complete workspace gate without changing an assertion. The socket smoke still
+stages its exact daemon on the startup volume as required. Source doctor took
+144 ms for 548 processes, with 15 incomplete executable identities; dry-run
+reports two protected controller-only incidents and performs no cleanup.
+
+**GUI acceptance remains incomplete.** The default history Accessibility/RSS
+run lost its retained window reference with `AXError -25202` after 129 successful
+tree probes; its 33 RSS samples reached 79,440 KiB, but the failed run is not a
+memory-acceptance pass. A single fresh-fixture repeat was refused before launch
+because the console was locked. The relation between locking and the earlier
+invalid reference has not been proved. No tolerance or assertion was weakened.
+Installation, activation and current-generation cleanup are not claimed.
+
+A bounded read-only native coverage probe found 15 live BSD-running processes
+whose `proc_pidpath` returned ENOENT. All 542 processes with a returned path had
+a matching first mapped vnode; there was no path-mismatch case requiring the
+probe's bounded region-walk fallback. A missing expected path cannot be repaired
+by searching more regions for that same path. This identifies the current native-path input boundary,
+not the reason those paths are unavailable. The existing global clone proof
+therefore remains incomplete. A region-walk rewrite is not justified by this
+observation, and no identity/protection condition was relaxed. Current uv and
+Node executable versions are still the admitted 0.11.20 and 26.7.0; uv's earlier
+transient `unsupported` observation must not be attributed to a version upgrade.
 
 ## Normal Node result and disk-full recovery (2026-10-21)
 

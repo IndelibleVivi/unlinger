@@ -106,9 +106,9 @@
     {
       "kind": "chrome_code_sign_clone",
       "observation": "exact_current_user_clone_root",
-      "automatic_eligibility": "observe_only",
+      "automatic_eligibility": "enforce_only_after_two_observations_and_complete_process_reference_proof",
       "size_semantics": "logical_bytes_not_physical_reclaim",
-      "reference_check": "incomplete"
+      "reference_check": "per_candidate_executable_or_absolute_argv_path_and_cleanup_helper_suffix; global_incomplete_or_ambiguous_proof_blocks_all"
     }
   ],
   "protocol": {

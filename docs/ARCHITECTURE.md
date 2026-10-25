@@ -42,6 +42,27 @@ Chrome clone 的磁盘状态单独进入状态库；源码逐个保留 candidate
 
 ## Durable boundaries
 
+The current source gives each `HistoryStore` and its clones one shared idle WAL
+connection lifetime. Individual operations still validate the database/sidecars,
+open independent connections and commit their own transactions with
+`synchronous=FULL`; this is not a shared transaction or a connection pool.
+The idle connection holds no read transaction, so checkpoints remain available.
+Its final close checkpoints and retires the sidecars after the last store clone
+is released. This avoids repeated last-close checkpoint/unlink/recreate work
+between ordinary daemon operations, following SQLite's documented
+[WAL lifecycle](https://www.sqlite.org/wal.html). SQLite continues to own WAL checkpointing;
+no retry or automatic Failed recovery is introduced. Connection-configuration
+errors retain a nonzero OS errno only when SQLite's live handle supplies one
+through [`sqlite3_system_errno`](https://www.sqlite.org/c3ref/system_errno.html),
+alongside the path-free primary/extended code and source basename/line. These
+source changes are not a diagnosis of historical field failures or proof of
+installation; [current state](current-state.md) owns both boundaries.
+
+源码将 WAL connection 的生命周期绑定到 store 及其 clones；每个 operation 的事务
+仍独立，路径检查与 FULL durability 不变。空闲连接不持有 read transaction，既避免
+反复重建 sidecars，也允许正常 checkpoint。数据库不可用时仍拒绝未获持久化授权的
+副作用，terminal Failed 仍须通过精确 service transaction 替换实例。
+
 Managed installs use immutable generations and a candidate acceptance transaction. Each new generation first reaches a healthy, quiescent report-only state. A pending lease retains prior generation/database material until explicit acceptance or rollback. `RollbackInProgress` is durable before physical restoration; only durable `Accepted` retires rollback material. Same-generation restarts recover signal-free, require a fresh first scan and create a new enforcement epoch before restoring applicable intent. `Failed` is terminal for that daemon instance. [Current state](current-state.md) owns the exact installed generation and evidence; no generation number is a permanent architecture rule.
 
 安装、接受与启用分别拥有持久状态。失败实例不会因后来一次成功扫描自动恢复执行权；回滚恢复的是精确旧 generation 和数据库。当前运行事实以 current-state 为准。
@@ -77,6 +98,7 @@ flowchart LR
 uv 与 Node 结果都不加入浏览器 cleanup impact；当前安装与实机观察由
 [current-state](current-state.md) 分别记录。Node 不依赖原生 prune：它只处理精确
 版本/default bucket 中经过 header、长度、CRC 与冻结身份验证的普通文件，不移除
-目录。未知/临时写入内容阻止动作，其他 bucket 与自定义位置继续受保护。精确
+目录。未知内容或新发布的 final file 阻止 frozen plan；安全的原生临时文件保留在
+计划之外，其他 bucket 与自定义位置继续受保护。精确
 lease 在每个文件前重查；快速 Resume 不会复活被取消的动作。成功 unlink 数和
 已验证逻辑长度估算分别记账，不宣称抵抗 hostile same-UID 或 inode-atomic unlink。

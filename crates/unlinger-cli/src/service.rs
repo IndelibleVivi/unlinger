@@ -4900,6 +4900,27 @@ app.unlinger.daemon = {
     }
 
     #[test]
+    fn sqlite_backup_includes_committed_wal_with_a_live_store_lifetime() {
+        let temp = TempDirectory::new();
+        let paths = LocalPaths::from_home(&temp.0).expect("paths");
+        prepare_install_directories(&paths).expect("directories");
+        let layout = ServiceLayout::new(&paths);
+        let store = HistoryStore::open(&paths.database).expect("live history store");
+        store
+            .set_pause_until(Some(44_000))
+            .expect("commit pause to WAL");
+        assert!(database_sidecar(&paths.database, "-wal").is_file());
+
+        assert!(backup_database(&paths.database, &layout).expect("consistent live backup"));
+        store
+            .set_pause_until(Some(55_000))
+            .expect("later independent commit");
+        let snapshot = HistoryStore::open(&layout.database_backup).expect("open snapshot");
+        assert_eq!(snapshot.pause_until().unwrap(), Some(44_000));
+        assert_eq!(store.pause_until().unwrap(), Some(55_000));
+    }
+
+    #[test]
     fn sqlite_backup_restores_prior_schema_and_preserves_failed_candidate_evidence() {
         let temp = TempDirectory::new();
         let paths = LocalPaths::from_home(&temp.0).expect("paths");

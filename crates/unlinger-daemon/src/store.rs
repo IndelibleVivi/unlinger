@@ -8,6 +8,7 @@ use std::ffi::OsString;
 use std::fmt::{Display, Formatter};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 use unlinger_core::{
     ArtifactAction, ArtifactActionIntent, ArtifactDisposition, CleanupAction, CleanupActionIntent,
@@ -532,6 +533,7 @@ pub enum StoreError {
         error: rusqlite::Error,
         source_file: &'static str,
         source_line: u32,
+        system_errno: Option<i32>,
     },
     Json(serde_json::Error),
     Corrupt(String),
@@ -553,7 +555,8 @@ impl Display for StoreError {
                 error,
                 source_file,
                 source_line,
-            } => display_sqlite_error(formatter, error, (source_file, *source_line)),
+                system_errno,
+            } => display_sqlite_error(formatter, error, (source_file, *source_line), *system_errno),
             Self::Json(error) => write!(formatter, "history JSON failed: {error}"),
             Self::Corrupt(message) => write!(formatter, "history data is corrupt: {message}"),
             Self::Range(message) => write!(formatter, "history value is out of range: {message}"),
@@ -578,6 +581,7 @@ fn display_sqlite_error(
     formatter: &mut Formatter<'_>,
     error: &rusqlite::Error,
     source: (&str, u32),
+    system_errno: Option<i32>,
 ) -> std::fmt::Result {
     match error {
         rusqlite::Error::SqliteFailure(failure, detail) => {
@@ -588,6 +592,9 @@ fn display_sqlite_error(
             )?;
             let (file, line) = source;
             write!(formatter, " [source={file}:{line}]")?;
+            if let Some(errno) = system_errno {
+                write!(formatter, " [os_errno={errno}]")?;
+            }
             if let Some(detail) = detail {
                 write!(formatter, ": {detail}")
             } else {
@@ -623,7 +630,35 @@ impl From<rusqlite::Error> for StoreError {
                 .next()
                 .unwrap_or("store"),
             source_line: location.line(),
+            system_errno: None,
         }
+    }
+}
+
+impl StoreError {
+    /// Capture from the failed live SQLite handle, before another call or its
+    /// close can lose the VFS diagnostic. A process/thread errno sampled later
+    /// is not evidence of the SQLite failure.
+    #[track_caller]
+    fn from_connection(error: rusqlite::Error, connection: &Connection) -> Self {
+        let errno = if matches!(
+            &error,
+            rusqlite::Error::SqliteFailure(failure, _)
+                if matches!(failure.code,
+                    rusqlite::ErrorCode::SystemIoFailure | rusqlite::ErrorCode::CannotOpen)
+        ) {
+            // SAFETY: this borrowed handle is live, and no other thread can
+            // use this operation's Connection while it is borrowed here.
+            let value = unsafe { rusqlite::ffi::sqlite3_system_errno(connection.handle()) };
+            (value != 0).then_some(value)
+        } else {
+            None
+        };
+        let mut result = Self::from(error);
+        if let Self::Sqlite { system_errno, .. } = &mut result {
+            *system_errno = errno;
+        }
+        result
     }
 }
 
@@ -637,6 +672,13 @@ impl From<serde_json::Error> for StoreError {
 pub struct HistoryStore {
     path: PathBuf,
     startup_recovery: Option<StorageRecoveryOccurrence>,
+    // Keep one idle WAL connection alive across independent operation
+    // connections. Otherwise every gap between calls can become SQLite's last
+    // close, checkpointing and removing both sidecars before the next call
+    // creates them again. Clones share this lifetime, not a transaction or a
+    // connection queue. Mutex supplies Sync for rusqlite's Send-only handle;
+    // the idle handle is never used to execute work or hold a read transaction.
+    _wal_lifetime: Arc<Mutex<Connection>>,
 }
 
 impl HistoryStore {
@@ -654,32 +696,26 @@ impl HistoryStore {
                 fs::set_permissions(parent, fs::Permissions::from_mode(0o700))?;
             }
         }
-        let startup_recovery = match preflight_store_file(&path) {
-            Ok(_) => {
-                initialize_store_file(&path)?;
-                None
-            }
+        let recovery = match preflight_store_file(&path) {
+            Ok(_) => None,
             Err(error) if is_recoverable_corruption(&error) => {
                 let reason = recovery_reason(&error);
-                let occurrence = quarantine_database(&path, reason)?;
-                initialize_store_file(&path)?;
-                let store = Self {
-                    path: path.clone(),
-                    startup_recovery: None,
-                };
-                store.persist_storage_recovery(&occurrence)?;
-                Some(store.latest_storage_recovery()?.ok_or_else(|| {
-                    StoreError::Corrupt(
-                        "persisted storage recovery could not be read back".to_owned(),
-                    )
-                })?)
+                Some(quarantine_database(&path, reason)?)
             }
             Err(error) => return Err(error),
         };
-        let store = Self {
+        let connection = initialize_store_file(&path)?;
+        let mut store = Self {
             path,
-            startup_recovery,
+            startup_recovery: None,
+            _wal_lifetime: Arc::new(Mutex::new(connection)),
         };
+        if let Some(occurrence) = recovery {
+            store.persist_storage_recovery(&occurrence)?;
+            store.startup_recovery = Some(store.latest_storage_recovery()?.ok_or_else(|| {
+                StoreError::Corrupt("persisted storage recovery could not be read back".to_owned())
+            })?);
+        }
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -3593,25 +3629,49 @@ impl HistoryStore {
             ));
         }
         let connection = Connection::open(&self.path)?;
-        connection.busy_timeout(std::time::Duration::from_secs(2))?;
-        connection.pragma_update(None, "foreign_keys", "ON")?;
-        connection.pragma_update(None, "journal_mode", "WAL")?;
-        connection.pragma_update(None, "synchronous", "FULL")?;
+        configure_connection(&connection)?;
         Ok(connection)
     }
 }
 
-fn initialize_store_file(path: &Path) -> Result<(), StoreError> {
+fn initialize_store_file(path: &Path) -> Result<Connection, StoreError> {
     let mut connection = Connection::open(path)?;
     connection.busy_timeout(std::time::Duration::from_secs(2))?;
     connection.pragma_update(None, "foreign_keys", "ON")?;
     initialize_schema(&mut connection)?;
     run_quick_check(&connection)?;
     validate_required_schema(&connection)?;
-    connection.pragma_update(None, "journal_mode", "WAL")?;
-    connection.pragma_update(None, "synchronous", "FULL")?;
-    drop(connection);
+    configure_connection(&connection)?;
+    // Selecting WAL mode alone does not attach this handle to the WAL. Finish
+    // one real read so its idle lifetime also retains SQLite's shared WAL
+    // state; the statement ends here, leaving no read transaction pinned.
+    attach_wal_lifetime(&connection)?;
     secure_store_component_permissions(path)?;
+    Ok(connection)
+}
+
+fn configure_connection(connection: &Connection) -> Result<(), StoreError> {
+    connection
+        .busy_timeout(std::time::Duration::from_secs(2))
+        .map_err(|error| StoreError::from_connection(error, connection))?;
+    for (name, value) in [
+        ("foreign_keys", "ON"),
+        ("journal_mode", "WAL"),
+        ("synchronous", "FULL"),
+    ] {
+        connection
+            .pragma_update(None, name, value)
+            .map_err(|error| StoreError::from_connection(error, connection))?;
+    }
+    Ok(())
+}
+
+fn attach_wal_lifetime(connection: &Connection) -> Result<(), StoreError> {
+    connection
+        .query_row("SELECT COUNT(*) FROM sqlite_schema", [], |row| {
+            row.get::<_, i64>(0)
+        })
+        .map_err(|error| StoreError::from_connection(error, connection))?;
     Ok(())
 }
 
@@ -6331,5 +6391,53 @@ fn payload_state(payload: &EventPayload) -> IncidentState {
     match payload {
         EventPayload::Observation { report } => report.state,
         EventPayload::Cleanup { receipt } => receipt.state,
+    }
+}
+
+#[cfg(test)]
+mod connection_tests {
+    use super::*;
+
+    #[test]
+    fn sqlite_vfs_failure_captures_the_handles_os_errno_without_a_path() {
+        struct Fixture(PathBuf);
+        impl Drop for Fixture {
+            fn drop(&mut self) {
+                let _ = fs::remove_dir_all(&self.0);
+            }
+        }
+
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let fixture = Fixture(
+            std::env::temp_dir().join(format!("unlinger-wal-errno-{}-{nonce}", std::process::id())),
+        );
+        fs::create_dir(&fixture.0).unwrap();
+        let database = fixture.0.join("history.sqlite3");
+        let connection = Connection::open(&database).unwrap();
+        connection
+            .execute_batch("CREATE TABLE example (id INTEGER);")
+            .unwrap();
+        drop(connection);
+        fs::create_dir(sqlite_sidecar_path(&database, "-wal")).unwrap();
+        let connection = Connection::open(&database).unwrap();
+        let error = configure_connection(&connection).expect_err("directory cannot be a WAL file");
+        assert!(
+            matches!(
+                &error,
+                StoreError::Sqlite {
+                    error: rusqlite::Error::SqliteFailure(failure, _),
+                    system_errno: Some(libc::EISDIR),
+                    ..
+                } if failure.code == rusqlite::ErrorCode::CannotOpen
+            ),
+            "{error}"
+        );
+        let message = error.to_string();
+        assert!(message.contains(&format!("[os_errno={}]", libc::EISDIR)));
+        assert!(!message.contains(&fixture.0.to_string_lossy().to_string()));
+        drop(connection);
     }
 }

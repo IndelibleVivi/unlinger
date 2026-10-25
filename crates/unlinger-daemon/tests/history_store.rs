@@ -95,6 +95,75 @@ fn sqlite_failure_display_preserves_primary_and_extended_codes() {
 }
 
 #[test]
+fn store_lifetime_retains_wal_state_until_the_last_clone_closes() {
+    use std::os::unix::fs::MetadataExt;
+
+    let database = TempDatabase::new();
+    let store = HistoryStore::open(&database.0).expect("open store");
+    store.set_pause_until(Some(10_000)).expect("commit pause");
+    let wal = PathBuf::from(format!("{}-wal", database.0.display()));
+    let shm = PathBuf::from(format!("{}-shm", database.0.display()));
+    let initial_wal = fs::metadata(&wal).expect("live store retains WAL");
+    let initial_shm = fs::metadata(&shm).expect("live store retains shared memory");
+    let clone = store.clone();
+    drop(store);
+
+    for now in 10_001..10_011 {
+        clone
+            .set_pause_until(Some(now))
+            .expect("commit through clone");
+        assert_eq!(
+            clone.pause_until().expect("read committed pause"),
+            Some(now)
+        );
+        for (path, initial) in [(&wal, &initial_wal), (&shm, &initial_shm)] {
+            let current = fs::metadata(path).expect("connection lifetime retains sidecar");
+            assert_eq!(
+                (current.dev(), current.ino()),
+                (initial.dev(), initial.ino())
+            );
+        }
+    }
+    drop(clone);
+    assert!(!wal.exists(), "last close checkpoints and retires WAL");
+    assert!(!shm.exists(), "last close retires shared memory");
+
+    let reopened = HistoryStore::open(&database.0).expect("reopen committed database");
+    assert_eq!(reopened.pause_until().unwrap(), Some(10_010));
+}
+
+#[test]
+fn retained_wal_lifetime_does_not_pin_checkpoints_or_bypass_path_validation() {
+    let directory = TempDirectory::new("wal-lifetime");
+    let database = directory.database();
+    let store = HistoryStore::open(&database).expect("open store");
+    for now in 1..1_100 {
+        store
+            .set_pause_until(Some(now))
+            .expect("commit bounded write");
+    }
+    let connection = Connection::open(&database).expect("independent operator connection");
+    let checkpoint: (i64, i64, i64) = connection
+        .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+        })
+        .expect("idle WAL lifetime permits checkpointing");
+    assert_eq!(checkpoint, (0, 0, 0));
+    drop(connection);
+
+    // The retained handle must never permit operations against an unsafe
+    // pathname just because it still holds an earlier valid database open.
+    fs::set_permissions(&database, fs::Permissions::from_mode(0o666))
+        .expect("make only the owned fixture unsafe");
+    assert!(matches!(
+        store.pause_until(),
+        Err(StoreError::UnsafePath(_))
+    ));
+    make_private(&database);
+    assert_eq!(store.pause_until().unwrap(), Some(1_099));
+}
+
+#[test]
 fn concurrent_observation_and_cache_readers_keep_store_available() {
     use std::sync::{Arc, Barrier};
     use unlinger_protocol::ToolCacheAvailability;

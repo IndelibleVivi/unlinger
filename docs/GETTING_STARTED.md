@@ -1,6 +1,6 @@
 # Getting started / 开始使用
 
-These commands are for a developer building the experimental source on macOS 14+ (Apple silicon verified). Use Rust 1.98.0, Git and command-line developer tools; the App needs Swift 6.0+ and ripgrep. No browser installation is required for observation or the command-lifetime smoke below. Run commands from the repository root.
+These commands are for a developer building the experimental source on macOS 14+ (Apple silicon verified). Use Rust 1.98.0, Git and command-line developer tools; the App needs Swift 6.0+ and Python 3; the source smoke scripts also use ripgrep. No browser installation is required for observation or the command-lifetime smoke below. Run commands from the repository root.
 
 这些步骤用于开发者从源码试用。观察模式和下方 command lifetime 示例不需要另外安装浏览器；它们也不证明浏览器已被清理。命令均在 repo 根目录执行。
 

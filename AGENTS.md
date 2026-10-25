@@ -9,6 +9,20 @@
 
 ## Current source and installed candidate
 
+Fresh read-only observation on 2026-10-25 found the accepted generation-47
+installation terminal `Failed`, unhealthy/not ready and effective report-only.
+Its first-failure record identifies a distinct October-21 18:40 SQLite
+SHMSIZE/4874 event; the cause is unproved and must not be conflated with the
+earlier kernel-confirmed ENOSPC incident. Healthy/enforce descriptions below
+retain their dated historical scope. `docs/current-state.md` owns current truth.
+The source-only October-25 repair gives `HistoryStore` and its clones one shared
+idle WAL connection lifetime, retaining independent operation transactions,
+FULL durability, per-operation path validation and terminal fail-close. It is
+not a pool or automatic recovery mechanism. Final store close releases the
+SQLite-owned WAL/sidecars; backup/rollback must still use the existing service
+transaction and SQLite-consistent snapshot. Configuration errors may include
+SQLite's own nonzero OS errno, never a later sampled thread errno or path.
+
 Source cache maintenance uses SQLite v14 and exact uv `0.11.20` native
 `cache prune` at the default `~/.cache/uv`. The owner explicitly admitted
 uv-owned cached execution environments under the native lock; project `.venv`
@@ -170,8 +184,9 @@ SQLite v14, Playwright `0.6.0`, other packs `0.4.0`, frontend v5/v4/v3 and
 operator v1. It retains mapped-vnode identity, exact per-candidate Chrome-clone
 cleanup and durable clone results, bounded native uv maintenance and the exact
 Node compile-cache exception.
-It remains accepted with no rollback lease and is healthy `ReadyEnforce` again
-after the October-20 candidate rollback/reinstall and acceptance. PATH points at its
+It remains accepted with no rollback lease. It was healthy `ReadyEnforce` after
+the October-20 candidate rollback/reinstall and October-21 recovery; the fresh
+October-25 observation above supersedes that live-health claim. PATH points at its
 exact generation binary. These installed facts do not turn older
 controlled process/clone receipts into current-generation or multi-day evidence.
 The generation-36 SQLite failure and an earlier App lazy-layout hang have
