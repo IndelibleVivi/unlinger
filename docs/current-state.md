@@ -4,6 +4,11 @@
 
 ## Vision calibration and source reliability work (2026-10-25)
 
+Implementation candidate [`3fdb694`](https://github.com/IndelibleVivi/unlinger/commit/3fdb6941188fa956593872780271943c0180d29e)
+is pushed. Its [exact-source macOS CI](https://github.com/IndelibleVivi/unlinger/actions/runs/40147673014)
+passed for that exact implementation commit. Local non-GUI verification is complete; the
+candidate is not claimed fully source-complete while the GUI gate below remains open.
+
 The product remains ambient maintenance of abandoned local automation, with
 integration-independent core cleanup and optional stronger lifetime evidence.
 Current source has connected process classification/execution/receipts/impact,
