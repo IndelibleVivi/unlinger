@@ -4,9 +4,11 @@
 
 ## Programme continuation: observation, execution and native coverage (2026-10-25)
 
-The next source candidate is locally source-complete and isolated report-only
-verified. Remote CI for this next candidate is pending. No installed service,
-installed App, live browser or cache was changed. The preceding WAL-lifetime
+Candidate [`5fc355b`](https://github.com/IndelibleVivi/unlinger/commit/5fc355b26ed470c28cbd2de6eb2f5b1de5137d1e)
+is pushed, source-complete and isolated report-only verified. Its
+[exact-source macOS CI](https://github.com/IndelibleVivi/unlinger/actions/runs/40158626156)
+passed. No installed service, installed App, live browser or cache was changed.
+The preceding WAL-lifetime
 candidate [`3fdb694`](https://github.com/IndelibleVivi/unlinger/commit/3fdb6941188fa956593872780271943c0180d29e)
 and its [exact-source CI](https://github.com/IndelibleVivi/unlinger/actions/runs/40147673014)
 remain evidence for that earlier artifact rather than this new implementation.
