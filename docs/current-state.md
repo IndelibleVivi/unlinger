@@ -2,17 +2,50 @@
 
 **Updated:** 2026-10-25. **Programme:** 0.1. **Reader posture:** experimental developer source preview; not a signed/notarized App release or multi-day reliability claim.
 
-## Current continuation: serialized authority and one current contract (2026-10-25)
+## Active repair candidate 52 (2026-10-25)
 
+Source [`f45778e`](https://github.com/IndelibleVivi/unlinger/commit/f45778e46008c106fc78fd94e0977b272dd7faac)
+passes [exact-source macOS CI40174916193](https://github.com/IndelibleVivi/unlinger/actions/runs/40174916193)
+and is active as **generation 52 / SQLite v14 / frontend v5 / operator v1**.
+It is healthy, quiescent and `ReadyReportOnly`, unarmed and without an enforcement
+epoch. **It is not accepted:** the candidate rollback lease and prior generation
+49 material remain intact. The PATH shortcut still selects the accepted 49 CLI;
+current candidate operations must select the exact generation-52 CLI explicitly.
 
-**Latest live boundary:** reference generation 49 is again terminal Failed and
-effective report-only. After a real candidate-50 rollback restored it healthy,
+- Generation 51 passed **7 socket checks + report-only restart + 7**, with fresh
+  mutation UUIDs and serial functional checks while the retained App kept running.
+- The exact candidate then really rolled back to generation 49. The old daemon
+  and CLI reopened the restored v14 healthy, quiescent, report-only and unarmed.
+- The unchanged artifact freshly installed as 52 and repeated **7 + restart + 7**.
+  These are 28 executed checks across both generations, not old receipt replay.
+- Both uv and Node discovery now report **available** on the real installation.
+  Report-only grants no maintenance authority; their last successful results
+  retain their earlier generations/dates. No new cache removal is claimed.
+- A bounded observer completed **20 readbacks spanning 3m11s**, all the same
+  healthy ready report-only instance, zero read errors/failures and every sampled cleanup flag false. Database/WAL/SHM identities stayed stable. The minimum observed
+  startup free space was about **1.08 GiB**; the earlier four-minute window held
+  about 1.16 GiB. This does not resolve the recurrent storage-pressure cause.
+
+The installed App is still the preceding schema-v5 artifact. The new verified
+single-v5 bundle is prepared but has not replaced it. A fresh ordinary-window
+navigation check is blocked by the **locked console**, not credited as passed.
+The retained App's one-point RSS sample was 15,744 KiB; it is not a stress result.
+Final packaged-App navigation, acceptance, production-timing managed cleanup and
+restoration of the original enforce policy remain incomplete. Keep the candidate
+report-only and retain its transaction material until those gates are completed
+or the real rollback is selected. Earlier generation-49 field failures below
+must not become a successful generation-52 receipt or a multi-day claim.
+
+## Implementation and failure evidence (2026-10-25)
+
+**Historical pre-repair failure:** generation 49 became terminal Failed and
+effective report-only before the 51→49→52 transaction above. After a real
+candidate-50 rollback restored it healthy,
 the startup volume filled: Swift's linker returned ENOSPC/28 and generation 49
-recorded SQLite `DiskFull`/13. Its new first-failure time is 2026-10-25 15:46:23 +08,
+recorded SQLite `DiskFull`/13. Its first-failure time is 2026-10-25 15:46:23 +08,
 reported at `store.rs:1655`. This is a directly observed disk-full event, distinct
-from the earlier BUSY attempt and unproved SHMSIZE causes. Further installed and
-production field work requires restored host write capacity; source verification
-continues on the development volume. No personal files or live caches were
+from the earlier BUSY attempt and unproved SHMSIZE causes. Further production field work requires adequate host write capacity; source
+verification continues on the development volume. No personal files or live caches were
 manually deleted to obtain a pass.
 
 Candidate [`26b400d`](https://github.com/IndelibleVivi/unlinger/commit/26b400d862bb7de46572e867dd81d201f62d2ba1)
