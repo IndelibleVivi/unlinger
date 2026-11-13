@@ -52,6 +52,13 @@ The App writes namespace, mutation UUID and canonical intent to an owner-private
 
 A cycle must observe the same cleanup-policy revision and enforcement epoch again immediately before opening a cleanup attempt and before every signal. In particular, a retry committed after confirmation invalidates that cycle, clears only the named block/cooling candidate, and requires fresh cooling; it is not an immediate resend authorization.
 
+History retention must preserve the terminal event and public token referenced by
+an active retry block, including after the ordinary 14-day cleanup-detail window.
+Pruning is not retry authorization. After an explicit named retry or the existing
+proved-absence retirement removes that block, ordinary detail expiry resumes
+without changing the independent lifetime aggregate. A missing historical receipt
+must not be invented or relabelled successful to recover a failed service.
+
 Native process-exit, wake, and memory-pressure events are bounded scheduling hints. They never authorize cleanup or weaken the age, version, cooling, identity, or protection gates, and a failed event source falls back to periodic reconciliation. The product has no admitted threshold for notifying on an ambiguous incident under sustained pressure; an aggregate ambiguous count is not notification authority. Native App notifications derive only from trusted typed event/storage/daemon facts, baseline retained tokens on first refresh, and use durable claim-before-schedule duplicate avoidance. App mutation uncertainty is not a backend cleanup notification.
 
 After the exact tree is gone and both revival checks pass, the cleanup engine can evaluate at most one admitted `DevToolsActivePort` file. The current process-only policies do not reach that path: every source and installed pack sets `devtools_active_port = false`, the analyzer emits no runtime-artifact candidate, and both receipt and durable journal must contain zero artifact actions. Profiles, browser data, sockets, PID files, and runtime directories are never automatically deleted.

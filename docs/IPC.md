@@ -201,6 +201,14 @@ SQLite v7 assigns every retained event a unique opaque `public_token`. V1 intern
 
 Equivalent consecutive observation rows coalesce under the latest event token. V5 observation events expose `observation_span { first_observed_at_unix_millis, observation_count }`. Cleanup events never become spans. Observation count/age retention cannot delete cleanup impacts or their at-least-14-day detail, while the lifetime aggregate remains after detail expiry. The current source creates schema v14 directly with complete history; existing v14 historical `partial_backfill` labels remain honest. Older nonempty stores are refused unchanged.
 
+A live retry block retains its source attempt's terminal cleanup event and public
+event token beyond the ordinary detail window. Attention and incident detail must
+remain readable for as long as that block needs the receipt. Once existing retry
+authorization or proved-absence reconciliation retires the block, normal expiry
+may remove its detail; retention never authorizes retry or changes lifetime impact
+totals. This protection prevents future loss and does not reconstruct a receipt
+already missing from an older store.
+
 Cleanup projection keeps:
 
 ```text

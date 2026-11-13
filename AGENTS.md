@@ -28,7 +28,35 @@ may silently redirect that handle. External SQLite writer timeout, FULL durabili
 and terminal fail-close remain unchanged. Do not restore idle-keeper plus
 per-operation connections or a mutation retry as a workaround for contention.
 
-## Current source and installed candidate
+History retention must keep the terminal cleanup event and public token needed by
+each active retry block beyond ordinary detail expiry. Age/count pruning cannot
+release retry authority or make attention unreadable. Existing explicit retry or
+proved-absence reconciliation owns block retirement; subsequent pruning may expire
+the detail without changing lifetime impact totals. Never fabricate a missing
+receipt or clear a block merely to make a corruption check pass.
+
+## Current retention repair (2026-11-14)
+
+Generation52 was found terminal Failed after 14-day pruning removed the terminal
+event still referenced by a retry block. SQLite structural checks passed; this is
+a distinct application-level retention defect, not proof of another SQLite I/O
+failure. Source now protects the block's exact terminal event/token; source gates
+and installation of the repaired artifact are still in progress.
+
+The owner explicitly authorized releasing only the obsolete controlled-test
+block, preserving its true failure evidence, and accepting a verified52 as a
+report-only recovery transition before the fixed installation. One operator retry
+was followed by a transactional fresh-instance restart;52 is healthy/quiescent
+ReadyReportOnly with no enforcement authority. Its lease to49 remains until App
+checks and transition acceptance. The exact old49 isolated rollback-snapshot probe
+fails under today's retention age, so do not claim that target is currently
+healthy or blindly replay it. The fixed artifact must prove its own actual
+rollback/open against the recovered52, then fresh installation and field gates
+before restoring the original enforce policy. No broader retry authorization,
+eligibility change, receipt fabrication or manual cache cleanup is granted.
+`docs/current-state.md` owns progress and exact final installation status.
+
+## Previous source and candidate checkpoint (2026-10-25)
 
 Current source `f45778e` and exact-source CI40174916193 pass. Active generation
 52 uses SQLite v14, frontend v5 and operator v1 and is healthy/quiescent

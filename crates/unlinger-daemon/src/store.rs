@@ -3173,10 +3173,19 @@ impl HistoryStore {
         )?;
         transaction.execute(
             "DELETE FROM events
-             WHERE kind = 'cleanup' AND occurred_at_ms < ?1
+             WHERE kind = 'cleanup'
+               AND occurred_at_ms < ?1
                AND NOT EXISTS (
                    SELECT 1 FROM cleanup_impacts
                    WHERE cleanup_impacts.event_id = events.id
+               )
+               AND NOT EXISTS (
+                   SELECT 1
+                   FROM cleanup_retry_blocks AS blocks
+                   JOIN cleanup_attempts AS attempts
+                     ON attempts.id = blocks.source_attempt_id
+                   WHERE blocks.source_attempt_id = events.attempt_id
+                     AND attempts.terminal_state = events.state
                )",
             params![cleanup_cutoff],
         )?;

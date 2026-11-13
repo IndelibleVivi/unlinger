@@ -2321,6 +2321,166 @@ fn retention_never_discards_active_retry_blocks() {
 }
 
 #[test]
+fn active_retry_block_retains_terminal_event_until_authorized_release() {
+    assert_blocked_terminal_retention(IncidentState::Failed);
+    assert_blocked_terminal_retention(IncidentState::Revived);
+}
+
+fn assert_blocked_terminal_retention(state: IncidentState) {
+    let database = TempDatabase::new();
+    let store = HistoryStore::open(&database.0).expect("open store");
+    let report = confirmed_report("inc-retained-block");
+    let attempt = store
+        .begin_cleanup_attempt(1_000, &report, "epoch-a")
+        .expect("begin attempt");
+    store
+        .complete_cleanup_attempt(
+            &attempt,
+            1_100,
+            &failed_receipt(
+                "inc-retained-block",
+                state,
+                "cleanup.retention_fixture_failure",
+            ),
+        )
+        .expect("fail attempt");
+
+    let unproved = store
+        .reconcile_retry_blocks(&[], &std::collections::BTreeSet::new(), false, 2_000, 1_000)
+        .expect("incomplete exact-absence coverage retains the block");
+    assert_eq!(unproved.unproven_count, 1);
+    let original = store
+        .attention_projection(10)
+        .expect("attention before retention")
+        .blocked_cleanups
+        .into_iter()
+        .find(|summary| summary.incident_id == "inc-retained-block")
+        .expect("original blocking summary");
+    let original_token = original
+        .event_token
+        .clone()
+        .expect("original terminal event token");
+    assert_eq!(original.state, state);
+    assert_eq!(original.reason_id, "cleanup.retention_fixture_failure");
+    let impact_before = store.impact_summary(10).expect("impact before retention");
+    assert_eq!(impact_before.terminal_cleanup_count, 1);
+
+    let now = 15 * 24 * 60 * 60 * 1_000;
+    store
+        .prune(
+            now,
+            RetentionPolicy {
+                max_age_millis: 1,
+                max_events: 0,
+            },
+        )
+        .expect("prune expired cleanup detail");
+
+    let retained = store
+        .attention_projection(10)
+        .expect("attention after retention");
+    assert_eq!(retained.blocked_cleanup_count, 1);
+    assert_eq!(retained.blocked_cleanups.len(), 1);
+    assert_eq!(
+        retained.blocked_cleanups[0].event_token.as_deref(),
+        Some(original_token.as_str())
+    );
+    assert_eq!(retained.blocked_cleanups[0].state, state);
+    assert_eq!(
+        retained.blocked_cleanups[0].reason_id,
+        "cleanup.retention_fixture_failure"
+    );
+    let history = store.history(10).expect("retained terminal history");
+    let terminal = history
+        .iter()
+        .find(|event| {
+            event.incident_id == "inc-retained-block"
+                && event.kind == EventKind::Cleanup
+                && event.state == state
+        })
+        .expect("blocking terminal event remains readable");
+    assert_eq!(terminal.event_token, original_token);
+    let EventPayload::Cleanup { receipt } = &terminal.payload else {
+        panic!("retained terminal event must keep its cleanup payload");
+    };
+    assert_eq!(
+        receipt.reason_id.as_deref(),
+        Some("cleanup.retention_fixture_failure")
+    );
+    let detail = store
+        .explain("inc-retained-block")
+        .expect("retained incident detail")
+        .expect("retained detail exists");
+    assert!(
+        detail
+            .events
+            .iter()
+            .any(|event| { event.event_token == original_token && event.state == state })
+    );
+
+    let impact_after = store.impact_summary(10).expect("impact after retention");
+    assert_eq!(impact_after.terminal_cleanup_count, 1);
+    assert!(impact_after.recent.is_empty());
+
+    store
+        .prune(
+            now,
+            RetentionPolicy {
+                max_age_millis: 1,
+                max_events: 0,
+            },
+        )
+        .expect("repeated prune retains one authoritative terminal event");
+    assert_eq!(
+        store
+            .impact_summary(10)
+            .expect("impact after repeated retention")
+            .terminal_cleanup_count,
+        1
+    );
+
+    assert!(
+        store
+            .authorize_retry("inc-retained-block", now)
+            .expect("release named retry block")
+    );
+    store
+        .prune(
+            now,
+            RetentionPolicy {
+                max_age_millis: 1,
+                max_events: 0,
+            },
+        )
+        .expect("ordinary expiry resumes after release");
+    assert_eq!(
+        store
+            .attention_projection(10)
+            .expect("released attention")
+            .blocked_cleanup_count,
+        0
+    );
+    assert!(
+        !store
+            .cleanup_blocked("inc-retained-block")
+            .expect("retry block released")
+    );
+    assert!(
+        store
+            .explain("inc-retained-block")
+            .expect("released detail")
+            .is_none()
+    );
+    assert_eq!(
+        store
+            .impact_summary(10)
+            .expect("lifetime impact remains")
+            .terminal_cleanup_count,
+        1
+    );
+}
+
+#[test]
 fn startup_quarantines_corrupt_database_and_sidecars_then_records_recovery() {
     let directory = TempDirectory::new("corrupt-recovery");
     let database = directory.database();

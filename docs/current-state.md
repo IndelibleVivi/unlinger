@@ -1,8 +1,53 @@
 # Current state
 
-**Updated:** 2026-10-25. **Programme:** 0.1. **Reader posture:** experimental developer source preview; not a signed/notarized App release or multi-day reliability claim.
+**Updated:** 2026-11-14. **Programme:** 0.1. **Reader posture:** experimental developer source preview; not a signed/notarized App release or multi-day reliability claim.
 
-## Active repair candidate 52 (2026-10-25)
+## Retention repair and report-only recovery (2026-11-14)
+
+Generation 52 was found terminal Failed after a November 8 first failure:
+`retry block has no matching terminal cleanup event`. The sole remaining block
+referenced a failed October 25 controlled attempt with zero process and artifact
+actions. Its terminal event had expired after 14 days. A read-only consistent
+snapshot passed SQLite quick-check and foreign-key checks; replaying the old
+retention SQL against a copy of the preserved rollback snapshot reproduced the
+missing-event reference. This is an application-level retention defect, distinct
+from the older BUSY, disk-full and unproved SHMSIZE incidents.
+
+The repair retains a blocking attempt's terminal event and public token until
+existing explicit retry authorization or proved-absence reconciliation retires
+the block. It does not fabricate lost receipts, release blocks through pruning,
+change schema v14, or recount lifetime impact. The new regression fails on the
+old implementation and passes for both FAILED and REVIVED with the repair,
+including stable tokens/detail, repeated pruning and expiry after explicit release.
+Formatting, strict workspace clippy, 456 Rust tests (16 opt-in ignored, with
+`RUST_TEST_THREADS=2`), 131 Swift tests, bundle/resource verification, 11 bundle
+verifier tests and two demo-ownership tests pass. Two preceding default-concurrency
+runs failed different unchanged native-reference/producer-deadline tests; both
+focused reruns passed. Their precise cause remains unproved; no assertion or
+production timeout was relaxed. Release/isolated checks, exact-head CI and fixed
+installation remain separate gates.
+
+The owner explicitly authorized releasing only the obsolete controlled-test
+block and accepting a verified generation 52 as a report-only transition before
+installing the repaired artifact. Evidence was preserved before that one operator
+retry. The old instance remained Failed; the transactional report-only restart
+created a fresh healthy, quiescent instance with zero service problems. Seven
+fresh serial installed socket tests passed. Generation 52 remains unaccepted
+with its lease to49 while App navigation is completed; enforcement is off.
+
+An isolated exact-generation49 probe reopened the preserved rollback snapshot,
+but its old retention code expired the same event and made Status unreadable.
+That snapshot is not a currently healthy rollback target. The authorized recovery
+route therefore uses52 as the report-only transition, then requires the repaired
+artifact's real rollback/open proof against52, fresh reinstall and field gates.
+It does not claim that the failed49 probe passed or reset the database.
+
+The latest uv/Node/clone results still retain their original dates. No new
+cleanup is attributed to52. Source/installed repair acceptance and restoration
+of the original enforce policy remain unfinished. The October25 section below
+is dated historical evidence, not today's health claim.
+
+## Historical repair candidate 52 checkpoint (2026-10-25)
 
 Source [`f45778e`](https://github.com/IndelibleVivi/unlinger/commit/f45778e46008c106fc78fd94e0977b272dd7faac)
 passes [exact-source macOS CI40174916193](https://github.com/IndelibleVivi/unlinger/actions/runs/40174916193)
@@ -62,8 +107,8 @@ contains parenthesized build metadata after `0.11.20`. Both that released form
 and the version-only form now admit the same exact pin; malformed suffixes stay
 unavailable. The functional socket suite uses new UUIDs per run and runs serially,
 so acceptance exercises fresh mutations while ordinary App polling remains active.
-It never automatically resends a timed-out mutation. Final follow-up checks and
-remote CI remain separate from the earlier candidate evidence.
+It never automatically resends a timed-out mutation. The follow-up checks and exact-source CI are recorded in the later October25
+checkpoint above; they are separate from this earlier candidate evidence.
 
 The owner retired unused migration/client compatibility for the sole dogfood
 installation. The current source candidate creates new SQLite v14 directly and
@@ -96,7 +141,7 @@ neither retries mutations nor rehabilitates Failed. Focused checks cover clone
 serialization beyond the old timeout, bounded refusal of an external writer,
 and refusal of a replaced database path. Source, installation and a repeat of
 the failed production field lane are separate gates; the first repair candidate was installed only for testing and rolled back;
-no repair candidate is currently accepted or active.
+at that pre-follow-up checkpoint no repair candidate had been accepted or retained active.
 
 A native owned-child regression also exercises an executable that is unlinked
 while still running. A missing executable pathname remains incomplete and
@@ -132,8 +177,8 @@ independent uv/Node observations and zero maintenance attempts. The unchanged
 read failures**, initial/maximum **77,424 KiB**, final **17,728 KiB**. Later fixture
 accounting/resource consolidation passed the Swift and bundle checks again;
 the history rendering code and AX fixture were unchanged. This is source and
-isolated evidence; the original artifact passed exact-source CI; the follow-up CI and installed
-repeat remain separate gates.
+isolated evidence; the later October25 checkpoint records the follow-up exact-source CI and
+installed socket/restart repeats separately from final acceptance and field work.
 
 ### Previous installed checkpoint: observation/execution candidate
 
