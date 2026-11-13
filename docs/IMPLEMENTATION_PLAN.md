@@ -45,11 +45,16 @@ Host-native adapter 仍是值得继续的增强：宿主必须在 controller 创
 **当前安装与验收边界（2026-11-14）：** 52 因14天历史清理删除仍被 retry block
 引用的终态事件，于11月8日进入 Failed；SQLite结构完整性检查正常。已保全证据，
 owner明确批准仅释放旧受控测试的block，并将验证后的52作为report-only过渡点。
-一次operator retry之后，旧实例仍Failed；事务重启已恢复fresh52健康静止report-only，
-7个fresh serial socket checks通过。52尚未accept，App完整导航仍在验收，enforce关闭。
+一次operator retry之后，旧实例仍Failed；事务重启恢复fresh52，socket与App检查通过后，
+52已按明确授权接受为report-only过渡点。source f4d5fdb及exact-source CI43520496029通过。
 旧49在真实快照的隔离probe中也会再次触发同一retention缺口，不能冒称当前rollback健康。
-修复版将保留block所需终态事件/token，沿正常安装→真实rollback52/open→fresh reinstall
-完成验收后再恢复原enforce；源码验证和安装仍在进行。原51→49→52及其7+restart+7为
+修复版53已通过7+restart+7，真实rollback52由旧daemon重开restored v14健康静止；
+同artifact fresh54已安装，保留lease→52，未accept/enforce。54严格串行首轮7通过，
+重启后的两项写入检查返回store_error；同期系统卷降至125MiB且shell实际ENOSPC，
+但两项mutation的底层SQLite原因未暴露。先前协调器重启重叠导致的一轮失败不计通过。
+当前App已安装、旧包保留，Home/History/Settings/native popup通过；host写余量恢复后，
+须完成54完整restart/socket、production-timing managed field和原enforce恢复。
+另一次52 registry目录open卡住经事务重启恢复，OS原因未证实。原51→49→52及其7+restart+7为
 10月25日历史证据。精确状态由[current-state](current-state.md)维护。
 
 **本轮发现与修正：** 原49 production field 在 action PREPARED 遇 BUSY/5，零 process/

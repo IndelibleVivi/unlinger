@@ -24,16 +24,21 @@ Formatting, strict workspace clippy, 456 Rust tests (16 opt-in ignored, with
 verifier tests and two demo-ownership tests pass. Two preceding default-concurrency
 runs failed different unchanged native-reference/producer-deadline tests; both
 focused reruns passed. Their precise cause remains unproved; no assertion or
-production timeout was relaxed. Release/isolated checks, exact-head CI and fixed
-installation remain separate gates.
+production timeout was relaxed. The release build, source doctor/dry-run,
+isolated socket **7 + restart + 7** and
+[exact-source CI43520496029](https://github.com/IndelibleVivi/unlinger/actions/runs/43520496029)
+pass for [`f4d5fdb`](https://github.com/IndelibleVivi/unlinger/commit/f4d5fdbcf659525aeed114cdf55a03133f0c3e39).
+The fixed daemon also reopened the real preserved rollback snapshot through two
+completed report-only scans, retaining its exact blocked terminal receipt/token
+and unchanged impact authority. The probe's owned child exited normally.
 
 The owner explicitly authorized releasing only the obsolete controlled-test
 block and accepting a verified generation 52 as a report-only transition before
 installing the repaired artifact. Evidence was preserved before that one operator
 retry. The old instance remained Failed; the transactional report-only restart
-created a fresh healthy, quiescent instance with zero service problems. Seven
-fresh serial installed socket tests passed. Generation 52 remains unaccepted
-with its lease to49 while App navigation is completed; enforcement is off.
+created a fresh healthy, quiescent instance with zero service problems. Fresh
+serial installed socket checks and packaged-App navigation passed, then52 was
+accepted as that explicitly authorized report-only transition.
 
 An isolated exact-generation49 probe reopened the preserved rollback snapshot,
 but its old retention code expired the same event and made Status unreadable.
@@ -42,10 +47,38 @@ route therefore uses52 as the report-only transition, then requires the repaired
 artifact's real rollback/open proof against52, fresh reinstall and field gates.
 It does not claim that the failed49 probe passed or reset the database.
 
+The unchanged fixed artifact installed as53, passed **7 + restart + 7** and App
+reconnection, then really rolled back to52. The exact old52 CLI/daemon reopened
+the restored SQLite v14 healthy, quiescent, report-only, unarmed and without an
+enforcement epoch. Fresh installation of the same artifact is now **generation54**,
+with a pending candidate lease to52. The current single-v5 App is installed;
+its prior bundle is preserved. Home, History, Settings and opening/cancelling the
+native notification popup passed; the existing notification/login preferences
+were retained. Empty expired history and preserved lifetime totals are expected.
+
+**Current blocker:**54 remains unaccepted/report-only. An initial socket run was
+invalidated by coordinator overlap with restart and is not counted as a pass.
+The subsequent strictly serial first pass passed all seven tests; after another
+successful restart, two write checks returned redacted `store_error` while reads
+and service health remained available. The startup volume had fallen from about
+4.6 GiB to125 MiB and shell temporary-file creation independently returned ENOSPC.
+No precise SQLite error was exposed for those two mutations, so their exact cause
+is not established solely by the disk observation. Only completed task-owned
+probe material was moved off the startup volume; roughly200 MiB remained.
+Do not accept/arm54 or run the managed field lane until host writes and the full
+serial restart/socket gate are verified. Retain its exact CLI/daemon and lease.
+
+A separate52 scan stalled in `cli_sessions::collect_registry` at directory open.
+Its registry's ancestor symlink resolves to a removable volume. A transactional
+report-only restart restored scanning and fresh socket/quiescence checks passed;
+the underlying OS wait cause remains unproved. This is not a retention repair
+claim or permission to bypass filesystem/privacy controls.
+
 The latest uv/Node/clone results still retain their original dates. No new
-cleanup is attributed to52. Source/installed repair acceptance and restoration
-of the original enforce policy remain unfinished. The October25 section below
-is dated historical evidence, not today's health claim.
+cleanup is attributed to52/53/54. Final54 App/field acceptance, production-timing
+managed cleanup and restoration of the original enforce policy remain unfinished.
+The PATH shortcut still selects49; candidate operations must use the exact54 CLI.
+The October25 section below is dated historical evidence, not today's health claim.
 
 ## Historical repair candidate 52 checkpoint (2026-10-25)
 
