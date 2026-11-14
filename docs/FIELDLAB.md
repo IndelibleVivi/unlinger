@@ -94,6 +94,14 @@ UNLINGER_FIELDLAB_MANAGED_CLI="/path/to/active-generation/unlinger" \
 
 The harness refuses ordinary Chrome and fast timings. It first proves the installed service is ready report-only, launches one unique CfT profile, admits one exact detached candidate, requires that candidate to contain no runtime artifacts, and sends SIGSTOP only to that exact root. It then arms the same ready generation, requires one journaled full-timing terminal process cleanup, and proves every signal target belongs to the pre-arm frozen field tree while every pre-existing ordinary-Chrome root preserves exact identity. The terminal receipt and durable attempt journal must both contain zero artifact actions; a separate retained proof file records those counts and whether the profile's DAP file happened to remain. Exact receipt polling is read-only and incident-scoped; it runs separately from the 250-millisecond native absence proof. Next the harness restarts launchd's same generation and requires a visible unavailable/recovery/report-only transition followed by a new daemon instance and fresh enforcement epoch, without resending or mutating the completed cleanup journal. Teardown durably disarms the same instance to report-only and retains the profile/evidence for inspection.
 
+The receipt wait writes every received terminal receipt to the existing
+`03-terminal-receipt.json` before evaluating success. FAILED or REVIVED ends the
+run immediately with its real reason; it does not wait for tree absence or
+misreport a missing receipt. CLEARED still requires two consecutive exact-tree
+absence observations and the subsequent journal/revival checks. Evidence-write
+and native snapshot errors propagate through the existing teardown guards;
+receipt-worker exit before a terminal result is an immediate error.
+
 Before adding that workload, inspect current service health and startup-volume
 write headroom. The harness creates and retains its profile there; it does not
 manage host free space. Its ready helpers are not an independent quiescence
@@ -103,11 +111,36 @@ workload, record **not started** rather than a failed or passed cleanup. Do not
 shorten timings, relocate an admitted profile through an unproved path or relax
 identity/coverage gates to obtain a receipt.
 
+For `revalidation.relevant_facts_incomplete`, retain the terminal receipt and the
+matching daemon stderr record. Source diagnostics prefix one bounded JSON record
+with `unlingerd: cleanup revalidation diagnostic:` in the per-user
+`~/Library/Logs/Unlinger/unlingerd.log`. It identifies the attempt, generation,
+instance, enforcement epoch, revalidation phase and exact snapshot time. The
+cause distinguishes coverage-count/unreadable failures, a missing signature
+pack, or the first related incomplete process with its association and missing
+field names. It includes no executable path, argv or profile content. This is
+diagnostic evidence from the same decision; it neither changes the gate nor
+grants a retry. A later complete snapshot cannot reconstruct the failed snapshot.
+See current-state for which artifact actually has this diagnostic installed.
+
 Passing the current harness proves one installed managed-generation **process-only** cleanup/restart transaction on one host. It proves that current rule policy did not deliver or journal an artifact action; it does not prove or accept the dormant artifact path, broader versions, controller-bearing eligibility, sleep/wake survival, sustained pressure behavior, multi-day dogfood, or release readiness.
 
 ### Current controlled result
 
-Generation 49 checkpoint (2026-10-25): the source candidate passed the installed
+Generation 54 checkpoint (2026-11-14): the retention repair passed the real
+53→52/v14→54 rollback/reinstall lane and generation54's own serial
+7 + report-only restart + 7 socket checks before acceptance. Its production-timing
+managed CfT attempt returned `FAILED` with
+`revalidation.relevant_facts_incomplete` before any daemon signal: zero process
+actions, zero artifact actions and zero revival checks. The harness then waited
+incorrectly for tree absence and reported a timeout. Its existing guards restored
+healthy, quiescent report-only and reclaimed the exact harness-owned root. The
+terminal receipt, retry block and private profile remain retained. Later complete
+snapshots do not identify the missing fact at the failed pre-signal snapshot.
+Successful current-generation cleanup/restart acceptance and restoration of the
+original enforce policy remain pending; this failure is not a cleanup pass.
+
+Historical generation 49 checkpoint (2026-10-25): the source candidate passed the installed
 48→47/v14→49 rollback/reinstall and socket/restart lane and was separately
 accepted/activated. Its managed production-timing cleanup lane was **not
 started** because startup-volume headroom was unstable and fell to 291 MiB.

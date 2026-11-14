@@ -51,14 +51,17 @@ and was accepted as that report-only transition. The fixed53 passed7 + restart +
 really rolled back to exact old52 reopening restored v14 healthy/quiescent, then
 the same artifact freshly installed as54. The exact old49 isolated rollback-snapshot probe
 fails under today's retention age, so do not claim that target is currently
-healthy or blindly replay it. Candidate54 remains report-only/unaccepted with its
-rollback lease to52. Its fresh serial first socket pass passed, but post-restart
-write checks returned store_error during independently observed startup-volume
-ENOSPC. Preserve containment until host writes, restart/socket and field gates
-pass; do not treat source CI or53's checks as54 acceptance. The single-v5 App is
+healthy or blindly replay it. After host ENOSPC/write errors, write capacity
+recovered and54 repeated the complete serial7 + restart +7, then was accepted
+after quiescent/App readbacks. Its managed full-timing field attempt failed
+pre-signal with relevant_facts_incomplete and zero process/artifact actions;
+the harness fail-safe restored healthy/quiescent report-only. Preserve this new
+block/receipt; no explicit retry grant covers it. Path-free diagnostic and harness
+failure-reporting repair is source-verified but not yet installed in54; successful
+field acceptance and original enforce restoration remain pending. The single-v5 App is
 installed with prior bundle retained and ordinary navigation verified. A separate
 52 registry directory-open stall was recovered transactionally; its OS cause is
-unproved. The PATH shortcut still selects49, so use the exact54 candidate CLI.
+unproved. The PATH shortcut now selects the exact accepted54 CLI.
 No broader retry authorization,
 eligibility change, receipt fabrication or manual cache cleanup is granted.
 `docs/current-state.md` owns progress and exact final installation status.
@@ -269,14 +272,15 @@ quiescent readback before the candidate upgrade. The cause remains unproved.
 
 ## Current hard boundary
 
-The ordinary daemon default remains report-only. Active candidate54 uses
+The ordinary daemon default remains report-only. Accepted generation54 uses
 SQLite v14, Playwright `0.6.0`, other packs `0.4.0`, frontend v5 and operator v1.
-It retains every existing process/clone/cache gate and remains report-only,
-unaccepted, with rollback material for52. Its same-artifact53→52/v14→54
+It retains every existing process/clone/cache gate and remains report-only after
+the current field failure. Its same-artifact53→52/v14→54
 transaction is verified;53 passed7 + restart +7 and actual old52 reopen proof.
-The new App's ordinary navigation passed. Host write capacity and54's full serial
-restart/socket gate, final acceptance, production-timing cleanup and original
-enforce restoration remain pending. Do not confuse old receipts with these gates.
+The new App's ordinary navigation and54's own full serial restart/socket gate
+passed;54 is accepted, with no pending lease. Successful production-timing
+cleanup and original enforce restoration remain pending. Do not confuse old
+receipts or the zero-action FAILED attempt with these gates.
 
 - Inspect `unlinger service status` before replacing or reloading the active service. Use the transactional service CLI rather than manual binary/plist copying or ad hoc `launchctl` mutation unless diagnosing that lifecycle itself.
 - Apply the current user authorization to the live-service scope. A request to repair and restore the installed service authorizes the necessary transactional recovery/replacement and restoration of its existing policy; do not request the same permission again merely because this file records an older installed generation. A source-only task must preserve the active service. Do not run a second `unlingerd --enforce`, uninstall, widen eligibility or enable file deletion outside the authorized task and its demonstrated ownership boundary.
@@ -288,9 +292,9 @@ enforce restoration remain pending. Do not confuse old receipts with these gates
 - The dormant artifact path still has two known P2 residuals: a crash after canonical-to-quarantine rename may strand the exact quarantine entry, and the final pathname revalidation-to-`unlinkat` interval retains a same-UID swap TOCTOU. Historical generation-9 and generation-13 controlled runs removed the admitted DAP; do not turn those point results into current artifact acceptance or re-enable any pack flag without a separate owner decision after the residuals are resolved or explicitly accepted.
 - Managed `Failed` is terminal for that daemon instance. `Disarm` may durably remove any stale signal authority but must not rehabilitate it; replacement proceeds only through exact generation/instance validation, `BeginDrain`, captured-process bootout, and a fresh report-only restart. A ready report-only service acceptance also requires a stable quiescent projection: no scan or cleanup in progress.
 - IPC clients make one bounded attempt. The ordinary/default and service clients use a 15-second I/O timeout; each accepted server connection uses 3 seconds and the daemon serves at most eight connections concurrently. Never automatically resend a timed-out mutation or lifecycle command, because its delivery may already have committed; read back exact state instead. The managed field harness is the narrow exception only for read-only exact-incident `Explain`: it polls on a separate worker and may retry `not_found`, unavailable, or transient local I/O within its overall deadline while native identity sampling continues.
-- Active candidate54 serves only frontend v5/operator v1 on SQLite v14; retired v2/v3/v4 and unknown versions receive typed refusal before dispatch. The installed App emits v5 only and requires the daemon-owned atomic `browser_overview`, including impact/residue, optional storage-cleanup-result and observation-span facts. Frontend schemas expose only `unlinger-protocol` ordinary commands/public DTOs and contain no lifecycle command. Schema v2 is historical and must receive typed `unsupported_schema`; never silently downgrade the App to v4, v3 or v1.
+- Active generation54 serves only frontend v5/operator v1 on SQLite v14; retired v2/v3/v4 and unknown versions receive typed refusal before dispatch. The installed App emits v5 only and requires the daemon-owned atomic `browser_overview`, including impact/residue, optional storage-cleanup-result and observation-span facts. Frontend schemas expose only `unlinger-protocol` ordinary commands/public DTOs and contain no lifecycle command. Schema v2 is historical and must receive typed `unsupported_schema`; never silently downgrade the App to v4, v3 or v1.
 - Independent cleanup-impact authority, observation spans, exact CfT `152.0.7977.42` eligibility and gated Chrome clone cleanup remain installed. Task release supplies lifetime evidence only; it is never storage-deletion authority.
-- Candidate54 is not accepted and retains its rollback lease to52. The PATH shortcut still selects49; candidate work must use the exact54 CLI. Do not discard the staged candidate or rollback material before acceptance/rollback. Future replacements must perform their applicable transaction proof. A successful scan must never rehabilitate a terminal Failed instance. Rollback persists `RollbackInProgress` before physical mutation and replays only transaction-owned selection states until the prior report-only generation is healthy. Only rollback of the exact transaction-owned selection may disarm and drain an unhealthy, non-ready `FirstScanReportOnly` instance; ordinary install and uninstall still require a stable ready or terminal-failed projection.
+- Generation54 is accepted and PATH selects its exact CLI. Future candidates must retain their staged artifact and rollback material until acceptance/rollback and perform their applicable transaction proof. A successful scan must never rehabilitate a terminal Failed instance. Rollback persists `RollbackInProgress` before physical mutation and replays only transaction-owned selection states until the prior report-only generation is healthy. Only rollback of the exact transaction-owned selection may disarm and drain an unhealthy, non-ready `FirstScanReportOnly` instance; ordinary install and uninstall still require a stable ready or terminal-failed projection.
 - Whole-plan `FAILED` and public `cleared_with_residue` may coexist. A known no-removal artifact disposition after exact tree absence/revival proof keeps an incident attention/retry block but does not by itself fail the managed daemon closed. Any process/artifact delivery uncertainty, open PREPARED action, or unproved failure after a delivered side effect still triggers global fail-close.
 - The installed process-only policy retains all deterministic gates, durable abandonment grace, frozen-plan revalidation, exact identity signals, terminal receipts, bounded revival behavior, durable process-action journaling, restart recovery, generation-bound arming, fresh enforcement-epoch cooling, and report-only rollback. Runtime-artifact admission remains disabled. Do not describe one controlled run plus one stable ambient sweep as multi-day dogfood or an ordinary ambient eligible cleanup.
 

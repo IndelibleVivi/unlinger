@@ -51,12 +51,12 @@ The unchanged fixed artifact installed as53, passed **7 + restart + 7** and App
 reconnection, then really rolled back to52. The exact old52 CLI/daemon reopened
 the restored SQLite v14 healthy, quiescent, report-only, unarmed and without an
 enforcement epoch. Fresh installation of the same artifact is now **generation54**,
-with a pending candidate lease to52. The current single-v5 App is installed;
+accepted after its own complete serial restart/socket checks. The current single-v5 App is installed;
 its prior bundle is preserved. Home, History, Settings and opening/cancelling the
 native notification popup passed; the existing notification/login preferences
 were retained. Empty expired history and preserved lifetime totals are expected.
 
-**Current blocker:**54 remains unaccepted/report-only. An initial socket run was
+**Host write-pressure checkpoint:** An initial54 socket run was
 invalidated by coordinator overlap with restart and is not counted as a pass.
 The subsequent strictly serial first pass passed all seven tests; after another
 successful restart, two write checks returned redacted `store_error` while reads
@@ -65,8 +65,32 @@ and service health remained available. The startup volume had fallen from about
 No precise SQLite error was exposed for those two mutations, so their exact cause
 is not established solely by the disk observation. Only completed task-owned
 probe material was moved off the startup volume; roughly200 MiB remained.
-Do not accept/arm54 or run the managed field lane until host writes and the full
-serial restart/socket gate are verified. Retain its exact CLI/daemon and lease.
+Space subsequently recovered. A two-minute observation retained at least2.28 GiB
+available and completed three8 MiB write/fsync/remove probes. Fresh serial
+**7 + restart + 7** then passed; two quiescent readbacks and fresh App readback
+preceded54 acceptance. Its lease is retired and PATH selects its exact CLI.
+This bounded recovery does not resolve the host's recurring space pressure.
+
+**Current field blocker:** The current-generation production-timing managed CfT
+attempt reached a durable FAILED receipt with
+`revalidation.relevant_facts_incomplete`, zero process/artifact actions and zero
+revival checks. The daemon remained healthy. The harness incorrectly waited for
+tree absence after receiving that failure and later reported a receipt timeout;
+its existing fail-safe restored healthy, quiescent report-only and cleaned its
+exact owned test root. The failure receipt/block and private profile are retained.
+Subsequent native snapshots had complete coverage, which cannot reconstruct the
+missing fact in the earlier pre-signal snapshot. The source follow-up now records
+bounded path-free diagnostics from that same decision, without weakening gates.
+The harness saves every terminal receipt through one shared evidence path before
+reporting FAILED/REVIVED; snapshot/write errors and premature poll-worker exit
+propagate normally, while CLEARED still needs two consecutive exact-tree absence
+observations. The existing teardown and journal/revival gates remain unchanged.
+This follow-up passes formatting, strict workspace clippy, all464 Rust tests
+(16 opt-in ignored, `RUST_TEST_THREADS=2`), release build, source doctor/dry-run,
+131 Swift tests, bundle/resource verification and isolated7 + restart +7 socket
+checks. Independent review findings were resolved; it is a source candidate,
+not yet installed in54. The current54 artifact is still the retention repair.
+The original enforce policy remains unrestored pending successful field acceptance.
 
 A separate52 scan stalled in `cli_sessions::collect_registry` at directory open.
 Its registry's ancestor symlink resolves to a removable volume. A transactional
@@ -75,9 +99,12 @@ the underlying OS wait cause remains unproved. This is not a retention repair
 claim or permission to bypass filesystem/privacy controls.
 
 The latest uv/Node/clone results still retain their original dates. No new
-cleanup is attributed to52/53/54. Final54 App/field acceptance, production-timing
-managed cleanup and restoration of the original enforce policy remain unfinished.
-The PATH shortcut still selects49; candidate operations must use the exact54 CLI.
+cleanup is attributed to52/53/54. The App displayed the real failed detail.
+An earlier system Save panel remained disabled and was cancelled; a later fresh
+panel completed export through the ordinary UI, displayed success, and wrote
+valid redacted JSON with0600 permissions. The earlier panel cause remains
+unproved. CLI redacted export also passed. Successful production-timing managed cleanup and restoration of the
+original enforce policy remain unfinished.
 The October25 section below is dated historical evidence, not today's health claim.
 
 ## Historical repair candidate 52 checkpoint (2026-10-25)

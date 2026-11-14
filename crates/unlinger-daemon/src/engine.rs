@@ -13,9 +13,10 @@ use std::time::Duration;
 use unlinger_core::{
     ArtifactDisposition, ArtifactFreeze, CleanupError, CleanupExecutor, CleanupPlan,
     CleanupPlanError, CleanupPolicy, CleanupReceipt, CleanupRuntime, CleanupSignal, ClockSample,
-    EvidenceFamily, EvidenceItem, FrozenRuntimeArtifact, IncidentReport, IncidentState,
-    ProcessGraph, ProcessIdentity, ProcessRecord, RuntimeArtifactCandidate, RuntimeFailure,
-    SignalDisposition, Snapshot, WaitOutcome, fingerprint_process_identity,
+    EvidenceFamily, EvidenceItem, FrozenRuntimeArtifact, IncidentReport, IncidentRevalidator,
+    IncidentState, ProcessGraph, ProcessIdentity, ProcessRecord, Revalidation, RevalidationPhase,
+    RuntimeArtifactCandidate, RuntimeFailure, SignalDisposition, Snapshot, WaitOutcome,
+    fingerprint_process_identity,
 };
 use unlinger_rules::{Analyzer, AnalyzerContext, RuleError, RuleSet};
 
@@ -145,12 +146,67 @@ struct CleanupCompletion {
 
 struct FrozenCleanup {
     analyzer: Analyzer,
+    diagnostic_context: CleanupDiagnosticContext,
     attempt: crate::CleanupAttemptHandle,
     plan: CleanupPlan,
     policy: CleanupPolicy,
     enforcement_epoch: String,
     cleanup_policy_revision: u64,
     started_at_unix_millis: u64,
+}
+
+#[derive(Clone, Debug)]
+struct CleanupDiagnosticContext {
+    generation: Option<u64>,
+    instance_id: Option<String>,
+}
+
+struct DiagnosticRevalidator<'a> {
+    analyzer: &'a Analyzer,
+    context: &'a CleanupDiagnosticContext,
+    attempt: &'a crate::CleanupAttemptHandle,
+    enforcement_epoch: &'a str,
+}
+
+impl IncidentRevalidator for DiagnosticRevalidator<'_> {
+    fn revalidate(
+        &self,
+        snapshot: &Snapshot,
+        plan: &CleanupPlan,
+        phase: RevalidationPhase,
+    ) -> Revalidation {
+        let (validation, diagnostic) = self
+            .analyzer
+            .revalidate_with_diagnostic(snapshot, plan, phase);
+        if let Some(diagnostic) = diagnostic {
+            eprintln!(
+                "unlingerd: cleanup revalidation diagnostic: {}",
+                cleanup_diagnostic_json(
+                    self.attempt,
+                    self.context,
+                    self.enforcement_epoch,
+                    &diagnostic,
+                )
+            );
+        }
+        validation
+    }
+}
+
+fn cleanup_diagnostic_json(
+    attempt: &crate::CleanupAttemptHandle,
+    context: &CleanupDiagnosticContext,
+    enforcement_epoch: &str,
+    diagnostic: &unlinger_rules::RevalidationDiagnostic,
+) -> serde_json::Value {
+    serde_json::json!({
+        "attempt_id": attempt.id,
+        "incident_id": attempt.incident_id,
+        "generation": context.generation,
+        "instance_id": context.instance_id,
+        "enforcement_epoch": enforcement_epoch,
+        "diagnostic": diagnostic,
+    })
 }
 
 // The worker owns activity through terminal commit. Its handle remains owned
@@ -384,6 +440,10 @@ impl<R: CleanupRuntime + Send + 'static> ReconciliationEngine<R> {
             .enforcement_epoch
             .clone()
             .unwrap_or_else(|| "disarmed".to_owned());
+        let diagnostic_context = CleanupDiagnosticContext {
+            generation: lifecycle.activation_generation,
+            instance_id: (!lifecycle.instance_id.is_empty()).then(|| lifecycle.instance_id.clone()),
+        };
         let first_snapshot = self.runtime.snapshot()?;
         self.refresh_task_ownership(&first_snapshot)?;
         let first_clock = cooling_clock(self.runtime.clock_sample()?, &enforcement_epoch);
@@ -537,6 +597,7 @@ impl<R: CleanupRuntime + Send + 'static> ReconciliationEngine<R> {
                 let process_activity = self.control.begin_process_cleanup_activity(cycle_token)?;
                 let frozen = FrozenCleanup {
                     analyzer: analyzer.clone(),
+                    diagnostic_context: diagnostic_context.clone(),
                     attempt,
                     plan,
                     policy: self.config.cleanup_policy.clone(),
@@ -762,7 +823,12 @@ fn execute_cleanup<R: CleanupRuntime>(
     };
     let execution = CleanupExecutor::execute(
         &mut gated_runtime,
-        &frozen.analyzer,
+        &DiagnosticRevalidator {
+            analyzer: &frozen.analyzer,
+            context: &frozen.diagnostic_context,
+            attempt: &frozen.attempt,
+            enforcement_epoch: &frozen.enforcement_epoch,
+        },
         &mut journal,
         &mut cleanup_should_stop,
         &frozen.plan,
@@ -889,11 +955,45 @@ fn cooling_clock(sample: unlinger_core::ClockSample, enforcement_epoch: &str) ->
 
 #[cfg(test)]
 mod tests {
-    use super::receipt_requires_global_fail_close;
+    use super::{
+        CleanupDiagnosticContext, cleanup_diagnostic_json, receipt_requires_global_fail_close,
+    };
     use unlinger_core::{
         ArtifactAction, ArtifactDisposition, CleanupAction, CleanupReceipt, CleanupResources,
         CleanupSignal, CleanupStage, IncidentState, RuntimeArtifactKind, SignalDisposition,
+        SnapshotCoverage,
     };
+
+    #[test]
+    fn diagnostic_json_is_path_free_and_scalar() {
+        let attempt = crate::CleanupAttemptHandle {
+            id: 7,
+            incident_id: "inc-7".to_owned(),
+        };
+        let context = CleanupDiagnosticContext {
+            generation: Some(54),
+            instance_id: Some("instance-54".to_owned()),
+        };
+        let diagnostic = unlinger_rules::RevalidationDiagnostic {
+            incident_id: "inc-7".to_owned(),
+            phase: unlinger_rules::RevalidationDiagnosticPhase::BeforeSignal,
+            snapshot_observed_at_unix_millis: 42,
+            coverage: SnapshotCoverage::default(),
+            cause: unlinger_rules::RevalidationIncompleteCause::RelatedProcess {
+                pid: 99,
+                identity_fingerprint: "0123456789abcdef".to_owned(),
+                associations: vec![unlinger_rules::RevalidationAssociation::FrozenTarget],
+                missing_fields: vec![unlinger_rules::RevalidationMissingField::Arguments],
+            },
+        };
+        let value = cleanup_diagnostic_json(&attempt, &context, "epoch-54", &diagnostic);
+        assert!(!value.to_string().contains("/private/"));
+        assert_eq!(value["diagnostic"]["cause"]["pid"], 99);
+        assert_eq!(
+            value["diagnostic"]["cause"]["missing_fields"][0],
+            "arguments"
+        );
+    }
 
     fn receipt_with_artifact(disposition: ArtifactDisposition, reason_id: &str) -> CleanupReceipt {
         CleanupReceipt {

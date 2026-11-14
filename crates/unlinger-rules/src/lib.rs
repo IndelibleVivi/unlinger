@@ -1,4 +1,4 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt::{Display, Formatter};
@@ -8,7 +8,7 @@ use unlinger_core::{
     EvidenceFamily, EvidenceItem, GateLedger, IncidentReport, IncidentRevalidator, IncidentState,
     ProcessGraph, ProcessRecord, ProcessRole, ProcessRoleCount, ProcessTarget, Revalidation,
     RevalidationPhase, RevalidationStatus, RootSummary, RuntimeArtifactCandidate, Snapshot,
-    fingerprint_parts, fingerprint_process_identity,
+    SnapshotCoverage, fingerprint_parts, fingerprint_process_identity,
 };
 
 const STANDARD_PROFILE_MARKERS: &[&str] = &[
@@ -20,6 +20,62 @@ const STANDARD_PROFILE_MARKERS: &[&str] = &[
 const HEADLESS_MARKERS: &[&str] = &["--headless", "--headless=new", "--headless=old"];
 const TRANSPORT_MARKERS: &[&str] = &["--remote-debugging-pipe", "--remote-debugging-port"];
 const MINIMUM_CANDIDATE_AGE_MICROS: u64 = 60 * 1_000_000;
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct RevalidationDiagnostic {
+    pub incident_id: String,
+    pub phase: RevalidationDiagnosticPhase,
+    pub snapshot_observed_at_unix_millis: u64,
+    pub coverage: SnapshotCoverage,
+    pub cause: RevalidationIncompleteCause,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RevalidationDiagnosticPhase {
+    BeforeSignal,
+    RevivalCheck,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum RevalidationIncompleteCause {
+    Coverage {
+        unreadable: bool,
+        listed_count_mismatch: bool,
+        snapshot_count_mismatch: bool,
+    },
+    MissingSignaturePack {
+        signature_pack: String,
+        signature_version: String,
+    },
+    RelatedProcess {
+        pid: u32,
+        identity_fingerprint: String,
+        associations: Vec<RevalidationAssociation>,
+        missing_fields: Vec<RevalidationMissingField>,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RevalidationAssociation {
+    FrozenTarget,
+    TargetProcessGroup,
+    TargetExecutable,
+    Controller,
+    BrowserRoot,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RevalidationMissingField {
+    ExecutablePath,
+    Arguments,
+    ExecutableFileIdentity,
+    MappedExecutableDevice,
+    MappedExecutableInode,
+}
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -1486,12 +1542,42 @@ impl IncidentRevalidator for Analyzer {
         plan: &CleanupPlan,
         phase: RevalidationPhase,
     ) -> Revalidation {
-        if revalidation_facts_incomplete(self, snapshot, plan) {
-            return Revalidation {
-                status: RevalidationStatus::Blocked,
-                reason_id: "revalidation.relevant_facts_incomplete".to_owned(),
-            };
+        self.revalidate_with_diagnostic(snapshot, plan, phase).0
+    }
+}
+
+impl Analyzer {
+    #[must_use]
+    pub fn revalidate_with_diagnostic(
+        &self,
+        snapshot: &Snapshot,
+        plan: &CleanupPlan,
+        phase: RevalidationPhase,
+    ) -> (Revalidation, Option<RevalidationDiagnostic>) {
+        let diagnostic = revalidation_facts_incomplete(self, snapshot, plan, phase);
+        if diagnostic.is_some() {
+            return (
+                Revalidation {
+                    status: RevalidationStatus::Blocked,
+                    reason_id: "revalidation.relevant_facts_incomplete".to_owned(),
+                },
+                diagnostic,
+            );
         }
+        (
+            self.revalidate_complete_snapshot(snapshot, plan, phase),
+            None,
+        )
+    }
+}
+
+impl Analyzer {
+    fn revalidate_complete_snapshot(
+        &self,
+        snapshot: &Snapshot,
+        plan: &CleanupPlan,
+        phase: RevalidationPhase,
+    ) -> Revalidation {
         let reports = match self.observe(snapshot) {
             Ok(reports) => reports,
             Err(_) => {
@@ -1611,16 +1697,31 @@ fn revalidation_facts_incomplete(
     analyzer: &Analyzer,
     snapshot: &Snapshot,
     plan: &CleanupPlan,
-) -> bool {
-    if snapshot.coverage.unreadable_processes != 0
-        || snapshot.coverage.listed_processes
-            != snapshot
-                .coverage
-                .inspected_processes
-                .saturating_add(snapshot.coverage.unreadable_processes)
-        || snapshot.processes.len() != snapshot.coverage.inspected_processes
-    {
-        return true;
+    phase: RevalidationPhase,
+) -> Option<RevalidationDiagnostic> {
+    let diagnostic_phase = match phase {
+        RevalidationPhase::BeforeSignal => RevalidationDiagnosticPhase::BeforeSignal,
+        RevalidationPhase::RevivalCheck => RevalidationDiagnosticPhase::RevivalCheck,
+    };
+    let unreadable = snapshot.coverage.unreadable_processes != 0;
+    let listed_count_mismatch = snapshot.coverage.listed_processes
+        != snapshot
+            .coverage
+            .inspected_processes
+            .saturating_add(snapshot.coverage.unreadable_processes);
+    let snapshot_count_mismatch = snapshot.processes.len() != snapshot.coverage.inspected_processes;
+    if unreadable || listed_count_mismatch || snapshot_count_mismatch {
+        return Some(RevalidationDiagnostic {
+            incident_id: plan.incident_id.clone(),
+            phase: diagnostic_phase,
+            snapshot_observed_at_unix_millis: snapshot.observed_at_unix_millis,
+            coverage: snapshot.coverage.clone(),
+            cause: RevalidationIncompleteCause::Coverage {
+                unreadable,
+                listed_count_mismatch,
+                snapshot_count_mismatch,
+            },
+        });
     }
     let Some(pack) = analyzer
         .rules
@@ -1628,7 +1729,16 @@ fn revalidation_facts_incomplete(
         .iter()
         .find(|pack| pack.id == plan.signature_pack && pack.version == plan.signature_version)
     else {
-        return true;
+        return Some(RevalidationDiagnostic {
+            incident_id: plan.incident_id.clone(),
+            phase: diagnostic_phase,
+            snapshot_observed_at_unix_millis: snapshot.observed_at_unix_millis,
+            coverage: snapshot.coverage.clone(),
+            cause: RevalidationIncompleteCause::MissingSignaturePack {
+                signature_pack: plan.signature_pack.clone(),
+                signature_version: plan.signature_version.clone(),
+            },
+        });
     };
     let target_pids = plan
         .targets
@@ -1652,22 +1762,74 @@ fn revalidation_facts_incomplete(
         })
         .collect::<BTreeSet<_>>();
 
-    snapshot.processes.iter().any(|process| {
+    let related = snapshot.processes.iter().find_map(|process| {
         if process.has_complete_classification_facts() {
-            return false;
+            return None;
         }
         let executable_matches = process
             .identity
             .executable_device
             .zip(process.identity.executable_inode)
             .is_some_and(|identity| target_executables.contains(&identity));
-        target_pids.contains(&process.pid())
-            || (process.process_group_id != 0
+        let associations = [
+            target_pids
+                .contains(&process.pid())
+                .then_some(RevalidationAssociation::FrozenTarget),
+            (process.process_group_id != 0
                 && target_process_groups.contains(&process.process_group_id))
-            || executable_matches
-            || matches_controller(process, pack)
-            || is_browser_root(process, pack)
+            .then_some(RevalidationAssociation::TargetProcessGroup),
+            executable_matches.then_some(RevalidationAssociation::TargetExecutable),
+            matches_controller(process, pack).then_some(RevalidationAssociation::Controller),
+            is_browser_root(process, pack).then_some(RevalidationAssociation::BrowserRoot),
+        ]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
+        if associations.is_empty() {
+            return None;
+        }
+        Some(RevalidationIncompleteCause::RelatedProcess {
+            pid: process.pid(),
+            identity_fingerprint: fingerprint_process_identity(&process.identity),
+            associations,
+            missing_fields: missing_classification_fields(process),
+        })
+    })?;
+    Some(RevalidationDiagnostic {
+        incident_id: plan.incident_id.clone(),
+        phase: diagnostic_phase,
+        snapshot_observed_at_unix_millis: snapshot.observed_at_unix_millis,
+        coverage: snapshot.coverage.clone(),
+        cause: related,
     })
+}
+
+fn missing_classification_fields(process: &ProcessRecord) -> Vec<RevalidationMissingField> {
+    [
+        process
+            .executable_path
+            .is_none()
+            .then_some(RevalidationMissingField::ExecutablePath),
+        process
+            .arguments
+            .is_none()
+            .then_some(RevalidationMissingField::Arguments),
+        (!process.executable.is_complete())
+            .then_some(RevalidationMissingField::ExecutableFileIdentity),
+        process
+            .identity
+            .executable_device
+            .is_none()
+            .then_some(RevalidationMissingField::MappedExecutableDevice),
+        process
+            .identity
+            .executable_inode
+            .is_none()
+            .then_some(RevalidationMissingField::MappedExecutableInode),
+    ]
+    .into_iter()
+    .flatten()
+    .collect()
 }
 
 fn select_candidate<'a>(selected: &mut BTreeMap<u32, Candidate<'a>>, candidate: Candidate<'a>) {
@@ -2719,6 +2881,130 @@ mod tests {
                 .iter()
                 .any(|item| { item.id == "protection.version_observational_only" })
         );
+    }
+
+    #[test]
+    fn revalidation_diagnostic_distinguishes_incomplete_coverage_and_related_processes() {
+        let case = corpus_case("abandoned Playwright browser without controller");
+        let exact_snapshot = snapshot(&case.processes, 120_000);
+        let analyzer = analyzer();
+        let first = analyzer
+            .observe(&exact_snapshot)
+            .expect("first exact observation");
+        let second_snapshot = snapshot(&case.processes, 135_000);
+        let second = analyzer
+            .observe(&second_snapshot)
+            .expect("second exact observation");
+        let confirmed_keys = second
+            .iter()
+            .map(|report| report.tracking_key.clone())
+            .collect::<BTreeSet<_>>();
+        let report = analyzer
+            .reconcile_with_abandonment(&first, &second, &confirmed_keys)
+            .into_iter()
+            .find(|report| report.signature_pack == "playwright")
+            .expect("confirmed Playwright report");
+        let plan = CleanupPlan::from_confirmed(&report).expect("confirmed plan");
+
+        let complete = analyzer.revalidate_with_diagnostic(
+            &second_snapshot,
+            &plan,
+            RevalidationPhase::BeforeSignal,
+        );
+        assert_eq!(complete.0.reason_id, "revalidation.incident_still_eligible");
+        assert_eq!(complete.1, None);
+
+        let mut coverage = second_snapshot.clone();
+        coverage.coverage.unreadable_processes = 1;
+        let (validation, diagnostic) =
+            analyzer.revalidate_with_diagnostic(&coverage, &plan, RevalidationPhase::BeforeSignal);
+        assert_eq!(
+            validation.reason_id,
+            "revalidation.relevant_facts_incomplete"
+        );
+        let diagnostic = diagnostic.expect("coverage diagnostic");
+        assert_eq!(diagnostic.incident_id, plan.incident_id);
+        assert_eq!(diagnostic.coverage, coverage.coverage);
+        assert_eq!(
+            diagnostic.cause,
+            RevalidationIncompleteCause::Coverage {
+                unreadable: true,
+                listed_count_mismatch: true,
+                snapshot_count_mismatch: false,
+            }
+        );
+
+        let mut listed = second_snapshot.clone();
+        listed.coverage.listed_processes += 1;
+        let (_, diagnostic) =
+            analyzer.revalidate_with_diagnostic(&listed, &plan, RevalidationPhase::BeforeSignal);
+        assert!(matches!(
+            diagnostic.expect("listed coverage diagnostic").cause,
+            RevalidationIncompleteCause::Coverage {
+                unreadable: false,
+                listed_count_mismatch: true,
+                snapshot_count_mismatch: false,
+            }
+        ));
+
+        let mut snapshot_count = second_snapshot.clone();
+        snapshot_count.coverage.inspected_processes += 1;
+        let (_, diagnostic) = analyzer.revalidate_with_diagnostic(
+            &snapshot_count,
+            &plan,
+            RevalidationPhase::BeforeSignal,
+        );
+        assert!(matches!(
+            diagnostic.expect("snapshot count diagnostic").cause,
+            RevalidationIncompleteCause::Coverage {
+                unreadable: false,
+                listed_count_mismatch: true,
+                snapshot_count_mismatch: true,
+            }
+        ));
+
+        let mut related = second_snapshot.clone();
+        let root = related
+            .processes
+            .iter_mut()
+            .find(|process| process.pid() == plan.root_identity.pid)
+            .expect("plan root");
+        root.arguments = None;
+        related.coverage.arguments_unavailable = 1;
+        let (validation, diagnostic) =
+            analyzer.revalidate_with_diagnostic(&related, &plan, RevalidationPhase::RevivalCheck);
+        assert_eq!(
+            validation.reason_id,
+            "revalidation.relevant_facts_incomplete"
+        );
+        let diagnostic = diagnostic.expect("related-process diagnostic");
+        assert!(matches!(
+            diagnostic.cause,
+            RevalidationIncompleteCause::RelatedProcess {
+                pid,
+                ref associations,
+                ref missing_fields,
+                ..
+            } if pid == plan.root_identity.pid
+                && associations.contains(&RevalidationAssociation::FrozenTarget)
+                && missing_fields.contains(&RevalidationMissingField::Arguments)
+        ));
+
+        let diagnostic = RevalidationDiagnostic {
+            incident_id: plan.incident_id.clone(),
+            phase: RevalidationDiagnosticPhase::BeforeSignal,
+            snapshot_observed_at_unix_millis: 42,
+            coverage: SnapshotCoverage::default(),
+            cause: RevalidationIncompleteCause::RelatedProcess {
+                pid: plan.root_identity.pid,
+                identity_fingerprint: "0123456789abcdef".to_owned(),
+                associations: vec![RevalidationAssociation::FrozenTarget],
+                missing_fields: vec![RevalidationMissingField::Arguments],
+            },
+        };
+        let json = serde_json::to_string(&diagnostic).expect("path-free diagnostic JSON");
+        assert!(!json.contains("/private/"));
+        assert!(!json.contains("--user-data-dir"));
     }
 
     #[test]

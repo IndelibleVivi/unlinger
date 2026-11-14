@@ -49,11 +49,17 @@ owner明确批准仅释放旧受控测试的block，并将验证后的52作为re
 52已按明确授权接受为report-only过渡点。source f4d5fdb及exact-source CI43520496029通过。
 旧49在真实快照的隔离probe中也会再次触发同一retention缺口，不能冒称当前rollback健康。
 修复版53已通过7+restart+7，真实rollback52由旧daemon重开restored v14健康静止；
-同artifact fresh54已安装，保留lease→52，未accept/enforce。54严格串行首轮7通过，
+同artifact fresh54已安装。54严格串行首轮7通过，
 重启后的两项写入检查返回store_error；同期系统卷降至125MiB且shell实际ENOSPC，
 但两项mutation的底层SQLite原因未暴露。先前协调器重启重叠导致的一轮失败不计通过。
-当前App已安装、旧包保留，Home/History/Settings/native popup通过；host写余量恢复后，
-须完成54完整restart/socket、production-timing managed field和原enforce恢复。
+host写余量恢复后，两分钟write/fsync观察与54完整7+restart+7通过，54已accept且PATH已54。
+当前App已安装、旧包保留，Home/History/Settings/native popup/真实失败detail通过；早先GUI
+导出面板Save禁用，后续新面板已完成真实导出，JSON/0600/脱敏检查通过，旧面板原因未证实。
+CLI脱敏0600导出也已通过。54production-timing
+field在pre-signal相关事实完整性核验失败，零process/artifact actions；guard已恢复健康
+静止report-only。path-free精确诊断及FAILED receipt误等timeout的harness修正已source完成，
+fmt/strict clippy/464 Rust/131 Swift/release/bundle/隔离7+restart+7通过；尚未装入54。
+保留新block，不放宽gate；新候选实际安装/rollback、成功field与原enforce恢复仍未完成。
 另一次52 registry目录open卡住经事务重启恢复，OS原因未证实。原51→49→52及其7+restart+7为
 10月25日历史证据。精确状态由[current-state](current-state.md)维护。
 

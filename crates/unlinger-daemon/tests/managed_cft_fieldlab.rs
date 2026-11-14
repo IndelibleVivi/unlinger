@@ -476,6 +476,268 @@ fn slow_receipt_worker_does_not_block_absence_tracking() {
     worker.join().expect("join worker");
 }
 
+#[test]
+fn failed_and_revived_terminal_receipts_are_saved_before_immediate_error() {
+    for (state, reason_id) in [
+        (
+            IncidentState::Failed,
+            "revalidation.relevant_facts_incomplete",
+        ),
+        (IncidentState::Revived, "revalidation.session_reappeared"),
+    ] {
+        let root = ProcessIdentity {
+            pid: 100,
+            started_at_unix_micros: 1_000,
+            executable_device: Some(1),
+            executable_inode: Some(2),
+        };
+        let (sender, receiver) = mpsc::channel();
+        let receipt = CleanupReceipt {
+            incident_id: format!("inc-field-{state:?}").to_ascii_lowercase(),
+            state,
+            reason_id: Some(reason_id.to_owned()),
+            actions: Vec::new(),
+            artifact_actions: Vec::new(),
+            survivor_pids: Vec::new(),
+            revival_checks_completed: 0,
+            resources: Default::default(),
+        };
+        sender
+            .send(ReceiptPollMessage::Terminal(receipt.clone()))
+            .expect("queue terminal receipt");
+        drop(sender);
+        let directory = create_profile().expect("isolated profile");
+        let error = wait_for_terminal_receipt_with(
+            &receipt.incident_id,
+            std::slice::from_ref(&root),
+            &directory,
+            || receiver.try_recv(),
+            || Err(field_error("queued terminal must precede snapshot")),
+            Duration::from_secs(5),
+        )
+        .expect_err("FAILED and REVIVED are not successful acceptance");
+        let persisted: CleanupReceipt = serde_json::from_slice(
+            &fs::read(directory.join("03-terminal-receipt.json")).expect("read saved receipt"),
+        )
+        .expect("decode saved receipt");
+        assert_eq!(persisted, receipt);
+        let error = error.to_string();
+        assert!(error.contains(&format!("{:?}", receipt.state)));
+        assert!(error.contains(reason_id));
+        assert!(!error.is_empty());
+    }
+}
+
+#[test]
+fn cleared_terminal_receipt_waits_for_presence_then_two_absences() {
+    let root = ProcessIdentity {
+        pid: 100,
+        started_at_unix_micros: 1_000,
+        executable_device: Some(1),
+        executable_inode: Some(2),
+    };
+    let (sender, receiver) = mpsc::channel();
+    sender
+        .send(ReceiptPollMessage::Terminal(CleanupReceipt {
+            incident_id: "inc-field-cleared".to_owned(),
+            state: IncidentState::Cleared,
+            reason_id: None,
+            actions: Vec::new(),
+            artifact_actions: Vec::new(),
+            survivor_pids: Vec::new(),
+            revival_checks_completed: 2,
+            resources: Default::default(),
+        }))
+        .expect("queue terminal receipt");
+    drop(sender);
+    let mut processes = vec![test_process_record(root.clone())];
+    let mut observations = 0_u32;
+    let directory = create_profile().expect("isolated profile");
+    let terminal = wait_for_terminal_receipt_with(
+        "inc-field-cleared",
+        std::slice::from_ref(&root),
+        &directory,
+        || receiver.try_recv(),
+        || {
+            observations += 1;
+            Ok(ObservedExactTree {
+                observed_at: u64::from(observations),
+                processes: std::mem::take(&mut processes),
+            })
+        },
+        Duration::from_secs(5),
+    )
+    .expect("CLEARED reaches exact absence");
+    let persisted: CleanupReceipt = serde_json::from_slice(
+        &fs::read(directory.join("03-terminal-receipt.json")).expect("read saved receipt"),
+    )
+    .expect("decode saved receipt");
+    assert_eq!(persisted, terminal.receipt);
+    assert_eq!(observations, 3);
+    assert_eq!(terminal.exact_tree_absent_at_ms, 3);
+}
+
+#[test]
+fn cleared_terminal_receipt_does_not_succeed_on_one_absent_snapshot() {
+    let root = ProcessIdentity {
+        pid: 100,
+        started_at_unix_micros: 1_000,
+        executable_device: Some(1),
+        executable_inode: Some(2),
+    };
+    let (sender, receiver) = mpsc::channel();
+    sender
+        .send(ReceiptPollMessage::Terminal(CleanupReceipt {
+            incident_id: "inc-field-cleared".to_owned(),
+            state: IncidentState::Cleared,
+            reason_id: None,
+            actions: Vec::new(),
+            artifact_actions: Vec::new(),
+            survivor_pids: Vec::new(),
+            revival_checks_completed: 2,
+            resources: Default::default(),
+        }))
+        .expect("queue terminal receipt");
+    drop(sender);
+    let mut observations = 0_u32;
+    let directory = create_profile().expect("isolated profile");
+    let error = wait_for_terminal_receipt_with(
+        "inc-field-cleared",
+        std::slice::from_ref(&root),
+        &directory,
+        || receiver.try_recv(),
+        || {
+            observations += 1;
+            Ok(ObservedExactTree {
+                observed_at: u64::from(observations),
+                processes: Vec::new(),
+            })
+        },
+        Duration::ZERO,
+    )
+    .expect_err("one absent snapshot is not a complete exact-absence proof");
+    assert!(error.to_string().contains("did not reach a terminal"));
+    assert_eq!(observations, 1);
+}
+
+#[test]
+fn queued_terminal_precedes_snapshot_failure() {
+    let root = ProcessIdentity {
+        pid: 100,
+        started_at_unix_micros: 1_000,
+        executable_device: Some(1),
+        executable_inode: Some(2),
+    };
+    let (sender, receiver) = mpsc::channel();
+    sender
+        .send(ReceiptPollMessage::Terminal(CleanupReceipt {
+            incident_id: "inc-field-failed".to_owned(),
+            state: IncidentState::Failed,
+            reason_id: Some("revalidation.relevant_facts_incomplete".to_owned()),
+            actions: Vec::new(),
+            artifact_actions: Vec::new(),
+            survivor_pids: Vec::new(),
+            revival_checks_completed: 0,
+            resources: Default::default(),
+        }))
+        .expect("queue terminal receipt");
+    drop(sender);
+    let directory = create_profile().expect("isolated profile");
+    let error = wait_for_terminal_receipt_with(
+        "inc-field-failed",
+        std::slice::from_ref(&root),
+        &directory,
+        || receiver.try_recv(),
+        || {
+            Err(field_error(
+                "snapshot must not be attempted after a queued terminal",
+            ))
+        },
+        Duration::from_secs(5),
+    )
+    .expect_err("queued FAILED is not acceptance");
+    assert!(directory.join("03-terminal-receipt.json").is_file());
+    let error = error.to_string();
+    assert!(error.contains("Failed"));
+    assert!(!error.contains("snapshot must not be attempted"));
+}
+
+#[test]
+fn disconnected_receipt_worker_fails_before_snapshot() {
+    let (sender, receiver) = mpsc::channel();
+    drop(sender);
+    let directory = create_profile().expect("isolated profile");
+    let error = wait_for_terminal_receipt_with(
+        "inc-disconnected",
+        &[],
+        &directory,
+        || receiver.try_recv(),
+        || Err(field_error("snapshot must not run after worker exit")),
+        Duration::from_secs(5),
+    )
+    .expect_err("worker exit is immediately terminal");
+    assert_eq!(
+        error.to_string(),
+        "exact incident receipt worker exited before a terminal result"
+    );
+    assert!(!directory.join("03-terminal-receipt.json").exists());
+}
+
+#[test]
+fn terminal_evidence_write_error_propagates_before_snapshot() {
+    let (sender, receiver) = mpsc::channel();
+    sender
+        .send(ReceiptPollMessage::Terminal(CleanupReceipt {
+            incident_id: "inc-write-error".to_owned(),
+            state: IncidentState::Failed,
+            reason_id: Some("revalidation.relevant_facts_incomplete".to_owned()),
+            actions: Vec::new(),
+            artifact_actions: Vec::new(),
+            survivor_pids: Vec::new(),
+            revival_checks_completed: 0,
+            resources: Default::default(),
+        }))
+        .expect("queue terminal receipt");
+    let directory = create_profile().expect("isolated profile").join("absent");
+    let error = wait_for_terminal_receipt_with(
+        "inc-write-error",
+        &[],
+        &directory,
+        || receiver.try_recv(),
+        || {
+            Err(field_error(
+                "snapshot must not run after evidence write error",
+            ))
+        },
+        Duration::from_secs(5),
+    )
+    .expect_err("evidence write errors are returned, not panics");
+    assert_eq!(
+        error
+            .downcast_ref::<io::Error>()
+            .expect("original I/O error")
+            .kind(),
+        io::ErrorKind::NotFound
+    );
+}
+
+fn test_process_record(identity: ProcessIdentity) -> ProcessRecord {
+    ProcessRecord {
+        identity,
+        parent_pid: 1,
+        process_group_id: 100,
+        uid: 501,
+        tty_device: None,
+        name: "field-test".to_owned(),
+        executable_path: None,
+        executable: Default::default(),
+        arguments: None,
+        resident_memory_bytes: 0,
+        status: unlinger_core::ProcessStatus::Running,
+        runtime: Default::default(),
+    }
+}
+
 fn terminal_history_event(incident_id: &str, event_id: i64) -> HistoryEvent {
     HistoryEvent {
         event_id,
@@ -570,7 +832,8 @@ fn run_managed_fieldlab() -> Result<(), Box<dyn Error>> {
         .ok_or_else(|| field_error("armed daemon omitted its enforcement epoch"))?;
     write_artifact(&profile, "02-armed.json", &armed)?;
 
-    let terminal = wait_for_terminal_receipt(&armed.socket_path, &incident_id, &field_tree)?;
+    let terminal =
+        wait_for_terminal_receipt(&armed.socket_path, &incident_id, &field_tree, &profile)?;
     let receipt = terminal.receipt;
     verify_terminal_receipt(&receipt, &root_identity, &root_fingerprint, &field_tree)?;
     let terminal_journal = JournalSnapshot::capture(&armed.database_path, &incident_id)?;
@@ -586,7 +849,6 @@ fn run_managed_fieldlab() -> Result<(), Box<dyn Error>> {
         receipt_actions: &receipt.actions,
         receipt_artifact_actions: &receipt.artifact_actions,
     })?;
-    write_artifact(&profile, "03-terminal-receipt.json", &receipt)?;
     write_artifact(&profile, "04-terminal-journal.json", &terminal_journal)?;
     write_artifact(
         &profile,
@@ -975,6 +1237,7 @@ fn run_cli_json<const N: usize>(cli: &Path, arguments: [&str; N]) -> Result<Valu
     Ok(serde_json::from_slice(&output.stdout)?)
 }
 
+#[derive(Debug)]
 struct TerminalObservation {
     receipt: CleanupReceipt,
     exact_tree_absent_at_ms: u64,
@@ -1022,6 +1285,11 @@ enum ReceiptPollMessage {
     Fatal(String),
 }
 
+struct ObservedExactTree {
+    observed_at: u64,
+    processes: Vec<ProcessRecord>,
+}
+
 struct ReceiptPollWorker {
     messages: Receiver<ReceiptPollMessage>,
     stop: Sender<()>,
@@ -1066,10 +1334,6 @@ impl ReceiptPollWorker {
             stop,
             thread: Some(thread),
         })
-    }
-
-    fn try_recv(&self) -> Result<ReceiptPollMessage, TryRecvError> {
-        self.messages.try_recv()
     }
 }
 
@@ -1142,29 +1406,46 @@ fn wait_for_terminal_receipt(
     socket: &Path,
     incident_id: &str,
     exact_tree: &[ProcessIdentity],
+    profile: &Path,
 ) -> Result<TerminalObservation, Box<dyn Error>> {
-    let deadline = Instant::now() + RECEIPT_TIMEOUT;
-    let mut snapshotter = MacosRuntime::new();
+    let mut runtime = MacosRuntime::new();
+    let worker = ReceiptPollWorker::start(socket.to_path_buf(), incident_id.to_owned())?;
+    wait_for_terminal_receipt_with(
+        incident_id,
+        exact_tree,
+        profile,
+        || worker.messages.try_recv(),
+        || {
+            Ok(runtime.snapshot().map(|snapshot| ObservedExactTree {
+                observed_at: snapshot.observed_at_unix_millis,
+                processes: snapshot.processes,
+            })?)
+        },
+        RECEIPT_TIMEOUT,
+    )
+}
+
+fn wait_for_terminal_receipt_with(
+    incident_id: &str,
+    exact_tree: &[ProcessIdentity],
+    profile: &Path,
+    mut poll_receipt: impl FnMut() -> Result<ReceiptPollMessage, TryRecvError>,
+    mut snapshotter: impl FnMut() -> Result<ObservedExactTree, Box<dyn Error>>,
+    timeout: Duration,
+) -> Result<TerminalObservation, Box<dyn Error>> {
+    let deadline = Instant::now() + timeout;
     let mut absence = ExactTreeAbsenceTracker::default();
     let mut receipt = None;
     let mut last_retryable_error = None;
-    let receipt_worker = ReceiptPollWorker::start(socket.to_path_buf(), incident_id.to_owned())?;
     loop {
-        let snapshot = snapshotter.snapshot()?;
-        let exact_member_present = exact_tree.iter().any(|identity| {
-            snapshot.processes.iter().any(|process| {
-                process.pid() == identity.pid && identity.exact_match(&process.identity)
-            })
-        });
-        absence.observe(exact_member_present, snapshot.observed_at_unix_millis)?;
-
+        let mut terminal = None;
         loop {
-            match receipt_worker.try_recv() {
-                Ok(ReceiptPollMessage::Terminal(terminal)) => receipt = Some(terminal),
+            match poll_receipt() {
+                Ok(ReceiptPollMessage::Terminal(receipt)) => terminal = Some(receipt),
                 Ok(ReceiptPollMessage::Retryable(error)) => last_retryable_error = Some(error),
                 Ok(ReceiptPollMessage::Fatal(error)) => return Err(field_error(error)),
                 Err(TryRecvError::Empty) => break,
-                Err(TryRecvError::Disconnected) if receipt.is_some() => break,
+                Err(TryRecvError::Disconnected) if terminal.is_some() || receipt.is_some() => break,
                 Err(TryRecvError::Disconnected) => {
                     return Err(field_error(
                         "exact incident receipt worker exited before a terminal result",
@@ -1172,6 +1453,26 @@ fn wait_for_terminal_receipt(
                 }
             }
         }
+        if let Some(terminal) = terminal {
+            write_artifact(profile, "03-terminal-receipt.json", &terminal)?;
+            if terminal.state != IncidentState::Cleared {
+                return Err(field_error(format!(
+                    "incident {incident_id} reached the complete terminal receipt {:?} ({}) without a successful CLEARED result: {terminal:?}",
+                    terminal.state,
+                    terminal.reason_id.as_deref().unwrap_or("no reason_id")
+                )));
+            }
+            receipt = Some(terminal);
+        }
+
+        let snapshot = snapshotter()?;
+        let exact_member_present = exact_tree.iter().any(|identity| {
+            snapshot.processes.iter().any(|process| {
+                process.pid() == identity.pid && identity.exact_match(&process.identity)
+            })
+        });
+        absence.observe(exact_member_present, snapshot.observed_at)?;
+
         if let Some(exact_tree_absent_at_ms) = absence.exact_tree_absent_at_ms
             && let Some(receipt) = receipt.take()
         {
@@ -1189,7 +1490,7 @@ fn wait_for_terminal_receipt(
                 });
             return Err(field_error(format!(
                 "incident {incident_id} did not reach a terminal journal receipt within {} seconds{retryable}",
-                RECEIPT_TIMEOUT.as_secs(),
+                timeout.as_secs(),
             )));
         }
         thread::sleep(POLL_INTERVAL);
