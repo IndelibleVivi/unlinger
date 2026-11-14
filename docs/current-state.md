@@ -2,7 +2,40 @@
 
 **Updated:** 2026-11-14. **Programme:** 0.1. **Reader posture:** experimental developer source preview; not a signed/notarized App release or multi-day reliability claim.
 
-## Retention repair and report-only recovery (2026-11-14)
+## Retention repair and verified enforce restoration (2026-11-14)
+
+**Current installation:** accepted **generation56**, built from
+[`576fc19`](https://github.com/IndelibleVivi/unlinger/commit/576fc1997f28c46fe8204bf1856f817017b54939),
+with [exact-source CI43531658142](https://github.com/IndelibleVivi/unlinger/actions/runs/43531658142)
+passed. SQLite v14, frontend v5 and operator v1 are unchanged. The exact PATH CLI
+selects56, no candidate lease remains, and the original enforce policy has been
+restored after successful current-generation field acceptance. Fresh readback is
+healthy, quiescent `ReadyEnforce` with zero service problems. One earlier controlled
+failure remains in attention/retry history; it was not manually released.
+
+Generation56 passed the full production-timing managed process-only CfT harness
+in **378.89 seconds**: eight exact test-tree members became absent, the terminal
+receipt/journal recorded nine process actions, both revival checks completed,
+and admitted/receipt/journal artifact actions were all zero. The profile/DAP was
+retained. The one pre-existing ordinary Chrome root kept its exact identity.
+Same-generation restart produced a new instance/epoch, preserved the completed
+journal without resend, and teardown returned healthy/quiescent report-only
+before the separate restoration of enforce. This is one controlled result,
+not an ambient eligible cleanup or multi-day reliability claim.
+
+A subsequent 131-second observation returned14 healthy enforce samples from the
+same instance/epoch and three distinct completed-scan timestamps, followed by
+two fresh quiescent readbacks. Sampled maximum RSS was14,816 KiB for the daemon
+and31,472 KiB for the App; minimum startup-volume availability was4.28 GiB.
+These are sparse bounded samples, not an Accessibility stress or long-run proof.
+
+The independent cache worker also completed ordinary scheduled maintenance while
+generation56 was armed during the field run: native uv finished at00:20:18 UTC
+with zero native reported counters (not proof of no effects), and Node finished
+at00:20:30.636 UTC with2,833 successful final-file unlinks and21,114,444 validated
+logical bytes. Both families read back available. No manual cache prune or clock
+override was used. The older Chrome-clone result retains its original date;
+the latest two candidates are waiting for stability and are not yet eligible.
 
 Generation 52 was found terminal Failed after a November 8 first failure:
 `retry block has no matching terminal cleanup event`. The sole remaining block
@@ -50,7 +83,7 @@ It does not claim that the failed49 probe passed or reset the database.
 The unchanged fixed artifact installed as53, passed **7 + restart + 7** and App
 reconnection, then really rolled back to52. The exact old52 CLI/daemon reopened
 the restored SQLite v14 healthy, quiescent, report-only, unarmed and without an
-enforcement epoch. Fresh installation of the same artifact is now **generation54**,
+enforcement epoch. Fresh installation of the same artifact became **generation54**,
 accepted after its own complete serial restart/socket checks. The current single-v5 App is installed;
 its prior bundle is preserved. Home, History, Settings and opening/cancelling the
 native notification popup passed; the existing notification/login preferences
@@ -68,10 +101,10 @@ probe material was moved off the startup volume; roughly200 MiB remained.
 Space subsequently recovered. A two-minute observation retained at least2.28 GiB
 available and completed three8 MiB write/fsync/remove probes. Fresh serial
 **7 + restart + 7** then passed; two quiescent readbacks and fresh App readback
-preceded54 acceptance. Its lease is retired and PATH selects its exact CLI.
+preceded54 acceptance. Its candidate lease was retired.
 This bounded recovery does not resolve the host's recurring space pressure.
 
-**Current field blocker:** The current-generation production-timing managed CfT
+**Generation54 field failure:** The production-timing managed CfT
 attempt reached a durable FAILED receipt with
 `revalidation.relevant_facts_incomplete`, zero process/artifact actions and zero
 revival checks. The daemon remained healthy. The harness incorrectly waited for
@@ -88,9 +121,13 @@ observations. The existing teardown and journal/revival gates remain unchanged.
 This follow-up passes formatting, strict workspace clippy, all464 Rust tests
 (16 opt-in ignored, `RUST_TEST_THREADS=2`), release build, source doctor/dry-run,
 131 Swift tests, bundle/resource verification and isolated7 + restart +7 socket
-checks. Independent review findings were resolved; it is a source candidate,
-not yet installed in54. The current54 artifact is still the retention repair.
-The original enforce policy remains unrestored pending successful field acceptance.
+checks. Independent review findings were resolved. The diagnostic artifact then
+passed55's serial7 + restart +7 and App reconnection, really rolled back to the
+exact old54 daemon reopening its restored v14 healthy/quiescent/unarmed with the
+failed receipt/block preserved, and freshly installed as56. Generation56 repeated
+its own serial7 + restart +7 and fresh App readback before acceptance. No
+incomplete-revalidation diagnostic occurred in its successful field run, so the
+missing fact behind54's earlier failure remains unknown.
 
 A separate52 scan stalled in `cli_sessions::collect_registry` at directory open.
 Its registry's ancestor symlink resolves to a removable volume. A transactional
@@ -103,8 +140,11 @@ cleanup is attributed to52/53/54. The App displayed the real failed detail.
 An earlier system Save panel remained disabled and was cancelled; a later fresh
 panel completed export through the ordinary UI, displayed success, and wrote
 valid redacted JSON with0600 permissions. The earlier panel cause remains
-unproved. CLI redacted export also passed. Successful production-timing managed cleanup and restoration of the
-original enforce policy remain unfinished.
+unproved. CLI redacted export also passed.
+The final post-field GUI attempt could not capture a shareable display or read
+the ordinary window; no new CLEARED-detail GUI observation is claimed. The earlier
+generation56 fresh Home/reconnection and ordinary navigation/export checks above
+retain their own scope; final enforce/cleanup readback is through the CLI.
 The October25 section below is dated historical evidence, not today's health claim.
 
 ## Historical repair candidate 52 checkpoint (2026-10-25)

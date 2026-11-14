@@ -127,6 +127,18 @@ Passing the current harness proves one installed managed-generation **process-on
 
 ### Current controlled result
 
+Generation 56 result (2026-11-14): **passed in378.89 seconds** on source576fc19
+after the real55→54/v14→56 rollback/reinstall lane and both generations' serial
+7 + restart +7 checks. One eight-member CfT tree reached CLEARED with nine
+journaled process actions, zero survivors and both revival checks. Runtime-artifact
+admission, receipt actions and journal actions were all zero; the profile and DAP
+remained. The one pre-existing ordinary Chrome root retained its exact identity;
+normal member churn was not treated as interference. The same generation restarted
+to a new instance/epoch without resending the completed journal. Teardown restored
+healthy, quiescent report-only before separately restoring the original enforce
+policy. Generation54's earlier failure block was retained. No incomplete-facts
+diagnostic occurred in this pass, so it does not explain that earlier snapshot.
+
 Generation 54 checkpoint (2026-11-14): the retention repair passed the real
 53→52/v14→54 rollback/reinstall lane and generation54's own serial
 7 + report-only restart + 7 socket checks before acceptance. Its production-timing
@@ -137,8 +149,8 @@ incorrectly for tree absence and reported a timeout. Its existing guards restore
 healthy, quiescent report-only and reclaimed the exact harness-owned root. The
 terminal receipt, retry block and private profile remain retained. Later complete
 snapshots do not identify the missing fact at the failed pre-signal snapshot.
-Successful current-generation cleanup/restart acceptance and restoration of the
-original enforce policy remain pending; this failure is not a cleanup pass.
+This failure is not a cleanup pass; the later generation56 proof above has its own
+artifact, generation and result scope.
 
 Historical generation 49 checkpoint (2026-10-25): the source candidate passed the installed
 48→47/v14→49 rollback/reinstall and socket/restart lane and was separately
